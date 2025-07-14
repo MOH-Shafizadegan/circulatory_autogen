@@ -207,7 +207,8 @@ class CVS0DCellMLGenerator(object):
                 # or in specific portions of it.
                 print('writing environment to apply operations for multiports')
                 self.__write_section_break(wf, 'applying multiport operations for ports')
-                self.__write_blood_volume_sum_comp(wf, self.model.vessels_df, vol_units)
+                # self.__write_blood_volume_sum_comp(wf, self.model.vessels_df, vol_units)
+                self.__write_multiport_sum_comp(wf, self.model.vessels_df)
 
                 # define variables so they can be accessed
                 print('writing variable access')
@@ -1008,8 +1009,10 @@ class CVS0DCellMLGenerator(object):
         for idx, venous_name in enumerate(first_venous_names):
             rhs_variables = []
             lhs_variable = f'v_{venous_name}'
+            print(terminal_names_for_first_venous)
             for terminal_name in terminal_names_for_first_venous[idx]:
                 rhs_variables.append(f'v_{terminal_name}')
+                print(terminal_name)
 
             self.__write_variable_sum(wf, lhs_variable, rhs_variables)
 
@@ -1640,96 +1643,208 @@ class CVS0DCellMLGenerator(object):
 
         print("writing environment to sum generic junctions input flows :: SUCCESSFUL")
 
-    def __write_blood_volume_sum_comp(self, wf, vessel_df, vol_units='m3'):
+    # def __write_blood_volume_sum_comp(self, wf, vessel_df, vol_units='m3'):
         
-        sum_vess_names = []
-        vess_to_sum_names = []
+    #     sum_vess_names = []
+    #     vess_to_sum_names = []
         
+    #     for vessel_tup in vessel_df.itertuples():
+    #         if vessel_tup.module_format != 'cellml':
+    #             # if not cellml then don't do anything for this vessel/module
+    #             continue
+            
+    #         # Get the module row from the dataframe to check ports
+    #         module_row = vessel_df.loc[vessel_df['name'] == vessel_tup.name].iloc[0]
+            
+    #         # Check if any port has multi_port='sum' or if using legacy vessel_type
+    #         # TODO same thing for general and exit ports
+    #         for idx, port in enumerate(module_row['entrance_ports'] + module_row['general_ports'] + \
+    #                 module_row['exit_ports']):
+                
+    #             if 'multi_port' in port and port['multi_port'] == 'sum':
+    #                 if idx >= len(module_row['entrance_ports']) + len(module_row['general_ports']):
+    #                     is_exit_port = True
+    #                 else:
+    #                     is_exit_port = False
+    #                 port_type = port['port_type']
+    #                 sum_vess_name = vessel_tup.name
+    #                 sum_vess_variable = port['variables'][0] # assumes only one variable per port
+    #                 if sum_vess_name not in sum_vess_names:
+    #                     sum_vess_names.append(sum_vess_name)
+                    
+    #                     inp_vessel_names = []
+    #                     inp_variable_names = []
+    #                     for inp_vessel_name in vessel_tup.inp_vessels:
+    #                         if is_exit_port:
+    #                             coupling_ports = vessel_df.loc[vessel_df["name"] == inp_vessel_name].squeeze()["entrance_ports"] + \
+    #                                 vessel_df.loc[vessel_df["name"] == inp_vessel_name].squeeze()["general_ports"]
+    #                         else:
+    #                             coupling_ports = vessel_df.loc[vessel_df["name"] == inp_vessel_name].squeeze()["exit_ports"] + \
+    #                                 vessel_df.loc[vessel_df["name"] == inp_vessel_name].squeeze()["general_ports"]
+    #                         for couple_port in coupling_ports:
+    #                             if couple_port['port_type'] == port_type:
+    #                                 inp_variable_name = couple_port['variables'][0]
+    #                                 if inp_vessel_name not in inp_vessel_names:
+    #                                     inp_vessel_names.append(inp_vessel_name)
+    #                                     inp_variable_names.append(inp_variable_name)
+    #                     vess_to_sum_names.append(inp_vessel_names)
+
+    #                     if len(inp_vessel_names) == 0:
+    #                         pass
+    #                     else:
+    #                         # map volume
+    #                         for inp_vessel_idx in range(len(inp_vessel_names)):
+    #                             q_1 = inp_variable_names[inp_vessel_idx]
+    #                             print(q_1)
+    #                             inp_vessel_name = inp_vessel_names[inp_vessel_idx]
+    #                             q_2 = f'q_{inp_vessel_name}'
+    #                             print(q_2)
+    #                             self.__write_mapping(wf, inp_vessel_name+'_module', 'sum_blood_volume', [q_1], [q_2])
+
+    #                         # then map volume
+    #                         q_1 = f'q_{sum_vess_name}'
+    #                         q_2 = sum_vess_variable
+    #                         self.__write_mapping(wf, 'sum_blood_volume', sum_vess_name+'_module', [q_1], [q_2])
+
+    #     # create computation environment for connection and write the variable definition 
+    #     # and calculation of total blood volume in the whole system or in specific portions of it
+    #     wf.write(f'<component name="sum_blood_volume">\n')
+    #     variables = []
+    #     units = []
+    #     in_outs = []
+
+    #     for idx_sum, sum_vess_name in enumerate(sum_vess_names):
+    #         variables.append(f'q_{sum_vess_name}')
+    #         units.append(vol_units)
+    #         in_outs.append('out') 
+    #         for inp_vess_name in vess_to_sum_names[idx_sum]:
+    #             variables.append(f'q_{inp_vess_name}')
+    #             units.append(vol_units) 
+    #             in_outs.append('in') 
+
+    #     self.__write_variable_declarations(wf, variables, units, in_outs)
+
+    #     for idx_sum, sum_vess_name in enumerate(sum_vess_names):
+    #         rhs_variables = []
+    #         lhs_variable = f'q_{sum_vess_name}'
+    #         for inp_vess_name in vess_to_sum_names[idx_sum]:
+    #             rhs_variables.append(f'q_{inp_vess_name}')
+
+    #         self.__write_variable_sum(wf, lhs_variable, rhs_variables)
+
+    #     wf.write('</component>\n')
+
+    def __write_multiport_sum_comp(self, wf, vessel_df):
+        """
+        Generalized multiport sum component generator.
+        For each port with multi_port='sum', creates a sum component for any variable/unit.
+        """
+        sum_ports = []  # List of dicts: {module_name, port, is_exit_port}
+        # Collect all multiport sum ports
         for vessel_tup in vessel_df.itertuples():
             if vessel_tup.module_format != 'cellml':
-                # if not cellml then don't do anything for this vessel/module
                 continue
-            
-            # Get the module row from the dataframe to check ports
             module_row = vessel_df.loc[vessel_df['name'] == vessel_tup.name].iloc[0]
-            
-            # Check if any port has multi_port='sum' or if using legacy vessel_type
-            # TODO same thing for general and exit ports
-            for idx, port in enumerate(module_row['entrance_ports'] + module_row['general_ports'] + \
-                    module_row['exit_ports']):
-                
+            all_ports = (
+                [(p, False) for p in module_row['entrance_ports']] +
+                [(p, False) for p in module_row['general_ports']] +
+                [(p, True) for p in module_row['exit_ports']]
+            )
+            for port, is_exit_port in all_ports:
                 if 'multi_port' in port and port['multi_port'] == 'sum':
-                    if idx >= len(module_row['entrance_ports']) + len(module_row['general_ports']):
-                        is_exit_port = True
-                    else:
-                        is_exit_port = False
-                    port_type = port['port_type']
-                    sum_vess_name = vessel_tup.name
-                    sum_vess_variable = port['variables'][0] # assumes only one variable per port
-                    if sum_vess_name not in sum_vess_names:
-                        sum_vess_names.append(sum_vess_name)
-                    
-                        inp_vessel_names = []
-                        inp_variable_names = []
-                        for inp_vessel_name in vessel_tup.inp_vessels:
-                            if is_exit_port:
-                                coupling_ports = vessel_df.loc[vessel_df["name"] == inp_vessel_name].squeeze()["entrance_ports"] + \
-                                    vessel_df.loc[vessel_df["name"] == inp_vessel_name].squeeze()["general_ports"]
-                            else:
-                                coupling_ports = vessel_df.loc[vessel_df["name"] == inp_vessel_name].squeeze()["exit_ports"] + \
-                                    vessel_df.loc[vessel_df["name"] == inp_vessel_name].squeeze()["general_ports"]
-                            for couple_port in coupling_ports:
-                                if couple_port['port_type'] == port_type:
-                                    inp_variable_name = couple_port['variables'][0]
-                                    if inp_vessel_name not in inp_vessel_names:
-                                        inp_vessel_names.append(inp_vessel_name)
-                                        inp_variable_names.append(inp_variable_name)
-                        vess_to_sum_names.append(inp_vessel_names)
+                    sum_ports.append({
+                        'module_name': vessel_tup.name,
+                        'port': port,
+                        'is_exit_port': is_exit_port,
+                        'inp_vessels': vessel_tup.inp_vessels
+                    })
 
-                        if len(inp_vessel_names) == 0:
-                            pass
-                        else:
-                            # map volume
-                            for inp_vessel_idx in range(len(inp_vessel_names)):
-                                q_1 = inp_variable_names[inp_vessel_idx]
-                                inp_vessel_name = inp_vessel_names[inp_vessel_idx]
-                                q_2 = f'q_{inp_vessel_name}'
-                                self.__write_mapping(wf, inp_vessel_name+'_module', 'sum_blood_volume', [q_1], [q_2])
+        # For each multiport sum port, create a sum component
+        for sum_port in sum_ports:
+            module_name = sum_port['module_name']
+            port = sum_port['port']
+            is_exit_port = sum_port['is_exit_port']
+            inp_vessels = sum_port['inp_vessels']
+            port_type = port['port_type']
+            output_variable = port['variables'][0]
+            output_unit = port.get('units', None)
+            if output_unit is None:
+                # Try to get unit from variables_and_units
+                module_row = vessel_df.loc[vessel_df['name'] == module_name].iloc[0]
+                for var_tuple in module_row['variables_and_units']:
+                    if var_tuple[0] == output_variable:
+                        output_unit = var_tuple[1]
+                        break
+            sum_comp_name = f"sum_{output_variable}"
 
-                            # then map volume
-                            q_1 = f'q_{sum_vess_name}'
-                            q_2 = sum_vess_variable
-                            self.__write_mapping(wf, 'sum_blood_volume', sum_vess_name+'_module', [q_1], [q_2])
+            # Gather input variables and units from connected modules
+            inp_variable_names = []
+            inp_variable_units = []
+            inp_vessel_names = []
+            for inp_vessel_name in inp_vessels:
+                inp_row = vessel_df.loc[vessel_df["name"] == inp_vessel_name].squeeze()
+                if is_exit_port:
+                    coupling_ports = inp_row["entrance_ports"] + inp_row["general_ports"]
+                else:
+                    coupling_ports = inp_row["exit_ports"] + inp_row["general_ports"]
+                for couple_port in coupling_ports:
+                    if couple_port['port_type'] == port_type:
+                        inp_var = couple_port['variables'][0]
+                        inp_unit = couple_port.get('units', None)
+                        if inp_unit is None:
+                            # Try to get unit from variables_and_units
+                            for var_tuple in inp_row["variables_and_units"]:
+                                if var_tuple[0] == inp_var:
+                                    inp_unit = var_tuple[1]
+                                    break
+                        inp_variable_names.append(inp_var)
+                        inp_variable_units.append(inp_unit)
+                        inp_vessel_names.append(inp_vessel_name)
 
-        # create computation environment for connection and write the variable definition 
-        # and calculation of total blood volume in the whole system or in specific portions of it
-        wf.write(f'<component name="sum_blood_volume">\n')
-        variables = []
-        units = []
-        in_outs = []
+            # Write mappings from input modules to sum component
+            for inp_vessel_name, inp_var in zip(inp_vessel_names, inp_variable_names):
+                self.__write_mapping(
+                    wf,
+                    inp_vessel_name + '_module',
+                    sum_comp_name,
+                    [inp_var],
+                    [f'{inp_var}_{inp_vessel_name}'],
+                )
 
-        for idx_sum, sum_vess_name in enumerate(sum_vess_names):
-            variables.append(f'q_{sum_vess_name}')
-            units.append(vol_units)
-            in_outs.append('out') 
-            for inp_vess_name in vess_to_sum_names[idx_sum]:
-                variables.append(f'q_{inp_vess_name}')
-                units.append(vol_units) 
-                in_outs.append('in') 
+            # Write mapping from sum component to output module
+            self.__write_mapping(
+                wf,
+                sum_comp_name,
+                module_name + '_module',
+                [f'{output_variable}_{module_name}'],
+                [output_variable],
+            )
 
-        self.__write_variable_declarations(wf, variables, units, in_outs)
+            # Write the sum component
+            wf.write(f'<component name="{sum_comp_name}">\n')
+            variables = []
+            units = []
+            in_outs = []
 
-        for idx_sum, sum_vess_name in enumerate(sum_vess_names):
-            rhs_variables = []
-            lhs_variable = f'q_{sum_vess_name}'
-            for inp_vess_name in vess_to_sum_names[idx_sum]:
-                rhs_variables.append(f'q_{inp_vess_name}')
+            # Output variable
+            variables.append(f'{output_variable}_{module_name}')
+            units.append(inp_variable_units[0])
+            in_outs.append('out')
 
+            # Input variables
+            for inp_var, inp_unit, inp_vessel_name in zip(inp_variable_names, inp_variable_units, inp_vessel_names):
+                variables.append(f'{inp_var}_{inp_vessel_name}')
+                units.append(inp_unit)
+                in_outs.append('in')
+
+            self.__write_variable_declarations(wf, variables, units, in_outs)
+
+            # Write sum equation
+            rhs_variables = [f'{inp_var}_{inp_vessel_name}' for inp_var, inp_vessel_name in zip(inp_variable_names, inp_vessel_names)]
+            lhs_variable = f'{output_variable}_{module_name}'
             self.__write_variable_sum(wf, lhs_variable, rhs_variables)
 
-        wf.write('</component>\n')
-
-
+            wf.write('</component>\n')
 
     def __write_variable_sum_junc(self, wf, lhs_variable, rhs_variables, rhs_signs):
         # Add-on for writing the sum of flow variables for a generic junction connection
@@ -2017,7 +2132,7 @@ class CVS0DCellMLGenerator(object):
         # print(input(f"mapping {inp_name} to {out_name}"))
 
         if check_unit:
-            print(input(f'Checking units for mapping {inp_name} -> {out_name}'))
+            # print(input(f'Checking units for mapping {inp_name} -> {out_name}'))
             for inp_var, out_var in zip(inp_vars_list, out_vars_list):
                 if inp_var and out_var:
                     inp_unit = self.get_variable_unit_from_component(inp_name, inp_var)
@@ -2030,6 +2145,7 @@ class CVS0DCellMLGenerator(object):
                             converter_component = self.create_unit_converter_component(
                                 converter_name, inp_var, out_var, scale, inp_unit, out_unit
                             )
+                            print(f"Adding unit converter {converter_name} for {inp_var} ({inp_unit}) to {out_var} ({out_unit}) with scale {scale}")
                             self.add_converter_component(converter_component)
                             # Connect input module to converter
                             wf.writelines([
@@ -2153,14 +2269,14 @@ class CVS0DCellMLGenerator(object):
         return f"""
         <component name="{name}">
             <variable name="{input_var}" units="{units_in}" public_interface="in"/>
-            <variable name="{output_var}" units="{out_unit}" public_interface="out"/>
+            <variable name="{output_var}" units="{units_out}" public_interface="out"/>
             <math xmlns="http://www.w3.org/1998/Math/MathML">
                 <apply>
                     <eq/>
                     <ci>{output_var}</ci>
                     <apply>
                         <times/>
-                        <cn>{scale_factor}</cn>
+                        <cn cellml:units="dimensionless">{scale_factor}</cn>
                         <ci>{input_var}</ci>
                     </apply>
                 </apply>
@@ -2180,7 +2296,7 @@ class CVS0DCellMLGenerator(object):
         """
         # Remove '_module' suffix if present
         if component_name.endswith('_module'):
-            print(f">>>>>>> {component_name}")
+            # print(f">>>>>>> {component_name}")
             component_name = component_name[:-7]
         # Try to find the row in vessels_df
         df = self.model.vessels_df

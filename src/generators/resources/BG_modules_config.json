@@ -537,6 +537,61 @@
         ]
       },
       {
+        "vessel_type":"vol_ctl_terminal",
+        "BC_type":"pp",
+        "module_format":"cellml",
+        "module_file":"BG_modules.cellml",
+        "module_type":"pp_T_vol_ctl_type",
+        "entrance_ports":
+        [
+          {
+            "port_type":"vessel_port",
+            "variables":["v","u_in"]
+          },
+          {
+            "port_type":"ctl_vol_port",
+            "variables":["v_extra"],
+            "multi_port": "sum"
+          }
+        ],
+        "exit_ports":
+        [
+          {
+            "port_type":"vessel_port",
+            "variables":["v_T", "u_out"]
+          },
+          {
+            "port_type":"osmotic_vol_port",
+            "variables":["q"]
+          },
+          {
+            "port_type":"volume_port",
+            "variables":["q"]
+          },
+          {
+            "port_type":"capillary_extracellular_port",
+            "variables":["u"]
+          }
+        ],
+        "general_ports":[],
+        "variables_and_units":
+        [
+          ["u", "J_per_m3", "access", "variable"],
+          ["u_C", "J_per_m3", "access", "variable"],
+          ["v", "m3_per_s", "access", "variable"],
+          ["v_T", "m3_per_s", "access", "variable"],
+          ["R_T", "Js_per_m6", "access", "constant"],
+          ["C_T", "m6_per_J", "access", "constant"],
+          ["u_ext", "J_per_m3", "access", "constant"],
+          ["u_in", "J_per_m3", "access", "boundary_condition"],
+          ["u_out", "J_per_m3", "access", "boundary_condition"],
+          ["q", "m3", "access", "variable"],
+          ["q_us", "m3", "access", "constant"],
+          ["q_init", "m3", "access", "constant"],
+          ["v_extra", "m3_per_s", "access", "boundary_condition"]
+        ]
+      },
+      {
         "vessel_type":"terminal",
         "BC_type":"pp_RCR_wCont",
         "module_format":"cellml",

@@ -2004,6 +2004,176 @@
         </math>
     </component>
     <!--//////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////        New module for vp_venous including inputs for blood volume control      ////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////-->
+    <component name="vp_ven_vol_ctl_type">
+        <variable name="t" public_interface="in" units="second"/>
+        <!-- Boundary conditions for volume control-->
+        <variable name="v_extra" public_interface="in" units="m3_per_s"/>
+        <!-- Constitutive parameters-->
+        <variable name="I" public_interface="in" units="Js2_per_m6"/>
+        <variable name="C" public_interface="in" units="m6_per_J"/>
+        <variable name="R" public_interface="in" units="Js_per_m6"/>
+        <variable name="R_v" public_interface="out" units="Js_per_m6"/>
+        <!-- State Variables-->
+        <variable name="u_ext" public_interface="in" units="J_per_m3"/>
+        <variable name="v_in" public_interface="in" units="m3_per_s"/>
+        <variable name="u" public_interface="out" units="J_per_m3"/>
+        <variable name="q_C_init" public_interface="in" units="m3"/>
+        <variable initial_value="q_C_init" name="q_C_change" public_interface="out" units="m3"/>
+        <variable name="q_C" public_interface="out" units="m3"/>
+        <variable name="q" public_interface="out" units="m3"/>
+        <variable name="u_C" public_interface="out" units="J_per_m3"/>
+        <variable initial_value="0.0" name="v" public_interface="out" units="m3_per_s"/>
+        <variable name="u_out" public_interface="in" units="J_per_m3"/>
+        <variable name="q_us_0" public_interface="in" units="m3"/>
+        <variable name="q_us_wCont" public_interface="out" units="m3"/>
+        <variable name="Delta_q_us" public_interface="in" units="dimensionless"/>
+        <variable name="Delta_C" public_interface="in" units="dimensionless"/>
+        <variable name="C_wCont" public_interface="out" units="m6_per_J"/>
+        <!-- TODO double check that this applies to veins-->
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq/>
+                <ci>R_v</ci>
+                <apply>
+                    <divide/>
+                    <cn cellml:units="second">0.01</cn>
+                    <ci>C</ci>
+                </apply>
+            </apply>
+            <!-- Conservation Laws-->
+            <apply>
+                <eq/>
+                <apply>
+                    <diff/>
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>v</ci>
+                </apply>
+                <apply>
+                    <divide/>
+                    <apply>
+                        <minus/>
+                        <apply>
+                            <minus/>
+                            <ci>u</ci>
+                            <ci>u_out</ci>
+                        </apply>
+                        <apply>
+                            <times/>
+                            <ci>R</ci>
+                            <ci>v</ci>
+                        </apply>
+                    </apply>
+                    <ci>I</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq/>
+                <apply>
+                    <diff/>
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>q_C_change</ci>
+                </apply>
+                <apply>
+                    <minus/>
+                    <apply>
+                        <plus/>
+                        <ci>v_in</ci>
+                        <ci>v_extra</ci>
+                    </apply>
+                    <ci>v</ci>
+                </apply>
+            </apply>
+            <!-- TODO CHECK THAT CHANGING US VOLUME LIKE THIS CONSERVES VOLUME!!!!-->
+            <apply>
+                <eq/>
+                <ci>q_C</ci>
+                <apply>
+                    <minus/>
+                    <apply>
+                        <plus/>
+                        <ci>q_C_change</ci>
+                        <ci>q_us_0</ci>
+                    </apply>
+                    <ci>q_us_wCont</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq/>
+                <ci>q</ci>
+                <apply>
+                    <plus/>
+                    <ci>q_C</ci>
+                    <ci>q_us_wCont</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq/>
+                <ci>u_C</ci>
+                <apply>
+                    <plus/>
+                    <apply>
+                        <divide/>
+                        <ci>q_C</ci>
+                        <ci>C_wCont</ci>
+                    </apply>
+                    <ci>u_ext</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq/>
+                <ci>u</ci>
+                <apply>
+                    <plus/>
+                    <ci>u_C</ci>
+                    <apply>
+                        <times/>
+                        <ci>R_v</ci>
+                        <apply>
+                            <minus/>
+                            <ci>v_in</ci>
+                            <ci>v</ci>
+                        </apply>
+                    </apply>
+                </apply>
+            </apply>
+            <apply>
+                <eq/>
+                <ci>q_us_wCont</ci>
+                <apply>
+                    <times/>
+                    <ci>q_us_0</ci>
+                    <apply>
+                        <minus/>
+                        <cn cellml:units="dimensionless">1</cn>
+                        <ci>Delta_q_us</ci>
+                    </apply>
+                </apply>
+            </apply>
+            <apply>
+                <eq/>
+                <ci>C_wCont</ci>
+                <apply>
+                    <times/>
+                    <ci>C</ci>
+                    <apply>
+                        <minus/>
+                        <cn cellml:units="dimensionless">1</cn>
+                        <ci>Delta_C</ci>
+                    </apply>
+                </apply>
+            </apply>
+        </math>
+    </component>
+    <!--//////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////-->
+    <!--//////////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////// output-BC Vessel ///////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////-->
     <component name="pp_T_fixed_I_type">
@@ -2286,6 +2456,166 @@
                         </apply>
                     </apply>
                     <ci>I_T</ci>
+                </apply>
+            </apply>
+        </math>
+    </component>
+    <component name="pp_T_vol_ctl_type">
+        <variable name="t" public_interface="in" units="second"/>
+        <!-- extra flow for volume control-->
+        <variable name="v_extra" public_interface="in" units="m3_per_s"/>
+        <!-- Constitutive parameters-->
+        <variable name="I_T" public_interface="out" units="Js2_per_m6"/>
+        <variable name="R_v" public_interface="out" units="Js_per_m6"/>
+        <variable name="R_T" public_interface="in" units="Js_per_m6"/>
+        <variable name="C_T" public_interface="in" units="m6_per_J"/>
+        <!-- State Variables-->
+        <variable name="u_ext" public_interface="in" units="J_per_m3"/>
+        <variable initial_value="0.0" name="v" public_interface="out" units="m3_per_s"/>
+        <variable name="u_in" public_interface="in" units="J_per_m3"/>
+        <variable name="u" public_interface="out" units="J_per_m3"/>
+        <variable name="u_C" public_interface="out" units="J_per_m3"/>
+        <!-- v_T is the output flow to the venous side-->
+        <variable name="v_T" public_interface="out" units="m3_per_s"/>
+        <variable initial_value="0.0" name="v_T_1" public_interface="out" units="m3_per_s"/>
+        <variable name="u_out" public_interface="in" units="J_per_m3"/>
+        <variable name="q_us" public_interface="in" units="m3"/>
+        <variable name="q_init" public_interface="in" units="m3"/>
+        <variable initial_value="q_init" name="q" public_interface="out" units="m3"/>
+        <!-- Improve this R_v estimate?-->
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq/>
+                <ci>R_v</ci>
+                <apply>
+                    <divide/>
+                    <cn cellml:units="second">0.01</cn>
+                    <ci>C_T</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq/>
+                <ci>I_T</ci>
+                <cn cellml:units="Js2_per_m6" type="e-notation">1<sep/>-6</cn>
+            </apply>
+            <!-- Conservation Laws-->
+            <!-- For now terminals don't have a gravity effect, change this for leg terminals-->
+            <apply>
+                <eq/>
+                <apply>
+                    <diff/>
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>q</ci>
+                </apply>
+                <apply>
+                    <minus/>
+                    <ci>v</ci>
+                    <ci>v_T_1</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq/>
+                <ci>u_C</ci>
+                <apply>
+                    <divide/>
+                    <apply>
+                        <minus/>
+                        <ci>q</ci>
+                        <ci>q_us</ci>
+                    </apply>
+                    <ci>C_T</ci>
+                </apply>
+            </apply>
+            <!-- + u_ext;-->
+            <apply>
+                <eq/>
+                <ci>u</ci>
+                <apply>
+                    <plus/>
+                    <ci>u_C</ci>
+                    <ci>u_ext</ci>
+                    <apply>
+                        <times/>
+                        <ci>R_v</ci>
+                        <apply>
+                            <minus/>
+                            <ci>v</ci>
+                            <ci>v_T_1</ci>
+                        </apply>
+                    </apply>
+                </apply>
+            </apply>
+            <apply>
+                <eq/>
+                <apply>
+                    <diff/>
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>v</ci>
+                </apply>
+                <apply>
+                    <divide/>
+                    <apply>
+                        <minus/>
+                        <apply>
+                            <minus/>
+                            <ci>u_in</ci>
+                            <ci>u</ci>
+                        </apply>
+                        <apply>
+                            <divide/>
+                            <apply>
+                                <times/>
+                                <ci>v</ci>
+                                <ci>R_T</ci>
+                            </apply>
+                            <cn cellml:units="dimensionless">2</cn>
+                        </apply>
+                    </apply>
+                    <ci>I_T</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq/>
+                <apply>
+                    <diff/>
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>v_T_1</ci>
+                </apply>
+                <apply>
+                    <divide/>
+                    <apply>
+                        <minus/>
+                        <apply>
+                            <minus/>
+                            <ci>u</ci>
+                            <ci>u_out</ci>
+                        </apply>
+                        <apply>
+                            <divide/>
+                            <apply>
+                                <times/>
+                                <ci>v_T_1</ci>
+                                <ci>R_T</ci>
+                            </apply>
+                            <cn cellml:units="dimensionless">2</cn>
+                        </apply>
+                    </apply>
+                    <ci>I_T</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq/>
+                <ci>v_T</ci>
+                <apply>
+                    <plus/>
+                    <ci>v_T_1</ci>
+                    <ci>v_extra</ci>
                 </apply>
             </apply>
         </math>

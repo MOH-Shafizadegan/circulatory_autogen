@@ -5,8 +5,26 @@
     "module_format": "cellml",
     "module_file": "BG_volume_control_modules.cellml",
     "module_type": "BG_volume_control_main_type",
-    "entrance_ports": [],
-    "exit_ports": [],
+    "entrance_ports": [
+      {
+        "port_type": "capillary_extracellular_port",
+        "variables": ["u_ac_W"]
+      },
+      {
+        "port_type": "osmotic_vol_port",
+        "variables": ["q_vc_W"]
+      }
+    ],
+    "exit_ports": [
+      {
+        "port_type": "ctl_vol_port",
+        "variables": ["v_gi_W"]
+      },
+      {
+        "port_type": "ctl_vol_port",
+        "variables": ["v_pt_W"]
+      }
+    ],
     "general_ports": [],
     "variables_and_units": [
       [
@@ -100,12 +118,6 @@
         "variable"
       ],
       [
-        "v_cc_W",
-        "L_per_s",
-        "access",
-        "variable"
-      ],
-      [
         "v_gl_Na",
         "mol_per_s",
         "access",
@@ -136,18 +148,6 @@
         "variable"
       ],
       [
-        "u_vc_W",
-        "kPa",
-        "access",
-        "variable"
-      ],
-      [
-        "u_ac_W",
-        "kPa",
-        "access",
-        "variable"
-      ],
-      [
         "u_pt_W",
         "kPa",
         "access",
@@ -172,6 +172,12 @@
         "variable"
       ],
       [
+        "v_diff_Na",
+        "mol_per_s",
+        "access",
+        "variable"
+      ],
+      [
         "RT",
         "J_per_mol",
         "access",
@@ -184,13 +190,13 @@
         "constant"
       ],
       [
-        "q_ac_W_init",
+        "q_ac_W",
         "litre",
         "access",
         "constant"
       ],
       [
-        "q_vc_W_init",
+        "q_vc_W",
         "litre",
         "access",
         "constant"
@@ -268,12 +274,6 @@
         "constant"
       ],
       [
-        "v_lv_W",
-        "L_per_s",
-        "access",
-        "constant"
-      ],
-      [
         "v_in_W",
         "L_per_s",
         "access",
@@ -306,6 +306,12 @@
       [
         "v_out2_Na",
         "mol_per_s",
+        "access",
+        "constant"
+      ],
+      [
+        "u_ac_W",
+        "kPa",
         "access",
         "constant"
       ],
@@ -412,12 +418,6 @@
         "constant"
       ],
       [
-        "U_vc_W",
-        "litre",
-        "access",
-        "constant"
-      ],
-      [
         "U_pt_W",
         "litre",
         "access",
@@ -442,16 +442,16 @@
         "constant"
       ],
       [
-        "q_ac_W",
-        "litre",
+        "q_other_Na_init",
+        "mole",
         "access",
-        "variable"
+        "constant"
       ],
       [
-        "q_vc_W",
-        "litre",
+        "p_Na",
+        "per_s",
         "access",
-        "variable"
+        "constant"
       ],
       [
         "q_gi_W",
@@ -491,6 +491,12 @@
       ],
       [
         "q_ptEpi_Na",
+        "mole",
+        "access",
+        "variable"
+      ],
+      [
+        "q_other_Na",
         "mole",
         "access",
         "variable"
