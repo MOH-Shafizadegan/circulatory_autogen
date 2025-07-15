@@ -2262,11 +2262,14 @@ class CVS0DCellMLGenerator(object):
             wf.write(comp_str + "\n")
 
     def create_unit_converter_component(self, name, input_var, output_var, scale_factor, units_in, units_out):
-        """
-        Returns a CellML component string that converts input_var (units_in) to output_var (units_out)
-        using the given scale_factor.
-        """
+        # Calculate scale factor unit
+        scale_unit = f"{units_out}_per_{units_in}"  # e.g., Pa_per_mmHg
+
         return f"""
+        <units name="{scale_unit}">
+            <unit units="{units_out}"/>
+            <unit units="{units_in}" exponent="-1"/>
+        </units>
         <component name="{name}">
             <variable name="{input_var}" units="{units_in}" public_interface="in"/>
             <variable name="{output_var}" units="{units_out}" public_interface="out"/>
@@ -2276,14 +2279,14 @@ class CVS0DCellMLGenerator(object):
                     <ci>{output_var}</ci>
                     <apply>
                         <times/>
-                        <cn cellml:units="dimensionless">{scale_factor}</cn>
+                        <cn cellml:units="{scale_unit}">{scale_factor}</cn>
                         <ci>{input_var}</ci>
                     </apply>
                 </apply>
             </math>
         </component>
         """
-    
+
     def add_converter_component(self, converter_component_str):
         """
         Stores the converter component string for later writing to the CellML file.
