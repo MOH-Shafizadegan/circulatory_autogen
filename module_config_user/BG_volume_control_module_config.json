@@ -199,7 +199,7 @@
         "q_vc_W",
         "litre",
         "access",
-        "constant"
+        "boundary_condition"
       ],
       [
         "q_gi_W_init",
@@ -313,7 +313,7 @@
         "u_ac_W",
         "kPa",
         "access",
-        "constant"
+        "boundary_condition"
       ],
       [
         "u_giEpi_e",
