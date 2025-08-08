@@ -240,6 +240,7 @@ class CVS0DCellMLGenerator(object):
                 self.__write_time_mappings(wf, self.model.vessels_df)
 
                 # write the converter components
+                self.__write_unit_converter_scale_units(wf)
                 self.__write_unit_converter(wf)
 
                 # Finalise the file
@@ -2141,7 +2142,7 @@ class CVS0DCellMLGenerator(object):
                     if inp_unit != out_unit:
                         try:
                             scale = self.unit_converter.get_scale_factor(inp_unit, out_unit)
-                            converter_name = f"unit_converter_{inp_var}_{out_var}"
+                            converter_name = f"unit_converter_{inp_name}_{inp_var}_to_{out_name}_{out_var}"
                             converter_component = self.create_unit_converter_component(
                                 converter_name, inp_var, out_var, scale, inp_unit, out_unit
                             )
@@ -2262,14 +2263,12 @@ class CVS0DCellMLGenerator(object):
             wf.write(comp_str + "\n")
 
     def create_unit_converter_component(self, name, input_var, output_var, scale_factor, units_in, units_out):
-        # Calculate scale factor unit
-        scale_unit = f"{units_out}_per_{units_in}"  # e.g., Pa_per_mmHg
-
+        # Store scale unit tuple for later writing, but only if units_in != units_out
+        if units_in != units_out:
+            if not hasattr(self, "unit_converter_scale_units"):
+                self.unit_converter_scale_units = set()
+            self.unit_converter_scale_units.add((units_in, units_out, f"{units_out}_per_{units_in}"))
         return f"""
-        <units name="{scale_unit}">
-            <unit units="{units_out}"/>
-            <unit units="{units_in}" exponent="-1"/>
-        </units>
         <component name="{name}">
             <variable name="{input_var}" units="{units_in}" public_interface="in"/>
             <variable name="{output_var}" units="{units_out}" public_interface="out"/>
@@ -2279,13 +2278,26 @@ class CVS0DCellMLGenerator(object):
                     <ci>{output_var}</ci>
                     <apply>
                         <times/>
-                        <cn cellml:units="{scale_unit}">{scale_factor}</cn>
+                        <cn cellml:units="{units_out}_per_{units_in}">{scale_factor}</cn>
                         <ci>{input_var}</ci>
                     </apply>
                 </apply>
             </math>
         </component>
         """
+
+    def __write_unit_converter_scale_units(self, wf):
+        """
+        Writes all unique scale units needed for unit conversion.
+        Call this before writing any converter components.
+        """
+        if hasattr(self, "unit_converter_scale_units"):
+            for units_in, units_out, scale_unit in self.unit_converter_scale_units:
+                print(scale_unit)
+                wf.write(f'<units name="{scale_unit}">\n')
+                wf.write(f'    <unit units="{units_out}"/>\n')
+                wf.write(f'    <unit units="{units_in}" exponent="-1"/>\n')
+                wf.write(f'</units>\n')
 
     def add_converter_component(self, converter_component_str):
         """
