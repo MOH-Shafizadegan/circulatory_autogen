@@ -3,10 +3,10 @@
 source opencor_pythonshell_path.sh
 
 # Set variables for arguments
-INPUT_MODEL="/home/hsma807/Animus/RA/ANS-BGCVS/Code/CA_user_ANS_BGCVS/cellML Models/BloodVolumeControl.cellml"
-OUTPUT_DIR="/home/hsma807/Animus/RA/ANS-BGCVS/Code/CA_user_ANS_BGCVS"
-FILE_PREFIX="BG_volume_control"
-VESSEL_NAME="blood_volume_control"
+INPUT_MODEL="/home/hsma807/Animus/RA/ANS-BGCVS/Code/CA_user_ANS-CVS-BVC/generate_CA_modules/BVC_Sodium_circ.cellml"
+OUTPUT_DIR="/home/hsma807/Animus/RA/ANS-BGCVS/Code/CA_user_ANS-CVS-BVC"
+FILE_PREFIX="BVC_Na_circ"
+VESSEL_NAME="blood_vol_ctl_Na_circ"
 DATA_REFERENCE="Peter_Hunter"
 TIME_VARIABLE="t"
 COMPONENT_NAME="main"
