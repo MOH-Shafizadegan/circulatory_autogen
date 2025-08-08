@@ -8,7 +8,7 @@
     "entrance_ports": [
       {
         "port_type": "capillary_extracellular_port",
-        "variables": ["u_ac_W"]
+        "variables": ["v_gl_W", "u_ac_W"]
       },
       {
         "port_type": "osmotic_vol_port",
