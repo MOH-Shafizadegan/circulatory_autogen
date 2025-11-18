@@ -1,0 +1,13 @@
+[
+  {
+    "vessel_type": "TWorld_v2",
+    "BC_type": "nn",
+    "module_format": "cellml",
+    "module_file": "TWorld_v2_modules.cellml",
+    "module_type": "TWorld_v2_membrane_type",
+    "entrance_ports": [],
+    "exit_ports": [],
+    "general_ports": [],
+    "variables_and_units": []
+  }
+]
