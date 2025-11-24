@@ -105,6 +105,9 @@ class SensitivityAnalysis():
             print(f'{CYAN}saving results in {output_dir}{RESET}')
             SA_manager.plot_sobol_first_order_idx(S1_all, ST_all)
             SA_manager.plot_sobol_S2_idx(S2_all)
+            SA_manager.plot_sobol_heatmap(S1_all, ST_all)
+            SA_manager.plot_sobol_bubble_plot(S1_all, ST_all, index_type='Total_Order')
+            SA_manager.plot_sobol_bubble_plot(S1_all, ST_all, index_type='First_Order')
 
     
     def run_naive_sensitivity(self, param_id_output_paths):

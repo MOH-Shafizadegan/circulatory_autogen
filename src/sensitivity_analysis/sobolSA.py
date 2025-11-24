@@ -790,7 +790,7 @@ class sobol_SA():
             plt.tight_layout()
 
             file_name = f"{output_name}_n{self.num_samples}_First_order_idx.png"
-            plt.savefig(os.path.join(self.save_path, file_name))
+            plt.savefig(os.path.join(self.save_path, file_name), dpi=300)
             plt.clf()
             plt.close()
 
@@ -818,9 +818,187 @@ class sobol_SA():
             plt.tight_layout()
 
             filename = f"{output_name}_n{self.num_samples}_2nd_order_idx.png"
-            plt.savefig(os.path.join(self.save_path, filename))
+            plt.savefig(os.path.join(self.save_path, filename), dpi=300)
             plt.clf()
             plt.close()
+
+    def plot_sobol_heatmap(self, S1_all, ST_all):
+        
+        if self.rank != 0:
+            return
+        
+        """
+        Generates 2D heatmaps for first-order (S1) and total-order (ST) Sobol indices.
+        
+        The heatmaps show:
+        Y-axis: Input Parameters (self.SA_cfg["param_names"])
+        X-axis: Model Outputs (concatenated names from self.obs_info)
+        Color: Sobol Index Value
+        
+        Parameters:
+            S1_all (np.ndarray): First-order Sobol indices, shape (n_outputs, n_params)
+            ST_all (np.ndarray): Total-order Sobol indices, shape (n_outputs, n_params)
+        """
+        
+        print("\nGenerating Sobol Index Heatmaps...")
+        
+        # 1. Define Axis Labels
+        output_labels = [
+            rf"{self.obs_info['names_for_plotting'][i]} (Exp{self.obs_info['experiment_idxs'][i]}, Sub{self.obs_info['subexperiment_idxs'][i]})"
+            for i in range(S1_all.shape[0])
+        ]
+        param_labels = self.SA_cfg["param_names"]
+
+        # Current shape: (n_outputs, n_params) -> Desired shape: (n_params, n_outputs)
+        S1_heatmap_data = S1_all.T
+        ST_heatmap_data = ST_all.T
+        
+        # Define the title prefix using the total sample count (N * (D+2))
+        total_samples = S1_all.shape[1] * (S1_all.shape[0] + 2) if hasattr(self, 'num_params') else 'N/A'
+        title_prefix = f"Sobol Indices (N={self.num_samples*(self.num_params+2)})"
+        
+        def create_heatmap(data, index_type):
+            
+            df_data = pd.DataFrame(data, index=param_labels, columns=output_labels)
+            
+            fig_width = max(10, len(output_labels) * 0.5) 
+            fig_height = max(6, len(param_labels) * 0.5)
+            
+            plt.figure(figsize=(fig_width, fig_height))
+            
+            sns.heatmap(
+                df_data,
+                annot=True,               # Annotate with the index values
+                fmt=".2f",                # Format annotations to 2 decimal places
+                cmap="viridis",           # Good colormap for continuous data
+                linewidths=0.5,           # Lines between cells
+                linecolor='lightgray',
+                cbar_kws={'label': f'{index_type} Index Value'}
+            )
+
+            plt.title(f'{title_prefix} - {index_type}', fontsize=14)
+            plt.xlabel('Model Output', fontsize=12)
+            plt.ylabel('Input Parameter', fontsize=12)
+            
+            plt.xticks(rotation=45, ha='right', fontsize=8) 
+            plt.yticks(rotation=0, fontsize=8) 
+            
+            plt.tight_layout()
+            
+            file_name = f"{index_type.replace('-', '_')}_Sobol_Heatmap.png"
+            save_path = os.path.join(self.save_path, file_name)
+            plt.savefig(save_path, bbox_inches='tight', dpi=300)
+            plt.close()
+            print(f"Saved {index_type} heatmap to {save_path}")
+
+        create_heatmap(S1_heatmap_data, 'First-Order ($S_1$)')
+        create_heatmap(ST_heatmap_data, 'Total-Order ($S_T$)')
+
+    def plot_sobol_bubble_plot(self, S1_all, ST_all, index_type='First-Order'):
+    
+        if self.rank != 0:
+            return
+        
+        """
+        Generates a bubble plot (dot plot) for either first-order (S1) or total-order (ST) Sobol indices,
+        similar to the provided image example.
+        
+        Y-axis: Model Outputs
+        X-axis: Input Parameters
+        Bubble Size: Magnitude of the Sobol Index
+        Bubble Color: Unique color for each input parameter
+        
+        Parameters:
+            S1_all (np.ndarray): First-order Sobol indices, shape (n_outputs, n_params)
+            ST_all (np.ndarray): Total-order Sobol indices, shape (n_outputs, n_params)
+            index_type (str): 'First-Order' for S1 or 'Total-Order' for ST. Determines which matrix to plot.
+        """
+        
+        print(f"\nGenerating Sobol {index_type} Bubble Plot...")
+        
+        sobol_indices = S1_all if index_type == 'First-Order' else ST_all
+
+        # Output labels need to be created by combining the name, experiment, and subexperiment
+        output_labels = [
+            self.obs_info['names_for_plotting'][i] 
+            for i in range(sobol_indices.shape[0])
+        ]
+        param_labels = self.SA_cfg["param_names"]
+        
+        n_outputs = sobol_indices.shape[0]
+        n_params = sobol_indices.shape[1]
+
+        sns.set_theme(style="white", context="notebook") # Use a clean white background
+        
+        fig_width = max(10, n_params * 0.7) # Adjust based on number of parameters
+        fig_height = max(6, n_outputs * 0.7) # Adjust based on number of outputs        
+        fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+
+        param_colors = sns.color_palette("hsv", n_params) 
+
+        # Max bubble size scaling - adjust as needed
+        # A base size, and then scale by a factor related to the max index
+        max_sobol_val = np.nanmax(sobol_indices) 
+        if np.isclose(max_sobol_val, 0): # Avoid division by zero if all values are zero
+            max_sobol_val = 1
+        
+        # Scale bubble sizes: small values get small bubbles, large values get large ones
+        # A common way is to scale by value / max_value * some_max_display_size
+        BASE_BUBBLE_SIZE = 10 
+        MAX_DISPLAY_BUBBLE_SIZE = 800 # Max size in points, adjust as necessary
+
+        for i in range(n_outputs):  
+            for j in range(n_params): 
+                sobol_val = sobol_indices[i, j]
+                
+                # Only plot if the sensitivity is non-zero/non-negligible
+                if not np.isnan(sobol_val) and sobol_val > 0.005:
+                    
+                    # Use a specific color for each parameter, cycling if n_params > len(palette)
+                    bubble_color = param_colors[j % len(param_colors)]
+                    
+                    bubble_size = BASE_BUBBLE_SIZE + (sobol_val / max_sobol_val) * (MAX_DISPLAY_BUBBLE_SIZE - BASE_BUBBLE_SIZE)
+                    
+                    ax.scatter(j, i, 
+                            s=bubble_size,      # Size of the marker
+                            color=bubble_color,
+                            edgecolor='black',  # Black outline for bubbles
+                            linewidth=0.5,
+                            alpha=0.8,
+                            zorder=3) # Ensure bubbles are on top of grid
+
+        ax.set_yticks(np.arange(n_outputs))
+        ax.set_yticklabels(output_labels, fontsize=12)
+        ax.set_ylabel('Model Output', fontsize=14, labelpad=20)
+        ax.set_xticks(np.arange(n_params))
+        
+        ax.set_xticklabels(param_labels, rotation=45, ha='left', fontsize=12) 
+        for tick_label, color in zip(ax.get_xticklabels(), param_colors):
+            tick_label.set_color(color)
+            tick_label.set_weight('bold') # Make parameter names bold
+
+        ax.set_xlabel('Input Parameter', fontsize=14, labelpad=20)
+        
+        ax.grid(False) 
+        ax.set_facecolor('white') 
+
+        # Add light grey horizontal bands for outputs for better readability (like in image)
+        for i in range(0, n_outputs, 2):
+            ax.axhspan(i - 0.5, i + 0.5, facecolor='lightgray', alpha=0.3, zorder=0)
+
+        ax.set_xlim(-0.5, n_params - 0.5)
+        ax.set_ylim(-0.5, n_outputs - 0.5)
+
+        total_samples = self.num_samples * (self.num_params + 2) if hasattr(self, 'num_params') else 'N/A'
+        plt.title(f'Sobol {index_type} Sensitivity (N={total_samples})', fontsize=16, pad=20)        
+        plt.tight_layout(rect=[0, 0, 1, 0.95]) # Adjust layout to make room for title
+
+        # Save Figure
+        file_name = f"{index_type.replace('-', '_').replace(' ', '_')}_Sobol_Bubble_Plot.png"
+        save_path = os.path.join(self.save_path, file_name)
+        plt.savefig(save_path, bbox_inches='tight', dpi=300)
+        plt.close()
+        print(f"Saved {index_type} bubble plot to {save_path}")
 
     def run(self):
         samples = self.generate_samples()
