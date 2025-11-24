@@ -18,3 +18,7 @@ If you need to install specific python libraries that aren't installed in the ab
 will need to install a separate OpenCOR and install the libraries. See getting-started for how to install python libraries, 
 the process should be the same on the HPC.
 
+!!! warning
+    Before installing mpi4py in your separate OpenCOR, make sure you load mpi with
+    
+    `module load mpi/mpich-x86_64 && echo "succesfully loaded mpi/mpich-x86_64"`

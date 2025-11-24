@@ -71,7 +71,7 @@ class CVS0DParamID():
                  params_for_id_path=None,
                  param_id_obs_path=None, sim_time=2.0, pre_time=20.0, dt=0.01,
                  solver_info=None, mcmc_options=None, ga_options=None, DEBUG=False,
-                 param_id_output_dir=None, resources_dir=None):
+                 param_id_output_dir=None, resources_dir=None, one_rank=False):
         self.model_path = model_path
         self.param_id_method = param_id_method
         self.mcmc_instead = mcmc_instead
@@ -109,7 +109,8 @@ class CVS0DParamID():
         else:
             self.resources_dir = resources_dir
 
-        self.comm.Barrier()
+        if one_rank is False:
+            self.comm.Barrier()
 
         self.DEBUG = DEBUG
         # if self.DEBUG:
@@ -408,6 +409,16 @@ class CVS0DParamID():
                                                     color=self.obs_info['plot_colors'][II], linestyle='-', 
                                                     label=f'{self.obs_info["operations"][II]} output')
                         elif self.obs_info['plot_type'][II] == 'vertical':
+                            # plot a vertical line at the t (x) value of the constant
+                            axs.axvline(x=self.obs_info["ground_truth_const"][const_idx] - 
+                                        self.protocol_info['pre_times'][exp_idx],
+                                        color=self.obs_info['plot_colors'][II],
+                                        linestyle='--', label=f'{self.obs_info["operations"][II]} desired')
+                            axs.axvline(x=best_fit_obs_const[const_idx] - 
+                                        self.protocol_info['pre_times'][exp_idx],
+                                        color=self.obs_info['plot_colors'][II],
+                                        label=f'{self.obs_info["operations"][II]} output')
+                        elif self.obs_info['plot_type'][II] == 'vertical_from_subexp_start':
                             # calculate the t value, t values should be set as from the start of the subexperiment
                             t_gt = self.obs_info["ground_truth_const"][const_idx] + \
                                     tSim_per_sub_count[subexp_count][0] 
@@ -421,7 +432,6 @@ class CVS0DParamID():
                             axs.axvline(x=t_bf,
                                         color=self.obs_info['plot_colors'][II],
                                         label=f'{self.obs_info["operations"][II]} output')
-
                         elif self.obs_info['plot_type'][II] == None:
                             pass
                         else:
@@ -1346,6 +1356,7 @@ class CVS0DParamID():
                 for JJ in range(len(self.param_id_info["param_mins"])):
                     if self.param_id_info["param_maxs"][JJ] <= self.param_id_info["param_mins"][JJ]:
                         raise ValueError(f"Parameter {self.param_id_info['param_names'][JJ]} has max <= min")
+            
 
             # set param_priors
             if "prior" in input_params.columns:
@@ -1364,6 +1375,10 @@ class CVS0DParamID():
             with open(os.path.join(self.output_dir, 'param_names_for_gen.csv'), 'w') as f:
                 wr = csv.writer(f)
                 wr.writerows(param_names_for_gen)
+            # save param_names_for_plotting to csv
+            with open(os.path.join(self.output_dir, 'param_names_for_plotting.csv'), 'w') as f:
+                for name in self.param_id_info["param_names_for_plotting"]:
+                    f.write(name + '\n')
         return
 
     def __get_ground_truth_values(self):
@@ -2575,6 +2590,59 @@ class OpencorParamID():
         cost = self.get_cost_and_obs_from_params(param_vals, reset=reset)[0]
         return cost
     
+    def get_lnprior_from_params(self, param_vals):
+        lnprior = 0
+        for idx, param_val in enumerate(param_vals):
+            if self.param_id_info["param_prior_types"] is not None:
+                prior_dist = self.param_id_info["param_prior_types"][idx]
+            else:
+                prior_dist = None
+
+            if not prior_dist or prior_dist == 'uniform':
+                if param_val < self.param_id_info["param_mins"][idx] or param_val > self.param_id_info["param_maxs"][idx]:
+                    return -np.inf
+                else:
+                    #prior += 0
+                    pass
+            
+            elif prior_dist == 'exponential':
+                lamb = 1.0 # TODO make this user modifiable
+                if param_val < self.param_id_info["param_mins"][idx] or param_val > self.param_id_info["param_maxs"][idx]:
+                    return -np.inf
+                else:
+                    # the normalisation isnt needed here but might be nice to
+                    # make sure prior for each param is between 0 and 1
+                    lnprior += -lamb*param_val/self.param_id_info["param_maxs"][idx]
+
+            elif prior_dist == 'normal':
+                if param_val < self.param_id_info["param_mins"][idx] or param_val > self.param_id_info["param_maxs"][idx]:
+                    return -np.inf
+                else:
+                    # temporarily make the std 1/6 of the user defined range and the mean the centre of the range
+                    std = 1/6*(self.param_id_info["param_maxs"][idx] - self.param_id_info["param_mins"][idx])
+                    mean = 0.5*(self.param_id_info["param_maxs"][idx] + self.param_id_info["param_mins"][idx])
+                    lnprior += -0.5*((param_val - mean)/std)**2
+
+
+        return lnprior
+
+    def get_lnlikelihood_lnprior_from_params(self, param_vals, reset=True):
+        lnprior = self.get_lnprior_from_params(param_vals)
+
+        if not np.isfinite(lnprior):
+            return -np.inf
+
+        lnlikelihood = self.get_lnlikelihood_from_params(param_vals)
+
+        return lnprior + lnlikelihood
+
+
+    def get_lnlikelihood_from_params(self, param_vals):
+        cost = self.get_cost_from_params(param_vals)
+        lnlikelihood = -0.5*cost # TODO check this is correct for all multimodal distributions
+
+        return lnlikelihood
+    
     def get_pred_from_params(self, param_vals, reset=True, 
                                           only_one_exp=-1, pred_names=None):
         _, _, pred = self.get_cost_obs_and_pred_from_params(param_vals, reset=reset,
@@ -3091,22 +3159,24 @@ class OpencorMCMC(OpencorParamID):
 
             try:
                 pool = MPIPool() # workers dont get past this line in this try, they wait for work to do
-                if mcmc_lib == 'emcee':
-                    self.sampler = emcee.EnsembleSampler(self.mcmc_options['num_walkers'], self.num_params, calculate_lnlikelihood,
-                                                pool=pool)
-                elif mcmc_lib == 'zeus':
-                    self.sampler = zeus.EnsembleSampler(self.mcmc_options['num_walkers'], self.num_params, calculate_lnlikelihood,
-                                                         pool=pool)
-
-                start_time = time.time()
-                self.sampler.run_mcmc(init_param_vals.T, self.mcmc_options['num_steps'], progress=True, tune=True)
-                print(f'mcmc time = {time.time() - start_time}')
             except:
-                if rank == 0:
-                    sys.exit()
-                else:
-                    # workers pass to here
-                    pass
+                return
+
+            if not pool.is_master():
+                pool.wait()
+                return
+
+            if mcmc_lib == 'emcee':
+                self.sampler = emcee.EnsembleSampler(self.mcmc_options['num_walkers'], self.num_params, calculate_lnlikelihood,
+                                            pool=pool)
+            elif mcmc_lib == 'zeus':
+                self.sampler = zeus.EnsembleSampler(self.mcmc_options['num_walkers'], self.num_params, calculate_lnlikelihood,
+                                                        pool=pool)
+
+            start_time = time.time()
+            self.sampler.run_mcmc(init_param_vals.T, self.mcmc_options['num_steps'], progress=True, tune=True)
+            print(f'mcmc time = {time.time() - start_time}')
+            pool.close()
 
         else:
             if self.best_param_vals is not None:
@@ -3177,58 +3247,6 @@ class OpencorMCMC(OpencorParamID):
                     print('cost from mcmc median param vals is {}'.format(mcmc_best_cost))
                     print('Keeping the genetic algorithm best fit as it is lower, ({})'.format(self.best_cost))
 
-    def get_lnprior_from_params(self, param_vals):
-        lnprior = 0
-        for idx, param_val in enumerate(param_vals):
-            if self.param_id_info["param_prior_types"] is not None:
-                prior_dist = self.param_id_info["param_prior_types"][idx]
-            else:
-                prior_dist = None
-
-            if not prior_dist or prior_dist == 'uniform':
-                if param_val < self.param_id_info["param_mins"][idx] or param_val > self.param_id_info["param_maxs"][idx]:
-                    return -np.inf
-                else:
-                    #prior += 0
-                    pass
-            
-            elif prior_dist == 'exponential':
-                lamb = 1.0 # TODO make this user modifiable
-                if param_val < self.param_id_info["param_mins"][idx] or param_val > self.param_id_info["param_maxs"][idx]:
-                    return -np.inf
-                else:
-                    # the normalisation isnt needed here but might be nice to
-                    # make sure prior for each param is between 0 and 1
-                    lnprior += -lamb*param_val/self.param_id_info["param_maxs"][idx]
-
-            elif prior_dist == 'normal':
-                if param_val < self.param_id_info["param_mins"][idx] or param_val > self.param_id_info["param_maxs"][idx]:
-                    return -np.inf
-                else:
-                    # temporarily make the std 1/6 of the user defined range and the mean the centre of the range
-                    std = 1/6*(self.param_id_info["param_maxs"][idx] - self.param_id_info["param_mins"][idx])
-                    mean = 0.5*(self.param_id_info["param_maxs"][idx] + self.param_id_info["param_mins"][idx])
-                    lnprior += -0.5*((param_val - mean)/std)**2
-
-
-        return lnprior
-
-    def get_lnlikelihood_lnprior_from_params(self, param_vals, reset=True):
-        lnprior = self.get_lnprior_from_params(param_vals)
-
-        if not np.isfinite(lnprior):
-            return -np.inf
-
-        lnlikelihood = self.get_lnlikelihood_from_params(param_vals)
-
-        return lnprior + lnlikelihood
-
-
-    def get_lnlikelihood_from_params(self, param_vals):
-        cost = self.get_cost_from_params(param_vals)
-        lnlikelihood = -0.5*cost # TODO check this is correct for all multimodal distributions
-
-        return lnlikelihood
 
     def calculate_pred_from_posterior_samples(self, flat_samples, n_sims=100):
         # idxs of output are [exp_idx][sim_idx, pred_idx, time_idx]
@@ -3253,6 +3271,107 @@ class OpencorMCMC(OpencorParamID):
         # idxs of output are [exp_idx][sim_idx, pred_idx, time_idx]
         return pred_arrays_per_exp_list
 
+class MCMC_plotter:
+    """
+    This class contains plotting wrapper for mcmc
+    """
+
+    def __init__(self, model_path, model_type, param_id_method, file_name_prefix,
+                 params_for_id_path=None, num_calls_to_function=1000,
+                 param_id_obs_path=None, sim_time=2.0, pre_time=20.0, 
+                 solver_info=None, 
+                 dt=0.01, mcmc_options=None, ga_options=None,
+                 param_id_output_dir=None, resources_dir=None,
+                 DEBUG=False):
+
+        self.model_path = model_path
+        self.model_type = model_type
+        self.param_id_method = param_id_method
+        self.file_name_prefix = file_name_prefix
+        self.params_for_id_path = params_for_id_path
+        self.num_calls_to_function = num_calls_to_function
+        self.param_id_obs_path = param_id_obs_path
+        self.sim_time = sim_time
+        self.pre_time = pre_time
+        self.solver_info = solver_info
+        self.dt = dt
+        self.DEBUG =DEBUG
+        
+        self.comm = MPI.COMM_WORLD
+        self.rank = self.comm.Get_rank()
+        
+        self.param_id_obs_file_prefix = re.sub('\.json', '', os.path.split(param_id_obs_path)[1])
+        case_type = f'{param_id_method}_{file_name_prefix}_{self.param_id_obs_file_prefix}'
+        if self.rank == 0:
+            if param_id_output_dir is None:
+                self.param_id_output_dir = os.path.join(os.path.dirname(__file__), '../../param_id_output')
+            else:
+                self.param_id_output_dir = param_id_output_dir
+            
+            if not os.path.exists(self.param_id_output_dir):
+                os.mkdir(self.param_id_output_dir)
+            self.output_dir = os.path.join(self.param_id_output_dir, f'{case_type}')
+            if not os.path.exists(self.output_dir):
+                os.mkdir(self.output_dir)
+            self.plot_dir = os.path.join(self.output_dir, 'plots_param_id')
+            if not os.path.exists(self.plot_dir):
+                os.mkdir(self.plot_dir)
+        
+        if resources_dir is None:
+            self.resources_dir = os.path.join(os.path.dirname(__file__), '../../resources')
+        else:
+            self.resources_dir = resources_dir
+
+
+        self.best_param_vals = None
+        self.best_param_names = None
+
+        self.mcmc_options = mcmc_options
+
+        # thresholds for identifiability TODO optimise these
+        self.threshold_param_importance = 0.1
+        self.keep_threshold_param_importance = 0.8
+        self.threshold_collinearity = 20
+        self.threshold_collinearity_pairs = 10
+        self.second_deriv_threshold = -1000
+
+        self.comm = MPI.COMM_WORLD
+        self.rank = self.comm.Get_rank()
+        self.num_procs = self.comm.Get_size()
+
+    def plot_mcmc_and_predictions(self, mcmc=None):
+        if self.rank != 0:
+            return
+        if mcmc == None:
+            print('creating mcmc object')
+            if self.rank == 0:
+                mcmc = CVS0DParamID(self.model_path, self.model_type, self.param_id_method, True,
+                                    self.file_name_prefix,
+                                    params_for_id_path=self.params_for_id_path,
+                                    param_id_obs_path=self.param_id_obs_path,
+                                    sim_time=self.sim_time, pre_time=self.pre_time, dt=self.dt,
+                                    param_id_output_dir=self.param_id_output_dir, resources_dir=self.resources_dir,
+                                    solver_info=self.solver_info, mcmc_options=self.mcmc_options,
+                                    DEBUG=self.DEBUG, one_rank=True)
+                if os.path.exists(os.path.join(mcmc.output_dir, 'param_names_to_remove.csv')):
+                    with open(os.path.join(mcmc.output_dir, 'param_names_to_remove.csv'), 'r') as r:
+                        param_names_to_remove = []
+                        for row in r:
+                            name_list = row.split(',')
+                            name_list = [name.strip() for name in name_list]
+                            param_names_to_remove.append(name_list)
+                    mcmc.remove_params_by_name(param_names_to_remove)
+
+        if self.best_param_vals is not None:
+            self.best_param_vals = np.load(os.path.join(mcmc.output_dir, 'best_param_vals.npy'))
+
+        mcmc.set_best_param_vals(self.best_param_vals)
+
+        print('Plotting mcmc parameter distributions')
+        mcmc.plot_mcmc()
+        print('Plotting core predictions distribution to check uncertainty on predictions')
+        mcmc.postprocess_predictions()
+        print('Plotting complete')
 
 class ProgressBar(object):
     """

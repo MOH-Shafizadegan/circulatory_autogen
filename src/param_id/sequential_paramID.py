@@ -63,7 +63,7 @@ class SequentialParamID:
                                 param_id_obs_path=param_id_obs_path,
                                 sim_time=sim_time, pre_time=pre_time,
                                 solver_info=self.solver_info, dt=dt, ga_options=ga_options, DEBUG=DEBUG,
-                                param_id_output_dir=self.param_id_output_dir, resources_dir=resources_dir)
+                                param_id_output_dir=self.param_id_output_dir, resources_dir=resources_dir, one_rank=True)
 
 
         self.param_id.set_genetic_algorithm_parameters(num_calls_to_function)

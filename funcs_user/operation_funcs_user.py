@@ -131,8 +131,25 @@ def first_peak_time(t, V, series_output=False, spike_min_thresh=None):
     if len(peak_idxs) == 0:
         # there are no peaks, return the time of the subexperiment
         return t[-1]
-    t_first_peak = t[peak_idxs[0]] - t[0] # this would calc from start of subexperiment but there are plotting issues
-    # t_first_peak = t[peak_idxs[0]] # this is from the start of the pre_time, not the start of experiment.
+    
+    t_first_peak = t[peak_idxs[0]] # this is from the start of the pre_time, not the start of experiment.
+    return t_first_peak
+
+@series_to_constant
+def first_peak_time_from_subexp_start(t, V, series_output=False, spike_min_thresh=None):
+    """ 
+    returns the time value (time from start of the subexp, NOT the start of 
+    experiment) that the first peak occurs
+    """
+    if series_output:
+        return V
+    peak_idxs, peak_properties = find_peaks(V, height=spike_min_thresh)
+    
+    if len(peak_idxs) == 0:
+        # there are no peaks, return the time of the subexperiment
+        return t[-1]
+    
+    t_first_peak = t[peak_idxs[0]] - t[0] # this calcs from start of subexperiment but there are plotting issues
     return t_first_peak
 
 @series_to_constant

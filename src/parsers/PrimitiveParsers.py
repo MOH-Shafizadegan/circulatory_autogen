@@ -177,6 +177,46 @@ class YamlFileParser(object):
 
         if not 'external_modules_dir' in inp_data_dict.keys():
             inp_data_dict['external_modules_dir'] = None
+        
+        # for sensitivity analysis and parameter identification
+        if inp_data_dict['sa_options'] is None:
+            inp_data_dict['sa_options'] = {
+                'method': 'sobol',
+                'num_samples': 32,
+                'sample_type': 'saltelli',
+                'output_dir': os.path.join(root_dir, 'sensitivity_outputs', file_prefix + '_SA_results')
+            }
+        else:
+            if 'output_dir' not in inp_data_dict['sa_options'].keys():
+                inp_data_dict['sa_options']['output_dir'] = os.path.join(root_dir, 'sensitivity_outputs', file_prefix + '_SA_results')  
+            else:
+                if not os.path.isabs(inp_data_dict['sa_options']['output_dir']):
+                    inp_data_dict['sa_options']['output_dir'] = os.path.join(root_dir, 'sensitivity_outputs', inp_data_dict['sa_options']['output_dir']) 
+            
+            if not os.path.exists(inp_data_dict['sa_options']['output_dir']):
+                os.makedirs(inp_data_dict['sa_options']['output_dir'])
+            
+            if 'method' not in inp_data_dict['sa_options'].keys():
+                print('No method specified for sensitivity analysis, setting to sobol by default')
+                inp_data_dict['sa_options']['method'] = 'sobol'
+            if 'num_samples' not in inp_data_dict['sa_options'].keys():
+                print('No num_samples specified for sensitivity analysis, setting to 32 by default')
+                inp_data_dict['sa_options']['num_samples'] = 32
+            if 'sample_type' not in inp_data_dict['sa_options'].keys():
+                print('No sample_type specified for sensitivity analysis, setting to saltelli by default')
+                inp_data_dict['sa_options']['sample_type'] = 'saltelli'
+            
+        if 'do_ia' not in inp_data_dict.keys():
+            inp_data_dict['do_ia'] = False
+        
+        if 'ia_options' not in inp_data_dict.keys():
+            inp_data_dict['ia_options'] = {
+                'method': 'Laplace'
+            }
+        else:
+            if 'method' not in inp_data_dict['ia_options'].keys():
+                print('No method specified for identifiability analysis, setting to Laplace by default')
+                inp_data_dict['ia_options']['method'] = 'Laplace'
 
         # for generation only
     

@@ -14,7 +14,7 @@ IA is run following a parameter identification run.
 
 To run IA, you need to set 
 ```
-do_id_analysis: True
+do_ia: True
 ```
 
 and add a specific `ia_options` block to your `user_inputs.yaml` configuration file:

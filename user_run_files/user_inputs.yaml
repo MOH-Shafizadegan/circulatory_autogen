@@ -51,11 +51,12 @@ dt: 0.01 # This should be smaller than all of the dt in your obs_data.json file.
 # These are inputs to solver_properties of the solver
 solver_info:
   # Maximum time step for solver
-  MaximumStep: 0.0001
+  MaximumStep: 0.001
   MaximumNumberOfSteps: 5000
 
+# param_id_obs_path needs to be an absolute path.
 # This for 3compartment
-# param_id_obs_path: /home/farg967/Documents/git_projects/circulatory_autogen/resources/3compartment_obs_data.json
+param_id_obs_path: /home/farg967/Documents/git_projects/circulatory_autogen/resources/3compartment_obs_data.json
 # param_id_obs_path: /home/farg967/Documents/test/resources/3compartment_obs_data.json
 # param_id_obs_path: /hpc/bghi639/Software/circulatory_autogen/resources/simple_physiological_nonlinear_visco_obs_data.json
 
@@ -77,7 +78,7 @@ debug_ga_options:
   cost_convergence: 0.001
 
 #______ mcmc inputs ___________
-do_mcmc: false
+do_mcmc: False
 mcmc_options:
   num_steps: 1000
   num_walkers: 64
@@ -93,11 +94,12 @@ debug_mcmc_options:
 
 sa_options:
   method: sobol 
-  SA_sample_type: 'saltelli'
-  num_SA_samples: 32
+  sample_type: 'saltelli'
+  num_samples: 256 # this is multiplied by (2M + 2) to get the actual number of samples (M is the number of parameters).
+    # output_dir: /non/default/path
 
 # identifiability analysis
-do_id_analysis: false
+do_ia: True
 ia_options:
   method: Laplace # profile_likelihood
 

@@ -191,8 +191,8 @@ def calculate_hessian(param_id, AD=False):
         raise NotImplementedError("Automatic differentiation not implemented yet.")
 
     else:
-        # calculate hessian with finite differences
-        hessian = hessian_fd(param_id.get_cost_from_params, best_params, eps=epsilon)
+        # calculate hessian of the lnlikelihood with finite differences
+        hessian = hessian_fd(param_id.get_lnlikelihood_lnprior_from_params, best_params, eps=epsilon)
     return hessian
 
         

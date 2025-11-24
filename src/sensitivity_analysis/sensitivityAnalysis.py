@@ -82,13 +82,13 @@ class SensitivityAnalysis():
         comm = MPI.COMM_WORLD
         rank = comm.Get_rank()
 
-        num_SA_samples = sa_options['num_SA_samples']
-        SA_sample_type = sa_options['SA_sample_type']
-        SA_output_dir = sa_options['SA_output_dir']
+        num_samples = sa_options['num_samples']
+        sample_type = sa_options['sample_type']
+        output_dir = sa_options['output_dir']
 
         SA_cfg = {
-            "sample_type" : SA_sample_type,
-            "num_samples": num_SA_samples,
+            "sample_type" : sample_type,
+            "num_samples": num_samples,
         }
 
         if self.param_id_obs_path is None or self.params_for_id_path is None:
@@ -96,13 +96,13 @@ class SensitivityAnalysis():
             exit()
 
         SA_manager = sobol_SA(self.model_path, self.model_out_names, self.solver_info, SA_cfg, self.dt, 
-                            SA_output_dir, param_id_path=self.param_id_obs_path, params_for_id_path=self.params_for_id_path,
+                            output_dir, param_id_path=self.param_id_obs_path, params_for_id_path=self.params_for_id_path,
                             verbose=False, use_MPI=True, ga_options=self.ga_options)
         S1_all, ST_all, S2_all = SA_manager.run()
 
         if rank == 0:
             print(f"{GREEN}Sensitivity analysis completed successfully :){RESET}")
-            print(f'{CYAN}saving results in {SA_output_dir}{RESET}')
+            print(f'{CYAN}saving results in {output_dir}{RESET}')
             SA_manager.plot_sobol_first_order_idx(S1_all, ST_all)
             SA_manager.plot_sobol_S2_idx(S2_all)
 

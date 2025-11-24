@@ -2,6 +2,7 @@ import os
 import sys
 import yaml
 import traceback
+from mpi4py import MPI
 
 root_dir_path = os.path.join(os.path.dirname(__file__), '../..')
 sys.path.append(os.path.join(root_dir_path, 'src'))
@@ -14,8 +15,13 @@ if __name__ == '__main__':
         with open(os.path.join(user_inputs_dir, 'user_inputs.yaml'), 'r') as file:
             inp_data_dict = yaml.load(file, Loader=yaml.FullLoader)
 
-        print('_________Running all param_id tests_____________')
-        print('')
+        comm = MPI.COMM_WORLD
+        rank = comm.Get_rank()
+        num_procs = comm.Get_size()
+        if rank == 0:
+            print('_________Running all sensitivity analysis tests_____________')
+            print('')
+
 
         if 'user_inputs_path_override' in inp_data_dict.keys():
             del inp_data_dict['user_inputs_path_override']
@@ -28,8 +34,9 @@ if __name__ == '__main__':
         if 'param_id_output_dir' in inp_data_dict.keys():
             del inp_data_dict['param_id_output_dir']
         
-        print('')
-        print('running 3compartment parameter id test')
+        if rank == 0:
+            print('')
+            print('running 3compartment SA test')
         inp_data_dict['file_prefix'] = '3compartment'
         inp_data_dict['input_param_file'] = '3compartment_parameters.csv'
         inp_data_dict['param_id_method'] = 'genetic_algorithm'
@@ -48,9 +55,9 @@ if __name__ == '__main__':
         inp_data_dict['model_out_names'] = ['heart/u_lv']
         inp_data_dict['sa_options'] = {
             'method': 'sobol',
-            'num_SA_samples': 256,
-            'SA_sample_type': 'saltelli',
-            'SA_output_dir': os.path.join(root_dir_path, 'sensitivity_outputs/3compartment_SA_results')
+            'num_samples': 256,
+            'sample_type': 'saltelli',
+            'output_dir': os.path.join(root_dir_path, 'sensitivity_outputs/3compartment_SA_results')
         }
 
         run_SA(inp_data_dict)
