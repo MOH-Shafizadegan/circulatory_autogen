@@ -23,6 +23,10 @@ from mpi4py import MPI
 from parsers.PrimitiveParsers import CSVFileParser
 import csv
 from tqdm import tqdm  # make sure tqdm is installed
+import pandas as pd
+import datetime
+import corner
+from matplotlib.ticker import MaxNLocator, ScalarFormatter # Import necessary tools
 
 class sobol_SA():
 
@@ -37,7 +41,7 @@ class sobol_SA():
         
     def __init__(self, model_path, model_out_names, solver_info, SA_cfg, dt, save_path, 
                  param_id_path = None, params_for_id_path=None, use_MPI = False, verbose=False, ga_options=None,
-                 sim_time=2.0, pre_time=20.0):
+                 sim_time=2.0, pre_time=20.0, feature_lookup_ranges=None):
 
         """
         Initializes the Sensitivity_analysis class.
@@ -98,6 +102,18 @@ class sobol_SA():
         if self.params_for_id_path:
             self.__set_and_save_param_names()
         self.SA_cfg = self.create_SA_cfg(self.sample_type, SA_cfg["num_samples"])
+
+        self.set_feature_lookup_ranges()
+
+    def set_feature_lookup_ranges(self):
+        feature_lookup_ranges = {}
+        for i, lookup_range in enumerate(self.obs_info.get("faeture_range", [{}]*len(self.obs_info["obs_names"]))):
+            if lookup_range and isinstance(lookup_range, dict) and "min" in lookup_range and "max" in lookup_range:
+                feature_lookup_ranges[str(i)] = (lookup_range["min"], lookup_range["max"])
+            else:
+                feature_lookup_ranges[str(i)] = (-np.inf, np.inf)
+        self.feature_lookup_ranges = feature_lookup_ranges
+        
 
     def create_SA_cfg(self, sample_type, num_samples):
         
@@ -327,6 +343,7 @@ class sobol_SA():
         self.obs_info["operands"] = []
         self.obs_info["freqs"] = []
         self.obs_info["operation_kwargs"] = []
+        self.obs_info["faeture_range"] = []
         # below we remove the need for obs_types, but keep it backwards compatible so 
         # previous specifications of obs_type = mean etc should still work
         for II in range(self.gt_df.shape[0]):
@@ -383,6 +400,11 @@ class sobol_SA():
                 self.obs_info["operation_kwargs"].append(self.gt_df.iloc[II]["operation_kwargs"])
             else:
                 self.obs_info["operation_kwargs"].append({})
+
+            if "lookup_range" in self.gt_df.iloc[II].keys():
+                self.obs_info["faeture_range"].append(self.gt_df.iloc[II]["lookup_range"])
+            else:
+                self.obs_info["faeture_range"].append({})
 
         self.obs_info["num_obs"] = len(self.obs_info["obs_names"])
 
@@ -589,6 +611,11 @@ class sobol_SA():
         return operands
     
     def generate_outputs_mpi(self, samples):
+
+        failed_params = []     # 1. Simulation failures
+        warning_params = []    # 2. Feature extraction warnings
+        lookup_range_params = []   # 3. Outputs within provided range
+
         # Split samples across ranks
         n_samples = len(samples)
         samples_per_rank = n_samples // self.num_procs
@@ -611,6 +638,10 @@ class sobol_SA():
         with tqdm(total=len(local_samples), desc=f"Rank {self.rank}", position=self.rank, leave=True) as pbar:
             for param_vals in local_samples:
 
+                sim_failed = False      # internal tracking
+                warn_flag = False
+                lookup_range_flag = False    # if provided
+
                 # --- handle single vs multi subexperiment ---
                 if self.protocol_info["num_sub_total"] == 1:
                     # simple case (one experiment only)
@@ -619,15 +650,45 @@ class sobol_SA():
                     success = self.sim_helper.run()
 
                     operands_outputs_dict = {}
+
+                    retry_count = 0
+                    max_retries = 0
+                    original_MaximumStep = self.solver_info.get("MaximumStep", None)
+                    original_MaximumNumberOfSteps = self.solver_info.get("MaximumNumberOfSteps", None)
+
+                    while not success and retry_count < max_retries:
+
+                        original_MaximumStep = self.solver_info.get("MaximumStep", None)
+                        reduced_MaximumStep = original_MaximumStep / 2 if original_MaximumStep else 0.001
+                        increased_MaximumNumberOfSteps = original_MaximumNumberOfSteps * 2 if original_MaximumNumberOfSteps else 1000000
+                        retry_count += 1
+                        # Reduce max_dt for retry
+                        self.solver_info["MaximumStep"] = reduced_MaximumStep
+                        self.solver_info["MaximumNumberOfSteps"] = increased_MaximumNumberOfSteps
+                                
+                        self.sim_helper.set_param_vals(self.param_id_info["param_names"], param_vals)
+                        self.sim_helper.reset_states()
+                        success = self.sim_helper.run()
+
+                        # Restore original max_dt after retries
+                        self.solver_info["MaximumStep"] = original_MaximumStep
+                        self.solver_info["MaximumNumberOfSteps"] = original_MaximumNumberOfSteps
+                    
                     if success:
                         operands_outputs = self.sim_helper.get_results(self.obs_info["operands"])
-                        # For single experiment and subexperiment, use (0, 0) as key
                         operands_outputs_dict[(0, 0)] = operands_outputs
+
+                        self.sim_helper.reset_and_clear()
                     else:
-                        print(f"[MPI Rank {self.rank}] Simulation failed for params: {param_vals}")
-                        local_outputs.append([np.inf])  # fail marker
-                        pbar.update(1)
-                        continue
+                        print(f"[MPI Rank {self.rank}] Simulation failed for params: {param_vals}, subexp={subexp_count} after {retry_count} retries")
+                        # Set a flag in operands_outputs_dict to indicate failure
+                        operands_outputs_dict[(0, 0)] = {"failed": True}
+
+                        sim_failed = True
+                        failed_params.append(param_vals)
+
+                        # reset at the end of each experiment
+                        self.sim_helper.reset_and_clear()
 
                 else:
                     # multiple subexperiments
@@ -697,7 +758,9 @@ class sobol_SA():
                                 print(f"[MPI Rank {self.rank}] Simulation failed for params: {param_vals}, subexp={subexp_count} after {retry_count} retries")
                                 # Set a flag in operands_outputs_dict to indicate failure
                                 operands_outputs_dict[(exp_idx, this_sub_idx)] = {"failed": True}
-
+                                sim_failed = True
+                                failed_params.append(param_vals)
+                                
                                 # reset at the end of each experiment
                                 if this_sub_idx == self.protocol_info["num_sub_per_exp"][exp_idx] - 1:
                                     self.sim_helper.reset_and_clear()
@@ -710,12 +773,36 @@ class sobol_SA():
                     operands_outputs = operands_outputs_dict.get((exp_idx, subexp_idx), None)
                     if operands_outputs is not None and not (isinstance(operands_outputs, dict) and operands_outputs == {"failed": True}):
                         feature = func(*operands_outputs[j], **self.obs_info["operation_kwargs"][j])
-                        features.append(feature)
+                        
+                        # If function returns (value, warning)
+                        if isinstance(feature, tuple):
+                            val, flag = feature
+                            features.append(val)
+                            if flag:
+                                warn_flag = True
+                        else:
+                            features.append(feature)
+
                     else:
                         # WARNING: using mean biases variance estimates (shrinks variance), underestimates sensitivity
                         # TODO: come up with a better way to impute missing features
                         # Append the mean of the current features (ignoring None) -> reduces variance and bias induces toward zero
                         features.append(np.mean(features))
+
+                if warn_flag:
+                    warning_params.append((param_vals, features))
+
+                if hasattr(self, "feature_lookup_ranges"):
+                    print(">>>>>>>>")
+                    for i, f in enumerate(features):
+                        f_min, f_max = self.feature_lookup_ranges[f"{i}"]
+                        print(f"Feature {i}: {f}, Range: ({f_min}, {f_max})")
+                        if not (f_min <= f <= f_max):
+                            print("break")
+                            lookup_range_flag = True
+                            break
+                    if lookup_range_flag:
+                        lookup_range_params.append((param_vals, features))
 
                 local_outputs.append(features)
                 pbar.update(1)
@@ -729,6 +816,19 @@ class sobol_SA():
             outputs = [item for sublist in all_outputs for item in sublist]
             outputs = np.array(outputs)
             print(f"[MPI Rank 0] Gathered and flattened all outputs. Total outputs: {outputs.shape}")
+
+            # Convert input samples to np.array
+            samples_arr = np.array(samples)
+
+            # Call the new function
+            self.save_output_results(
+                samples=samples_arr,
+                outputs=outputs,
+                failed_params=failed_params,
+                warning_params=warning_params,
+                lookup_range_params=lookup_range_params
+            )
+
             return outputs
         else:
             return None
@@ -989,7 +1089,7 @@ class sobol_SA():
         ax.set_xlim(-0.5, n_params - 0.5)
         ax.set_ylim(-0.5, n_outputs - 0.5)
 
-        total_samples = self.num_samples * (self.num_params + 2) if hasattr(self, 'num_params') else 'N/A'
+        total_samples = self.num_samples * (2*self.num_params + 2) if hasattr(self, 'num_params') else 'N/A'
         plt.title(f'Sobol {index_type} Sensitivity (N={total_samples})', fontsize=16, pad=20)        
         plt.tight_layout(rect=[0, 0, 1, 0.95]) # Adjust layout to make room for title
 
@@ -999,6 +1099,425 @@ class sobol_SA():
         plt.savefig(save_path, bbox_inches='tight', dpi=300)
         plt.close()
         print(f"Saved {index_type} bubble plot to {save_path}")
+
+    def save_output_results(self, samples, outputs, failed_params=None, warning_params=None, lookup_range_params=None):
+        """
+        Saves parameters and outputs, including tracking issues, into CSV files.
+        """
+
+        # 1) Save all samples + outputs
+        try:
+            param_labels = self.SA_cfg["param_names"]  # from sensitivity setup
+        except:
+            param_labels = [f"param_{i}" for i in range(samples.shape[1])]
+
+        try:
+            output_labels = self.obs_info['names_for_plotting']  # user-defined names
+        except:
+            output_labels = [f"feature_{i}" for i in range(outputs.shape[1])]
+        
+        df = pd.DataFrame(
+            np.hstack((samples, outputs)),
+            columns=param_labels + output_labels
+        )
+        file_name = "all_outputs.csv"
+        save_path = os.path.join(self.save_path, file_name)
+        df.to_csv(save_path, index=False)
+
+        # 2) Save failed simulation parameters
+        
+        if failed_params:
+            print(failed_params)
+            file_name = "failed_simulation.csv"
+            save_path = os.path.join(self.save_path, file_name)
+            pd.DataFrame(failed_params, columns=param_labels).to_csv(save_path, index=False)
+
+        # 3) Save feature extraction warnings
+        if warning_params:
+            file_name = "warnings.csv"
+            save_path = os.path.join(self.save_path, file_name)
+            pd.DataFrame([
+                {**{p: val for p, val in zip(param_labels, params)},
+                **{f: val for f, val in zip(output_labels, outputs_)},
+                "warning_flags": flags}
+                for params, outputs_, flags in warning_params
+            ]).to_csv(save_path, index=False)
+
+        # 4) Save outputs that meet desired range criteria
+        if lookup_range_params:
+            file_name = "lookup_range.csv"
+            save_path = os.path.join(self.save_path, file_name)
+            pd.DataFrame([
+                {**{p: val for p, val in zip(param_labels, params)},
+                **{f: val for f, val in zip(output_labels, outputs_)}}
+                for params, outputs_ in lookup_range_params
+            ]).to_csv(save_path, index=False)
+
+    def load_category_data(self):
+        """
+        Loads parameter CSVs for failed, warning, and lookup_range categories if they exist.
+
+        Returns:
+            df_all (pd.DataFrame): Combined dataframe with parameters and Category label.
+        """
+        category_files = {
+            "all": "all_outputs.csv",
+            "failed": "failed.csv",
+            "warning": "warning.csv",
+            "lookup_range": "lookup_range.csv"
+        }
+
+        df_list = []
+        param_labels = self.SA_cfg["param_names"]
+
+        for cat, filename in category_files.items():
+            file_path = os.path.join(self.save_path, filename)
+            if os.path.isfile(file_path):
+                try:
+                    df = pd.read_csv(file_path)
+                    df["Category"] = cat
+                    df_list.append(df[param_labels + ["Category"]])
+                    print(f"Loaded {filename}")
+                except Exception as e:
+                    print(f"⚠️ Error loading {filename}: {e}")
+            else:
+                print(f"ℹ️ {filename} not found, skipping.")
+
+        if not df_list:
+            raise ValueError("❌ No category CSV files were found.")
+
+        df_all = pd.concat(df_list, ignore_index=True)
+        return df_all
+    
+    def plot_corner_overlay_old(self, df: pd.DataFrame, param_names: list[str]):
+        """
+        Overlay all categories in a corner plot.
+        """
+        unique_categories = df["Category"].unique()
+        fig = None
+
+        for i, cat in enumerate(unique_categories):
+            data_cat = df[df["Category"] == cat][param_names].values
+            
+            print(data_cat)
+
+            fig = corner.corner(
+                data_cat,
+                fig=fig,
+                labels=param_names,
+                color=f"C{i}",
+                plot_datapoints=True,
+                plot_density=True,
+                hist_kwargs={"alpha": 0.4},
+                plot_contours=False,
+                use_math_text=True
+            )
+
+        # Legend
+        fig.axes[0].plot([], [], label="Categories:")
+        for i, cat in enumerate(unique_categories):
+            fig.axes[0].plot([], [], color=f"C{i}", label=str(cat))
+        fig.axes[0].legend(loc="upper right", fontsize=10)
+
+        file_name = f"corner_plots.png"
+        save_path = os.path.join(self.save_path, file_name)
+        if save_path is not None:
+            fig.savefig(save_path, dpi=300)
+            print(f"📌 Corner plot saved to: {save_path}")
+
+    def plot_corner_overlay_old2(self, df: pd.DataFrame, param_names: list[str]):
+        """
+        Creates a corner-style plot using pure Matplotlib, suitable for overlaying
+        categories, even those with very few samples (bypassing corner library limitations).
+        """
+        N_dims = len(param_names)
+        unique_categories = df["Category"].unique()
+        print(f"Unique categories found: {unique_categories}")
+        
+        # 1. Initialize the Plotting Grid
+        # Create an N_dims x N_dims figure with shared axes for aligning the scatter plots
+        fig, axes = plt.subplots(N_dims, N_dims, figsize=(12, 12))
+        
+        # Adjust spacing for a tighter fit like a standard corner plot
+        fig.subplots_adjust(hspace=0.05, wspace=0.05)
+
+        # 2. Iterate through Categories and Plot Data
+        for i, cat in enumerate(unique_categories):
+            data_cat = df[df["Category"] == cat][param_names].values
+            N_samples = data_cat.shape[0]
+            print(f"Category '{cat}' has {N_samples} samples.")
+            color = f"C{i}"
+            
+            if N_samples == 0:
+                print(f"Skipping category '{cat}': No samples found.")
+                continue
+                
+            print(f"Plotting category '{cat}' with {N_samples} samples.")
+
+            # Iterate over all possible pairs of dimensions (i.e., subplots)
+            for row in range(N_dims):
+                for col in range(N_dims):
+                    ax = axes[row, col]
+                    
+                    # --- A. Diagonal Plots (i == j): Use for Parameter Labels ---
+                    if row == col:
+                        # Clear the plotting area and just place the label
+                        ax.set_xticks([])
+                        ax.set_yticks([])
+                        if row == 0:
+                            ax.text(0.5, 0.5, param_names[row], transform=ax.transAxes, 
+                                    fontsize=14, ha='center', va='center')
+                        
+                    # --- B. Upper Triangle (i < j): Skip (Corner plots are symmetric) ---
+                    elif col > row:
+                        ax.set_visible(False)
+                        
+                    # --- C. Lower Triangle Plots (i > j): Scatter Plots ---
+                    elif col < row:
+                        # x-axis corresponds to the column index (col)
+                        # y-axis corresponds to the row index (row)
+                        
+                        # Scatter plot the data for this category
+                        ax.scatter(data_cat[:, col], data_cat[:, row], 
+                                c=color, 
+                                s=20,          # Marker size
+                                alpha=0.7,     # Transparency
+                                label=str(cat) if (row == N_dims-1 and col == 0) else None)
+                        
+                        # Clean up axis limits and labels
+                        ax.tick_params(axis='both', which='major', labelsize=8)
+                        
+                        # Remove y-tick labels for inner columns
+                        if col != 0:
+                            ax.set_yticklabels([])
+                        # Remove x-tick labels for inner rows
+                        if row != N_dims - 1:
+                            ax.set_xticklabels([])
+                            
+                        # Add X-axis label only to the bottom row
+                        if row == N_dims - 1:
+                            ax.set_xlabel(param_names[col], fontsize=10)
+                            
+                        # Add Y-axis label only to the first column
+                        if col == 0:
+                            ax.set_ylabel(param_names[row], fontsize=10)
+
+        # 3. Add Global Legend and Clean Up Axes
+        # Use the bottom-left axis (last row, first column) for the legend
+        # Find all unique labels from the scatter plots to generate the legend
+        handles, labels = axes[N_dims-1, 0].get_legend_handles_labels()
+        
+        if handles:
+            fig.legend(handles, labels, loc='upper right', bbox_to_anchor=(0.95, 0.95), 
+                    title="Categories", fontsize=10)
+
+        # 4. Save Figure
+        file_name = f"corner_style_plots_matplotlib.png"
+        save_path = os.path.join(self.save_path, file_name)
+        
+        # Ensure save_path exists (you might need to create the directory if it doesn't exist)
+        os.makedirs(os.path.dirname(save_path), exist_ok=True) 
+
+        fig.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.close(fig) # Close the figure to free memory
+        print(f"📌 Corner-style plot (Matplotlib) saved to: {save_path}")
+
+    def plot_corner_overlay_old3(self, df: pd.DataFrame, param_names: list[str]):
+        """
+        Creates a corner-style plot using pure Matplotlib with improved axis
+        and label alignment for visual appeal.
+        """
+        N_dims = len(param_names)
+        unique_categories = df["Category"].unique()
+        
+        # 1. Initialize the Plotting Grid
+        # Use plt.figure and manually set subplots to prevent the diagonal from
+        # automatically taking up the full width/height of the row/column.
+        fig, axes = plt.subplots(N_dims, N_dims, figsize=(12, 12))
+        
+        # Adjust spacing for a tighter fit like a standard corner plot
+        fig.subplots_adjust(hspace=0.05, wspace=0.05)
+
+        # 2. Iterate through Categories and Plot Data
+        for i, cat in enumerate(unique_categories):
+            data_cat = df[df["Category"] == cat][param_names].values
+            N_samples = data_cat.shape[0]
+            color = f"C{i}"
+            
+            if N_samples == 0:
+                continue
+                
+            # Iterate over all possible pairs of dimensions (i.e., subplots)
+            for row in range(N_dims):
+                for col in range(N_dims):
+                    ax = axes[row, col]
+                    
+                    # --- A. Upper Triangle (col > row): Remove entirely ---
+                    if col > row:
+                        ax.set_visible(False)
+                        continue # Skip to the next subplot
+                    
+                    # --- B. Diagonal Plots (row == col): Use for Parameter Labels/Names ---
+                    elif row == col:
+                        ax.set_xticks([])
+                        ax.set_yticks([])
+                        # Remove the box frame around the diagonal plot
+                        ax.axis('off') 
+                        
+                        # Place the parameter name in the center
+                        ax.text(0.5, 0.5, param_names[row], transform=ax.transAxes, 
+                                fontsize=14, ha='center', va='center')
+                    
+                    # --- C. Lower Triangle Plots (col < row): Scatter Plots ---
+                    elif col < row:
+                        # Scatter plot the data for this category
+                        ax.scatter(data_cat[:, col], data_cat[:, row], 
+                                c=color, 
+                                s=20,          
+                                alpha=0.7,     
+                                # Only add a label for the legend in the bottom-left plot
+                                label=str(cat) if (row == N_dims-1 and col == 0) else None)
+                        
+                        # --- AXIS CLEANUP AND ALIGNMENT ---
+                        
+                        # 1. Ticks and Labels for X-axis (Columns)
+                        if row == N_dims - 1:
+                            # Only show x-ticks/labels on the bottom row
+                            ax.set_xlabel(param_names[col], fontsize=10)
+                            # Rotate ticks for better visual separation
+                            ax.tick_params(axis='x', which='major', rotation=45, labelsize=8)
+                        else:
+                            # Hide x-ticks/labels on all inner rows
+                            ax.set_xticklabels([])
+                            ax.tick_params(axis='x', which='major', length=0) # Remove ticks themselves
+                            
+                        # 2. Ticks and Labels for Y-axis (Rows)
+                        if col == 0:
+                            # Only show y-ticks/labels on the first column
+                            ax.set_ylabel(param_names[row], fontsize=10)
+                            ax.tick_params(axis='y', which='major', labelsize=8)
+                        else:
+                            # Hide y-ticks/labels on all inner columns
+                            ax.set_yticklabels([])
+                            ax.tick_params(axis='y', which='major', length=0) # Remove ticks themselves
+
+        # 3. Add Global Legend
+        # The legend handles and labels come from the bottom-left axis (0, N_dims-1)
+        handles, labels = axes[N_dims-1, 0].get_legend_handles_labels()
+        
+        if handles:
+            # Place the legend outside the main plotting area
+            fig.legend(handles, labels, loc='upper right', bbox_to_anchor=(0.98, 0.98), 
+                    title="Categories", fontsize=10)
+
+        # 4. Save Figure
+        file_name = f"corner_style_plots_aligned.png"
+        save_path = os.path.join(self.save_path, file_name)
+        
+        # Ensure save_path exists
+        os.makedirs(os.path.dirname(save_path), exist_ok=True) 
+
+        # Use bbox_inches='tight' to ensure labels and legend are not cut off
+        fig.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.close(fig)
+
+    def plot_corner_overlay(self, df: pd.DataFrame, param_names: list[str]):
+        """
+        Creates a corner-style plot using pure Matplotlib with optimized
+        axis formatting and alignment for high visual appeal and minimal overlap.
+        """
+        N_dims = len(param_names)
+        unique_categories = df["Category"].unique()
+        
+        # 1. Initialize the Plotting Grid
+        fig, axes = plt.subplots(N_dims, N_dims, figsize=(12, 12))
+        
+        fig.subplots_adjust(hspace=0.05, wspace=0.05)
+
+        # 2. Iterate through Categories and Plot Data
+        for i, cat in enumerate(unique_categories):
+            data_cat = df[df["Category"] == cat][param_names].values
+            N_samples = data_cat.shape[0]
+            color = f"C{i}"
+            
+            if N_samples == 0:
+                continue
+                
+            # Iterate over all possible pairs of dimensions (i.e., subplots)
+            for row in range(N_dims):
+                for col in range(N_dims):
+                    ax = axes[row, col]
+                    
+                    # --- A. Upper Triangle (col > row): Remove entirely ---
+                    if col > row:
+                        ax.set_visible(False)
+                        continue
+                    
+                    # --- B. Diagonal Plots (row == col): Parameter Names ---
+                    elif row == col:
+                        ax.axis('off') 
+                        # Place the parameter name in the center
+                        ax.text(0.5, 0.5, param_names[row], transform=ax.transAxes, 
+                                fontsize=14, ha='center', va='center')
+                    
+                    # --- C. Lower Triangle Plots (col < row): Scatter Plots ---
+                    elif col < row:
+                        
+                        # 1. Plot the Data
+                        ax.scatter(data_cat[:, col], data_cat[:, row], 
+                                c=color, 
+                                s=20,          
+                                alpha=0.7,     
+                                label=str(cat) if (row == N_dims-1 and col == 0) else None)
+                        
+                        # --- 2. AXIS ALIGNMENT AND FORMATTING ---
+                        
+                        # Set max number of ticks and use scientific notation (which takes less space)
+                        # Use a MaxNLocator to ensure a maximum of 5 ticks to prevent crowding
+                        ax.xaxis.set_major_locator(MaxNLocator(5))
+                        ax.yaxis.set_major_locator(MaxNLocator(5))
+                        
+                        # Use ScalarFormatter for clean scientific notation where appropriate
+                        ax.xaxis.set_major_formatter(ScalarFormatter(useOffset=False, useMathText=True))
+                        ax.yaxis.set_major_formatter(ScalarFormatter(useOffset=False, useMathText=True))
+                        
+                        # 3. Label Hiding and Placement (to prevent overlap)
+                        
+                        # X-Axis Labels: Only on the bottom row
+                        if row == N_dims - 1:
+                            ax.set_xlabel(param_names[col], fontsize=10)
+                            ax.tick_params(axis='x', which='major', rotation=45, labelsize=8)
+                        else:
+                            ax.set_xticklabels([])
+                            
+                        # Y-Axis Labels: Only on the first column
+                        if col == 0:
+                            ax.set_ylabel(param_names[row], fontsize=10)
+                            ax.tick_params(axis='y', which='major', labelsize=8)
+                        else:
+                            ax.set_yticklabels([])
+                            
+                        # Y-axis tick parameter to keep the labels external to the plotting box
+                        # This often requires Matplotlib to be smart enough about space, 
+                        # which is why ScalarFormatter helps by reducing the label width.
+                        ax.tick_params(axis='y', which='major', pad=5)
+
+
+        # 3. Add Global Legend
+        handles, labels = axes[N_dims-1, 0].get_legend_handles_labels()
+        
+        if handles:
+            fig.legend(handles, labels, loc='upper right', bbox_to_anchor=(0.98, 0.98), 
+                    title="Categories", fontsize=10)
+
+        # 4. Save Figure
+        file_name = f"corner_style_plots_final_aligned.png"
+        save_path = os.path.join(self.save_path, file_name)
+        
+        os.makedirs(os.path.dirname(save_path), exist_ok=True) 
+
+        fig.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.close(fig)
 
     def run(self):
         samples = self.generate_samples()

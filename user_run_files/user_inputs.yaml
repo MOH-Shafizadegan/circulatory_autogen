@@ -1,7 +1,7 @@
 #_______ general inputs ________
 DEBUG: false # TODO change back
-#user_inputs_path_override: /home/hsma807/hpc/PhD/CA_user/CA_TWorld/TWorld_v2_user_inputs.yaml
-user_inputs_path_override: /home/hsma807/hpc/PhD/CA_user/LCN_simple/LCN_simple_user_inputs.yaml
+user_inputs_path_override: /home/hsma807/hpc/PhD/CA_user/CA_TWorld/TWorld_v2_user_inputs.yaml
+# user_inputs_path_override: /home/hsma807/hpc/PhD/CA_user/LCN_simple/LCN_simple_user_inputs.yaml
 file_prefix: 3compartment
 # input_param_file must be stored in resources. If first creating a parameters file 
 # set this to parameters_orig.csv and a 
