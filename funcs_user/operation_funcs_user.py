@@ -3,6 +3,7 @@ import os
 import sys
 import sympy
 from scipy.signal import find_peaks
+from scipy.interpolate import interp1d
 
 # decorator for functions that turn a series into a constant
 # Needed if you want to plot the series ontop of estimated constants
@@ -548,3 +549,164 @@ def calc_AHP_duration(t, V, baseline_voltage=None, series_output=False):
         return np.nan
     else:
         return np.nanmean(ahp_durations)
+    
+# Smooth transition based on amplitude
+def smooth_feature(amplitude, feature, fallback, A0=2, A1=5):
+    if amplitude <= A0:
+        w = 0.0
+    elif amplitude >= A1:
+        w = 1.0
+    else:
+        w = (amplitude - A0) / (A1 - A0)
+    return w * feature + (1 - w) * fallback
+
+
+# ==================================================
+# Action Potential Duration (Smooth APD)
+# ==================================================
+@series_to_constant
+def calc_APD(t, V, percent=90, series_output=False, spike_min_thresh=None,
+             distance=None, resolution=0.001, A0=2, A1=5, fallback_apd=1, min_acceptable_apd=10):
+    if series_output:
+        return V
+
+    peak_idxs, _ = find_peaks(V, height=spike_min_thresh, distance=distance)
+    if len(peak_idxs) < 1:
+        Vmax = np.max(V)
+        if Vmax <= 0:
+            return fallback_apd  # Completely flat trace
+        
+        imputed_apd = fallback_apd + (min_acceptable_apd - fallback_apd) * (Vmax / spike_min_thresh)
+        return float(np.clip(imputed_apd, fallback_apd, min_acceptable_apd))
+
+    peak_idx = peak_idxs[0]
+
+    # Interpolate
+    interp_func = interp1d(t, V, kind='cubic')
+    fine_time = np.arange(t[0], t[-1], resolution)
+    fine_voltage = interp_func(fine_time)
+
+    baseline = V[0]
+    V_peak = np.max(fine_voltage)
+    repol_level = baseline + (V_peak - baseline) * (1 - percent / 100)
+
+    fine_peak_idx = np.argmax(fine_voltage)
+    cross_idxs = np.where(fine_voltage[fine_peak_idx:] <= repol_level)[0]
+    if len(cross_idxs) == 0:
+        
+        idx_end = len(fine_voltage) - 1
+        idx_start = max(fine_peak_idx, idx_end - 10)
+
+        t_end = fine_time[idx_end]
+        t_start = fine_time[idx_start]
+        V_end = fine_voltage[idx_end]
+        V_start = fine_voltage[idx_start]
+
+        # Avoid division by zero
+        if t_end == t_start:
+            return fallback_apd
+
+        # Slope approximated via finite difference
+        slope = (V_end - V_start) / (t_end - t_start)
+
+        # If slope ≥ 0 → no decay → no repolarization
+        if slope >= 0:
+            return fallback_apd
+
+        # Solve: repol_level = V_end + slope * Δt → Δt = (repol_level - V_end) / slope
+        t_pred = t_end + (repol_level - V_end) / slope
+        raw_apd = t_pred - fine_time[fine_peak_idx]
+
+        return float(np.clip(raw_apd, fallback_apd, min_acceptable_apd))
+
+    else:
+        t_cross = fine_time[fine_peak_idx + cross_idxs[0]]
+        raw_apd = float(t_cross - fine_time[fine_peak_idx])
+
+    # return float(smooth_feature(amplitude, raw_apd, fallback_apd, A0, A1))
+    return raw_apd
+
+
+# ==================================================
+# Diastolic Calcium (Smooth CaiD)
+# ==================================================
+@series_to_constant
+def calc_CaiD(time, cai, resolution=0.001, A0=5, A1=20, fallback_CaiD=0):
+    interp_func = interp1d(time, cai, kind='cubic')
+    fine_time = np.arange(time[0], time[-1], resolution)
+    fine_cai = interp_func(fine_time)
+
+    peak_idx = np.argmax(fine_cai)
+    if peak_idx == 0:
+        raw_CaiD = fallback_CaiD
+    else:
+        raw_CaiD = float(np.min(fine_cai[:peak_idx]))
+
+    amplitude = fine_cai[peak_idx] - raw_CaiD
+    # return float(smooth_feature(amplitude, raw_CaiD, fallback_CaiD, A0, A1))
+    return raw_CaiD
+
+
+# ==================================================
+# Calcium Transient Duration (Smooth CTD)
+# ==================================================
+@series_to_constant
+def calc_CTD(time, cai, recovery_pct=50, resolution=0.001,
+             A0=5, A1=20, fallback_CTD=1, min_acceptable_CTD=10):
+    
+    interp_func = interp1d(time, cai, kind='cubic')
+    fine_time = np.arange(time[0], time[-1], resolution)
+    fine_cai = interp_func(fine_time)
+
+    peak_idx = np.argmax(fine_cai)
+    if peak_idx == 0:
+        print("No valid Ca2+ peak found.")
+        # Flat trace → fallback
+        Cai_max = np.max(fine_cai)
+        if Cai_max <= 0:
+            return fallback_CTD
+
+        # Imputed estimate (scaled like APD)
+        imputed_CTD = fallback_CTD + (min_acceptable_CTD - fallback_CTD) * (Cai_max / Cai_max)  
+        return float(np.clip(imputed_CTD, fallback_CTD, min_acceptable_CTD))
+
+    CaiD = np.min(fine_cai[:peak_idx])
+    CTpeak = fine_cai[peak_idx]
+    recovery_level = CaiD + ((100 - recovery_pct) / 100) * (CTpeak - CaiD)
+
+    cross_idxs = np.where(fine_cai[peak_idx:] <= recovery_level)[0]
+    
+    if len(cross_idxs) == 0:
+
+        idx_end = len(fine_cai) - 1
+        idx_start = max(peak_idx, idx_end - 10)
+
+        t_end = fine_time[idx_end]
+        t_start = fine_time[idx_start]
+        C_end = fine_cai[idx_end]
+        C_start = fine_cai[idx_start]
+
+        # Avoid division by zero
+        if t_end == t_start:
+            return fallback_CTD
+
+        # Finite-difference slope
+        slope = (C_end - C_start) / (t_end - t_start)
+
+        # If slope ≥ 0 → decay not happening → invalid
+        if slope >= 0:
+            return fallback_CTD
+
+        # Predict crossing time using linear extrapolation
+        t_pred = t_end + (recovery_level - C_end) / slope
+        raw_ctd = t_pred - fine_time[peak_idx]
+
+        return float(np.clip(raw_ctd, fallback_CTD, min_acceptable_CTD))
+
+    else:
+        # Normal case — direct crossing
+        t_cross = fine_time[peak_idx + cross_idxs[0]]
+        raw_ctd = float(t_cross - fine_time[peak_idx])
+
+    # return float(smooth_feature(amplitude, raw_ctd, fallback_CTD, A0, A1))
+    return raw_ctd
