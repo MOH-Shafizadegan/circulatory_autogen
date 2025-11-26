@@ -41,7 +41,7 @@ class sobol_SA():
         
     def __init__(self, model_path, model_out_names, solver_info, SA_cfg, dt, save_path, 
                  param_id_path = None, params_for_id_path=None, use_MPI = False, verbose=False, ga_options=None,
-                 sim_time=2.0, pre_time=20.0, feature_lookup_ranges=None):
+                 sim_time=2.0, pre_time=20.0, feature_lookup_ranges=None, param_id=None):
 
         """
         Initializes the Sensitivity_analysis class.
@@ -56,6 +56,7 @@ class sobol_SA():
             save_path (str): Directory where results will be saved.
             verbose (bool): If True, prints additional information during execution.
         """
+        self.param_id = param_id
 
         self.model_path = model_path
         self.output_dir = None
@@ -112,8 +113,9 @@ class sobol_SA():
                 feature_lookup_ranges[str(i)] = (lookup_range["min"], lookup_range["max"])
             else:
                 feature_lookup_ranges[str(i)] = (-np.inf, np.inf)
-        self.feature_lookup_ranges = feature_lookup_ranges
         
+        feature_lookup_ranges[str(i+1)] = (-np.inf, np.inf)
+        self.feature_lookup_ranges = feature_lookup_ranges
 
     def create_SA_cfg(self, sample_type, num_samples):
         
@@ -766,6 +768,7 @@ class sobol_SA():
                                     self.sim_helper.reset_and_clear()
 
                 features = []
+                cost = 0.0
                 for j in range(len(self.obs_info["operations"])):
                     func = self.operation_funcs_dict[self.obs_info["operations"][j]]
                     exp_idx = self.obs_info["experiment_idxs"][j]
@@ -773,7 +776,12 @@ class sobol_SA():
                     operands_outputs = operands_outputs_dict.get((exp_idx, subexp_idx), None)
                     if operands_outputs is not None and not (isinstance(operands_outputs, dict) and operands_outputs == {"failed": True}):
                         feature = func(*operands_outputs[j], **self.obs_info["operation_kwargs"][j])
-                        
+
+                        if self.param_id is not None:                        
+                            sub_cost = self.param_id.param_id.get_cost_from_operands(operands_outputs, 
+                                                                exp_idx=exp_idx, sub_idx=subexp_idx)
+                            cost += sub_cost
+
                         # If function returns (value, warning)
                         if isinstance(feature, tuple):
                             val, flag = feature
@@ -789,6 +797,10 @@ class sobol_SA():
                         # Append the mean of the current features (ignoring None) -> reduces variance and bias induces toward zero
                         features.append(np.mean(features))
 
+                # adding cost as extra feature
+                if self.param_id is not None:
+                    features.append(cost)
+                
                 if warn_flag:
                     warning_params.append((param_vals, features))
 
@@ -874,7 +886,11 @@ class sobol_SA():
         for i in range(n_outputs):
             S1 = S1_all[i]
             ST = ST_all[i]
-            output_name = rf"${self.obs_info['names_for_plotting'][i]}$ - experiment{self.obs_info["experiment_idxs"][i]}, subexperiment{self.obs_info["subexperiment_idxs"][i]}"
+            
+            if i >= len(self.obs_info['names_for_plotting']):
+                output_name = rf"Cost"
+            else:
+                output_name = rf"${self.obs_info['names_for_plotting'][i]}$ - experiment{self.obs_info["experiment_idxs"][i]}, subexperiment{self.obs_info["subexperiment_idxs"][i]}"
             # output_name = self.obs_info["names_for_plotting"][i] if hasattr(self, "obs_info") else f"Output_{i}"
 
             # Set figure width adaptively based on number of parameters (xticks)
@@ -908,7 +924,12 @@ class sobol_SA():
         n_outputs = S2_all.shape[0]
         for i in range(n_outputs):
             S2 = S2_all[i]
-            output_name = rf"${self.obs_info['names_for_plotting'][i]}$ - experiment{self.obs_info["experiment_idxs"][i]}, subexperiment{self.obs_info["subexperiment_idxs"][i]}"
+            
+            # output_name = rf"${self.obs_info['names_for_plotting'][i]}$ - experiment{self.obs_info["experiment_idxs"][i]}, subexperiment{self.obs_info["subexperiment_idxs"][i]}"
+            if i >= len(self.obs_info['names_for_plotting']):
+                output_name = rf"Cost"
+            else:
+                output_name = rf"${self.obs_info['names_for_plotting'][i]}$ - experiment{self.obs_info["experiment_idxs"][i]}, subexperiment{self.obs_info["subexperiment_idxs"][i]}"
 
             # plt.figure(figsize=(6, 5))
             fig_width = max(6, 1.0 * len(self.SA_cfg["param_names"]))
@@ -943,10 +964,18 @@ class sobol_SA():
         print("\nGenerating Sobol Index Heatmaps...")
         
         # 1. Define Axis Labels
-        output_labels = [
-            rf"{self.obs_info['names_for_plotting'][i]} (Exp{self.obs_info['experiment_idxs'][i]}, Sub{self.obs_info['subexperiment_idxs'][i]})"
-            for i in range(S1_all.shape[0])
-        ]
+        if S1_all.shape[0] < len(self.obs_info['names_for_plotting']):
+            output_labels = [
+                rf"{self.obs_info['names_for_plotting'][i]} (Exp{self.obs_info['experiment_idxs'][i]}, Sub{self.obs_info['subexperiment_idxs'][i]})"
+                for i in range(S1_all.shape[0])
+            ]
+        else:
+            output_labels = [
+                rf"{self.obs_info['names_for_plotting'][i]} (Exp{self.obs_info['experiment_idxs'][i]}, Sub{self.obs_info['subexperiment_idxs'][i]})"
+                for i in range(S1_all.shape[0]-1)
+            ]
+            output_labels.append(rf"Cost")
+
         param_labels = self.SA_cfg["param_names"]
 
         # Current shape: (n_outputs, n_params) -> Desired shape: (n_params, n_outputs)
@@ -1019,10 +1048,22 @@ class sobol_SA():
         sobol_indices = S1_all if index_type == 'First-Order' else ST_all
 
         # Output labels need to be created by combining the name, experiment, and subexperiment
-        output_labels = [
-            self.obs_info['names_for_plotting'][i] 
-            for i in range(sobol_indices.shape[0])
-        ]
+        # output_labels = [
+        #     self.obs_info['names_for_plotting'][i] 
+        #     for i in range(sobol_indices.shape[0])
+        # ]
+        if sobol_indices.shape[0] < len(self.obs_info['names_for_plotting']):
+            output_labels = [
+                rf"{self.obs_info['names_for_plotting'][i]} (Exp{self.obs_info['experiment_idxs'][i]}, Sub{self.obs_info['subexperiment_idxs'][i]})"
+                for i in range(S1_all.shape[0])
+            ]
+        else:
+            output_labels = [
+                rf"{self.obs_info['names_for_plotting'][i]} (Exp{self.obs_info['experiment_idxs'][i]}, Sub{self.obs_info['subexperiment_idxs'][i]})"
+                for i in range(S1_all.shape[0]-1)
+            ]
+            output_labels.append(rf"Cost")
+        
         param_labels = self.SA_cfg["param_names"]
         
         n_outputs = sobol_indices.shape[0]
@@ -1112,7 +1153,18 @@ class sobol_SA():
             param_labels = [f"param_{i}" for i in range(samples.shape[1])]
 
         try:
-            output_labels = self.obs_info['names_for_plotting']  # user-defined names
+            # output_labels = self.obs_info['names_for_plotting']  # user-defined names
+            if outputs.shape[1] > len(self.obs_info['names_for_plotting']):
+                output_labels = [
+                    rf"{self.obs_info['names_for_plotting'][i]} (Exp{self.obs_info['experiment_idxs'][i]}, Sub{self.obs_info['subexperiment_idxs'][i]})"
+                    for i in range(outputs.shape[1])
+                ]
+            else:
+                output_labels = [
+                    rf"{self.obs_info['names_for_plotting'][i]} (Exp{self.obs_info['experiment_idxs'][i]}, Sub{self.obs_info['subexperiment_idxs'][i]})"
+                    for i in range(outputs.shape[1]-1)
+                ]
+                output_labels.append(rf"Cost")
         except:
             output_labels = [f"feature_{i}" for i in range(outputs.shape[1])]
         

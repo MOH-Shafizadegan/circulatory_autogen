@@ -38,6 +38,7 @@ import math
 import warnings
 warnings.filterwarnings( "ignore", module = "matplotlib/..*" )
 from sensitivity_analysis.sobolSA import sobol_SA
+from param_id.paramID import CVS0DParamID
 
 GREEN = '\033[92m'
 CYAN = '\033[36m'
@@ -51,7 +52,7 @@ class SensitivityAnalysis():
     """
     def __init__(self, model_path, model_type, file_name_prefix, DEBUG=False,
                  param_id_output_dir=None, resources_dir=None, model_out_names=[], 
-                 solver_info={}, dt=0.01, ga_options={}, param_id_obs_path=None, params_for_id_path=None):
+                 solver_info={}, dt=0.01, ga_options={}, param_id_obs_path=None, params_for_id_path=None, param_id=None):
 
         self.model_path = model_path
         self.model_type = model_type
@@ -65,6 +66,7 @@ class SensitivityAnalysis():
         self.ga_options = ga_options
         self.param_id_obs_path = param_id_obs_path
         self.params_for_id_path = params_for_id_path
+        self.param_id = param_id
 
     def run_sensitivity_analysis(self, sa_options):
         if sa_options['method'] == 'naive':
@@ -97,7 +99,7 @@ class SensitivityAnalysis():
 
         SA_manager = sobol_SA(self.model_path, self.model_out_names, self.solver_info, SA_cfg, self.dt, 
                             output_dir, param_id_path=self.param_id_obs_path, params_for_id_path=self.params_for_id_path,
-                            verbose=False, use_MPI=True, ga_options=self.ga_options)
+                            verbose=False, use_MPI=True, ga_options=self.ga_options, param_id=self.param_id)
         S1_all, ST_all, S2_all = SA_manager.run()
 
         if rank == 0:

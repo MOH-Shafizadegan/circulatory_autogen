@@ -8,6 +8,7 @@ import traceback
 import yaml
 from parsers.PrimitiveParsers import YamlFileParser
 from mpi4py import MPI
+from param_id.paramID import CVS0DParamID
 
 def run_SA(inp_data_dict=None):
 
@@ -28,7 +29,12 @@ def run_SA(inp_data_dict=None):
     dt = inp_data_dict['dt']
     ga_options = inp_data_dict['ga_options']
     sa_options = inp_data_dict['sa_options']
-    
+
+    param_id_method = inp_data_dict['param_id_method']
+    file_prefix = inp_data_dict['file_prefix']
+    sim_time = inp_data_dict['sim_time']
+    pre_time = inp_data_dict['pre_time']
+    resources_dir = inp_data_dict['resources_dir']
     # param_orig_vals = inp_data_dict['param_orig_vals']
     # num_samples = inp_data_dict['num_samples']
     # lower_bound_factor = inp_data_dict['lower_bound_factor']
@@ -36,9 +42,16 @@ def run_SA(inp_data_dict=None):
 
     model_out_names = inp_data_dict.get('model_out_names', [])
 
+    param_id = CVS0DParamID(model_path, model_type, param_id_method, False, file_prefix,
+                            params_for_id_path=params_for_id_path,
+                            param_id_obs_path=param_id_obs_path,
+                            sim_time=sim_time, pre_time=pre_time,
+                            solver_info=solver_info, dt=dt, ga_options=ga_options, DEBUG=DEBUG,
+                            resources_dir=resources_dir)
     SA_agent = SensitivityAnalysis(model_path=model_path, model_type=model_type, file_name_prefix=file_name_prefix,
                                    DEBUG=DEBUG, model_out_names=model_out_names, solver_info=solver_info, dt=dt, 
-                                   ga_options=ga_options, param_id_obs_path=param_id_obs_path, params_for_id_path=params_for_id_path)
+                                   ga_options=ga_options, param_id_obs_path=param_id_obs_path, params_for_id_path=params_for_id_path,
+                                   param_id=param_id)
     SA_agent.run_sensitivity_analysis(sa_options=sa_options)
 
     MPI.Finalize()
