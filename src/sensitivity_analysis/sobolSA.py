@@ -868,6 +868,62 @@ class sobol_SA():
 
         return S1_all, ST_all, S2_all
 
+    def save_sobol_indices(self, S1_all, ST_all, S2_all):
+        if self.rank != 0:
+            return
+
+        """
+        Save all Sobol indices to single CSV files (one for S1/ST, one for S2).
+
+        Parameters:
+            S1_all (np.ndarray): First-order Sobol indices, shape (n_outputs, n_params)
+            ST_all (np.ndarray): Total-order Sobol indices, shape (n_outputs, n_params)
+            S2_all (np.ndarray): Second-order Sobol indices, shape (n_outputs, n_params, n_params)
+        """
+        n_outputs = S1_all.shape[0]
+        param_names = self.SA_cfg["param_names"]
+
+        # Prepare output/feature names
+        if n_outputs <= len(self.obs_info['names_for_plotting']):
+            output_names = [
+                f"{self.obs_info['names_for_plotting'][i]} (Exp{self.obs_info['experiment_idxs'][i]}, Sub{self.obs_info['subexperiment_idxs'][i]})"
+                for i in range(n_outputs)
+            ]
+        else:
+            output_names = [
+                f"{self.obs_info['names_for_plotting'][i]} (Exp{self.obs_info['experiment_idxs'][i]}, Sub{self.obs_info['subexperiment_idxs'][i]})"
+                for i in range(n_outputs-1)
+            ]
+            output_names.append("Cost")
+
+        # --- Save S1/ST indices ---
+        df_Sobol = pd.DataFrame({'Parameter': param_names})
+        for i, out_name in enumerate(output_names):
+            df_Sobol[f"S1_{out_name}"] = S1_all[i]
+            df_Sobol[f"ST_{out_name}"] = ST_all[i]
+        file_name = f"all_outputs_n{self.num_samples}_Sobol_indices.csv"
+        df_Sobol.to_csv(os.path.join(self.save_path, file_name), index=False)
+
+        # --- Save S2 indices ---
+        # For each output, flatten S2 into a DataFrame with MultiIndex columns
+        s2_dict = {}
+        for i, out_name in enumerate(output_names):
+            # S2_all[i]: (n_params, n_params)
+            s2_flat = pd.DataFrame(
+                S2_all[i],
+                index=param_names,
+                columns=param_names
+            )
+            # Rename columns to include output name
+            s2_flat.columns = [f"{out_name}__{col}" for col in s2_flat.columns]
+            s2_dict[out_name] = s2_flat
+
+        # Concatenate all S2 DataFrames horizontally
+        df_S2 = pd.concat([s2_dict[out_name] for out_name in output_names], axis=1)
+        df_S2.index.name = "Parameter"
+        file_name_S2 = f"all_outputs_n{self.num_samples}_Sobol_2nd_order_indices.csv"
+        df_S2.to_csv(os.path.join(self.save_path, file_name_S2))
+
     def plot_sobol_first_order_idx(self, S1_all, ST_all):
 
         if self.rank !=0:

@@ -105,6 +105,7 @@ class SensitivityAnalysis():
         if rank == 0:
             print(f"{GREEN}Sensitivity analysis completed successfully :){RESET}")
             print(f'{CYAN}saving results in {output_dir}{RESET}')
+            SA_manager.save_sobol_indices(S1_all, ST_all, S2_all)
             SA_manager.plot_sobol_first_order_idx(S1_all, ST_all)
             SA_manager.plot_sobol_S2_idx(S2_all)
             SA_manager.plot_sobol_heatmap(S1_all, ST_all)
