@@ -20,7 +20,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from parsers.PrimitiveParsers import scriptFunctionParser
 from mpi4py import MPI
-from parsers.PrimitiveParsers import CSVFileParser
+from parsers.PrimitiveParsers import CSVFileParser, JSONFileParser
 import csv
 from tqdm import tqdm  # make sure tqdm is installed
 import pandas as pd
@@ -74,7 +74,24 @@ class sobol_SA():
         # set up observables functions
         sfp = scriptFunctionParser()
         self.operation_funcs_dict = sfp.get_operation_funcs_dict()
-        self.__set_obs_names_and_df(param_id_path, sim_time=sim_time, pre_time=pre_time)
+        
+        # self.__set_obs_names_and_df(param_id_path, sim_time=sim_time, pre_time=pre_time)
+        json_parser = JSONFileParser()
+        parsed_data = json_parser._parse_json_data(
+            param_id_obs_path=param_id_path,
+            pre_time=pre_time,
+            sim_time=sim_time
+        )
+        self.gt_df = parsed_data["gt_df"]
+        self.protocol_info = parsed_data["protocol_info"]
+        self.prediction_info = parsed_data["prediction_info"]
+
+        self.obs_info = json_parser._process_obs_info(gt_df=self.gt_df)
+        self.protocol_info = json_parser._process_protocol_and_weights(
+            gt_df=self.gt_df,
+            protocol_info=self.protocol_info,
+            dt=self.dt
+        )
 
         # set up opencor simulation
         if self.protocol_info['sim_times'][0][0] is not None:
@@ -101,7 +118,11 @@ class sobol_SA():
 
         self.params_for_id_path = params_for_id_path
         if self.params_for_id_path:
-            self.__set_and_save_param_names()
+            self.csv_parser = CSVFileParser()
+            self.param_id_info = self.csv_parser.get_param_id_info(self.params_for_id_path)
+            self.csv_parser.save_param_names(self.param_id_info, self.output_dir, self.rank)
+            # self.__set_and_save_param_names()
+
         self.SA_cfg = self.create_SA_cfg(self.sample_type, SA_cfg["num_samples"])
 
         self.set_feature_lookup_ranges()
@@ -139,78 +160,11 @@ class sobol_SA():
 
         return SA_cfg
 
-    def __set_and_save_param_names(self, idxs_to_ignore=None):
-        # This should also be a function under parsers.
-
-        # Each entry in param_names is a name or list of names that gets modified by one parameter
-        self.param_id_info = {}
-        if self.params_for_id_path:
-            csv_parser = CSVFileParser()
-            input_params = csv_parser.get_data_as_dataframe_multistrings(self.params_for_id_path)
-            self.param_id_info["param_names"] = []
-            param_names_for_gen = []
-            for II in range(input_params.shape[0]):
-                if idxs_to_ignore is not None:
-                    if II in idxs_to_ignore:
-                        continue
-                self.param_id_info["param_names"].append([input_params["vessel_name"][II][JJ] + '/' +
-                                               input_params["param_name"][II]for JJ in
-                                               range(len(input_params["vessel_name"][II]))])
-
-                if input_params["vessel_name"][II][0] == 'global':
-                    param_names_for_gen.append([input_params["param_name"][II]])
-
-                else:
-                    param_names_for_gen.append([input_params["param_name"][II] + '_' +
-                                                input_params["vessel_name"][II][JJ] # re.sub('_T$', '', input_params["vessel_name"][II][JJ])
-                                                for JJ in range(len(input_params["vessel_name"][II]))])
-
-            # set param ranges from file and strings for plotting parameter names
-            if idxs_to_ignore is not None:
-                self.param_id_info["param_mins"] = np.array([float(input_params["min"][JJ]) for JJ in range(input_params.shape[0])
-                                            if JJ not in idxs_to_ignore])
-                self.param_id_info["param_maxs"] = np.array([float(input_params["max"][JJ]) for JJ in range(input_params.shape[0])
-                                            if JJ not in idxs_to_ignore])
-                if "name_for_plotting" in input_params.columns:
-                    self.param_id_info["param_names_for_plotting"] = np.array([input_params["name_for_plotting"][JJ]
-                                                            for JJ in range(input_params.shape[0])
-                                                            if JJ not in idxs_to_ignore])
-                else:
-                    self.param_id_info["param_names_for_plotting"] = np.array([self.param_id_info["param_names"][JJ][0]
-                                                            for JJ in range(len(self.param_id_info["param_names"]))
-                                                            if JJ not in idxs_to_ignore])
-            else:
-                self.param_id_info["param_mins"] = np.array([float(input_params["min"][JJ]) for JJ in range(input_params.shape[0])])
-                self.param_id_info["param_maxs"] = np.array([float(input_params["max"][JJ]) for JJ in range(input_params.shape[0])])
-                if "name_for_plotting" in input_params.columns:
-                    self.param_id_info["param_names_for_plotting"] = np.array([input_params["name_for_plotting"][JJ]
-                                                            for JJ in range(input_params.shape[0])])
-                else:
-                    self.param_id_info["param_names_for_plotting"] = np.array([param_name[0] for param_name in self.param_id_info["param_names"]])
-
-            # set param_priors
-            if "prior" in input_params.columns:
-                self.param_id_info["param_prior_types"] = np.array([input_params["prior"][JJ] for JJ in range(input_params.shape[0])])
-            else:
-                self.param_id_info["param_prior_types"] = np.array(["uniform" for JJ in range(input_params.shape[0])])
-
-
-        else:
-            print(f'params_for_id_path cannot be None, exiting')
-
-        if self.rank == 0:
-            with open(os.path.join(self.output_dir, 'param_names.csv'), 'w') as f:
-                wr = csv.writer(f)
-                wr.writerows(self.param_id_info["param_names"])
-            with open(os.path.join(self.output_dir, 'param_names_for_gen.csv'), 'w') as f:
-                wr = csv.writer(f)
-                wr.writerows(param_names_for_gen)
-        return
-
     def initialise_sim_helper(self):
         return SimulationHelper(self.model_path, self.dt, self.sim_time,
                                 solver_info=self.solver_info, pre_time=self.pre_time)
 
+<<<<<<< HEAD
     def __set_obs_names_and_df(self, param_id_obs_path, pre_time=None, sim_time=None):
         # TODO this function should be in the parsing section. as it parses the 
         # ground truth data.
@@ -573,6 +527,8 @@ class sobol_SA():
         self.protocol_info["scaled_weight_prob_dist_from_exp_sub"] = prob_dist_map
         return
     
+=======
+>>>>>>> dev_parser
     def set_output_dir(self, path):
         
         self.output_dir = path

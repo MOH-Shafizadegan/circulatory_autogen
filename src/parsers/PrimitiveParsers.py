@@ -179,6 +179,9 @@ class YamlFileParser(object):
             inp_data_dict['external_modules_dir'] = None
         
         # for sensitivity analysis and parameter identification
+        if not 'sa_options' in inp_data_dict.keys():
+            inp_data_dict['sa_options'] = None
+
         if inp_data_dict['sa_options'] is None:
             inp_data_dict['sa_options'] = {
                 'method': 'sobol',
@@ -194,7 +197,7 @@ class YamlFileParser(object):
                     inp_data_dict['sa_options']['output_dir'] = os.path.join(root_dir, 'sensitivity_outputs', inp_data_dict['sa_options']['output_dir']) 
             
             if not os.path.exists(inp_data_dict['sa_options']['output_dir']):
-                os.makedirs(inp_data_dict['sa_options']['output_dir'])
+                os.makedirs(inp_data_dict['sa_options']['output_dir'], exist_ok=True)
             
             if 'method' not in inp_data_dict['sa_options'].keys():
                 print('No method specified for sensitivity analysis, setting to sobol by default')
@@ -348,6 +351,95 @@ class CSVFileParser(object):
 
         return param_name_and_val, date_id
 
+    def get_param_id_info(self, params_for_id_path, idxs_to_ignore= None):
+    
+        if not params_for_id_path:
+            print(f'params_for_id_path cannot be None, exiting')
+            return None
+
+        csv_parser = CSVFileParser()
+        input_params = csv_parser.get_data_as_dataframe_multistrings(params_for_id_path)
+
+        # --- 1. Filter the DataFrame first ---
+        # Create a mask for indices to KEEP (not ignore)
+        if idxs_to_ignore is not None:
+            all_indices = set(range(input_params.shape[0]))
+            valid_indices = sorted(list(all_indices - set(idxs_to_ignore)))
+            # Filter the DataFrame based on valid indices
+            # .copy() is used to avoid SettingWithCopyWarning, though reset_index usually handles this
+            filtered_params = input_params.iloc[valid_indices].reset_index(drop=True)
+        else:
+            filtered_params = input_params.copy()
+            
+        N_params = filtered_params.shape[0]
+
+        param_id_info = {}
+        param_names_for_gen = []
+        param_id_info["param_names"] = [] # The list of names to be stored
+
+        # --- 2. Iterate ONLY over the filtered data ---
+        for II in range(N_params):
+            # Current row data from the filtered DataFrame
+            row = filtered_params.iloc[II]
+
+            # A. Build the full, complex names (e.g., 'vessel_name/param_name')
+            param_full_names = [
+                row["vessel_name"][JJ] + '/' + row["param_name"] 
+                for JJ in range(len(row["vessel_name"]))
+            ]
+            param_id_info["param_names"].append(param_full_names)
+
+            # B. Build the simplified names for generator/code
+            if row["vessel_name"][0] == 'global':
+                param_names_for_gen.append([row["param_name"]])
+            else:
+                param_gen_names = [
+                    row["param_name"] + '_' + row["vessel_name"][JJ] 
+                    for JJ in range(len(row["vessel_name"]))
+                ]
+                param_names_for_gen.append(param_gen_names)
+        
+        # --- 3. Set Arrays using the filtered DataFrame (Simple Array Creation) ---
+
+        param_id_info["param_mins"] = filtered_params["min"].to_numpy(dtype=float)
+        param_id_info["param_maxs"] = filtered_params["max"].to_numpy(dtype=float)
+        
+        # Plotting Names
+        if "name_for_plotting" in filtered_params.columns:
+            param_id_info["param_names_for_plotting"] = filtered_params["name_for_plotting"].to_numpy()
+        else:
+            # Use the first element of the complex name list generated above
+            param_id_info["param_names_for_plotting"] = np.array([p_names[0] 
+                                                                    for p_names in param_id_info["param_names"]])
+        
+        # Priors
+        if "prior" in filtered_params.columns:
+            param_id_info["param_prior_types"] = filtered_params["prior"].to_numpy()
+        else:
+            param_id_info["param_prior_types"] = np.array(["uniform"] * N_params)
+
+        param_id_info["param_names_for_gen"] = param_names_for_gen
+        
+        return param_id_info
+
+    def save_param_names(self, param_id_info, output_dir, rank=0):
+        """
+        Saves the generated parameter names and generator names to CSV files.
+        Requires the dictionary returned by _process_param_info.
+        """
+        if rank == 0:
+            # 1. Save param_names (vessel_name/param_name format)
+            param_names_path = os.path.join(output_dir, 'param_names.csv')
+            with open(param_names_path, 'w', newline='') as f:
+                wr = csv.writer(f)
+                wr.writerows(param_id_info["param_names"])
+            
+            # 2. Save param_names_for_gen (simplified format)
+            param_gen_path = os.path.join(output_dir, 'param_names_for_gen.csv')
+            with open(param_gen_path, 'w', newline='') as f:
+                wr = csv.writer(f)
+                wr.writerows(param_id_info["param_names_for_gen"])
+        return
 
 class JSONFileParser(object):
     '''

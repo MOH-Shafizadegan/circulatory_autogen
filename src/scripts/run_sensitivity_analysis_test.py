@@ -55,7 +55,7 @@ if __name__ == '__main__':
         inp_data_dict['model_out_names'] = ['heart/u_lv']
         inp_data_dict['sa_options'] = {
             'method': 'sobol',
-            'num_samples': 256,
+            'num_samples': 2,
             'sample_type': 'saltelli',
             'output_dir': os.path.join(root_dir_path, 'sensitivity_outputs/3compartment_SA_results')
         }
