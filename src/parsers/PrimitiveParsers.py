@@ -641,7 +641,15 @@ class JSONFileParser(object):
         # --- Operations (Mapping obs_type to operation) ---
         obs_info["operations"] = []
         obs_info["operands"] = []
-        obs_info["operation_kwargs"] = [gt_df.iloc[II].get("operation_kwargs", {}) for II in range(N)]
+        obs_info["operation_kwargs"] = [
+            gt_df.iloc[II]["operation_kwargs"] 
+            if "operation_kwargs" in gt_df.iloc[II].keys() and 
+            gt_df.iloc[II]["operation_kwargs"] not in ["Null", "None", "null", "none", ""] and
+            not (isinstance(gt_df.iloc[II]["operation_kwargs"], float) and np.isnan(gt_df.iloc[II]["operation_kwargs"]))
+            else {} 
+            for II in range(N)
+        ]
+        obs_info["feature_range"] = [gt_df.iloc[II].get("feature_range", {}) for II in range(N)]
         obs_info["freqs"] = [gt_df.iloc[II].get("frequencies") for II in range(N)]
         obs_info["names_for_plotting"] = [gt_df.iloc[II].get("name_for_plotting", obs_info["obs_names"][II]) for II in range(N)]
 

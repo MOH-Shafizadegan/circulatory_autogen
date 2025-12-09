@@ -112,7 +112,7 @@ class SensitivityAnalysis():
             SA_manager.plot_sobol_bubble_plot(S1_all, ST_all, index_type='Total_Order')
             SA_manager.plot_sobol_bubble_plot(S1_all, ST_all, index_type='First_Order')
             df_all = SA_manager.load_category_data()
-            SA_manager.plot_corner_overlay(df_all, SA_manager.SA_cfg["param_names"])
+            SA_manager.plot_corner_overlay(df_all)
 
     
     def run_naive_sensitivity(self, param_id_output_paths):

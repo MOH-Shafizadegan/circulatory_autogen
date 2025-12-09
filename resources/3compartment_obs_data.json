@@ -69,6 +69,10 @@
     "value": 10500,
     "std": 1050,
     "cost_type":"gaussian_MLE",
-    "plot_type":"horizontal"
+    "plot_type":"horizontal",
+    "feature_range":{
+      "min": 10000,
+      "max": 11000
+    }
   }
 ]

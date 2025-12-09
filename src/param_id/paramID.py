@@ -2451,7 +2451,9 @@ class OpencorParamID():
                 obs = operands_outputs[JJ][0]
             else:
                 if self.obs_info["data_types"][JJ] != 'frequency':
-                    obs = self.operation_funcs_dict[self.obs_info["operations"][JJ]](*operands_outputs[JJ], **self.obs_info["operation_kwargs"][JJ]) 
+                    obs = self.operation_funcs_dict[self.obs_info["operations"][JJ]](*operands_outputs[JJ], **self.obs_info["operation_kwargs"][JJ])
+                    if isinstance(obs, tuple):
+                        obs = obs[0] 
                 else:
                     obs = None
             

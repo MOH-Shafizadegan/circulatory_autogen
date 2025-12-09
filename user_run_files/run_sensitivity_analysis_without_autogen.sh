@@ -3,4 +3,4 @@ if [[ $# -eq 0 ]] ; then
     exit 1
 fi
 source opencor_pythonshell_path.sh
-mpiexec -n $1 ${opencor_pythonshell_path} ../src/scripts/sensitivity_analysis_run_script.py
+mpirun -n $1 ${opencor_pythonshell_path} ../src/scripts/sensitivity_analysis_run_script.py

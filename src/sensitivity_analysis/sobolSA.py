@@ -121,7 +121,6 @@ class sobol_SA():
             self.csv_parser = CSVFileParser()
             self.param_id_info = self.csv_parser.get_param_id_info(self.params_for_id_path)
             self.csv_parser.save_param_names(self.param_id_info, self.output_dir, self.rank)
-            # self.__set_and_save_param_names()
 
         self.SA_cfg = self.create_SA_cfg(self.sample_type, SA_cfg["num_samples"])
 
@@ -129,13 +128,17 @@ class sobol_SA():
 
     def set_feature_lookup_ranges(self):
         feature_lookup_ranges = {}
-        for i, lookup_range in enumerate(self.obs_info.get("faeture_range", [{}]*len(self.obs_info["obs_names"]))):
+        for i, lookup_range in enumerate(self.obs_info.get("feature_range", [{}]*len(self.obs_info["obs_names"]))):
             if lookup_range and isinstance(lookup_range, dict) and "min" in lookup_range and "max" in lookup_range:
                 feature_lookup_ranges[str(i)] = (lookup_range["min"], lookup_range["max"])
             else:
-                feature_lookup_ranges[str(i)] = (-np.inf, np.inf)
+                mean = self.gt_df["value"][i]
+                std = self.gt_df["std"][i]
+                feature_lookup_ranges[str(i)] = (mean - std, mean + std)
+            # else:
+            #     feature_lookup_ranges[str(i)] = (None, None)
         
-        feature_lookup_ranges[str(i+1)] = (-np.inf, np.inf)
+        feature_lookup_ranges[str(i+1)] = (None, None)
         self.feature_lookup_ranges = feature_lookup_ranges
 
     def create_SA_cfg(self, sample_type, num_samples):
@@ -164,371 +167,6 @@ class sobol_SA():
         return SimulationHelper(self.model_path, self.dt, self.sim_time,
                                 solver_info=self.solver_info, pre_time=self.pre_time)
 
-<<<<<<< HEAD
-    def __set_obs_names_and_df(self, param_id_obs_path, pre_time=None, sim_time=None):
-        # TODO this function should be in the parsing section. as it parses the 
-        # ground truth data.
-        # TODO it should also be cleaned up substantially.
-        """_summary_
-
-        Args:
-            param_id_obs_path (_type_): _description_
-            pre_time (_type_): _description_
-            sim_time (_type_): _description_
-        """
-        with open(param_id_obs_path, encoding='utf-8-sig') as rf:
-            json_obj = json.load(rf)
-        if type(json_obj) == list:
-            self.gt_df = pd.DataFrame(json_obj)
-            self.protocol_info = {"pre_times": [pre_time], 
-                                    "sim_times": [[sim_time]],
-                                    "params_to_change": [[None]]}
-            self.prediction_info = {'names': [],
-                                    'units': [],
-                                    'names_for_plotting': [],
-                                    'experiment_idxs': []}
-        elif type(json_obj) == dict:
-            if 'data_items' in json_obj.keys():
-                self.gt_df = pd.DataFrame(json_obj['data_items'])
-            elif 'data_item' in json_obj.keys():
-                self.gt_df = pd.DataFrame(json_obj['data_item']) # should be data_items but accept this
-            else:
-                print("data_items not found in json object. ",
-                      "Please check that data_items is the key for the list of data items")
-            if 'protocol_info' in json_obj.keys():
-                self.protocol_info = json_obj['protocol_info']
-                if "sim_times" not in self.protocol_info.keys():
-                    self.protocol_info["sim_times"] = [[sim_time]]
-                if "pre_times" not in self.protocol_info.keys():
-                    self.protocol_info["pre_times"] = [pre_time]
-            else:
-                if pre_time is None or sim_time is None:
-                    print("protocol_info not found in json object. ",
-                          "If this is the case sim_time and pre_time must be set",
-                          "in the user_inputs.yaml file")
-                    exit()
-
-                self.protocol_info = {"pre_times": [pre_time], 
-                                      "sim_times": [[sim_time]],
-                                      "params_to_change": [[None]]}
-            if 'prediction_items' in json_obj.keys():
-                self.prediction_info = {'names': [],
-                                        'units': [],
-                                        'names_for_plotting': [],
-                                        'experiment_idxs': []}
-
-                for entry in json_obj['prediction_items']:
-                    if 'variable' in entry.keys():
-                        self.prediction_info['names'].append(entry['variable'])
-                    else:
-                        print('"variable" not found in prediction item in obs_data.json file, ',
-                              'exitiing') 
-                        exit()
-                    if 'unit' in entry.keys():
-                        self.prediction_info['units'].append(entry['unit'])
-                    else:
-                        print('"unit" not found in prediction item in obs_data.json file, ',
-                              'exitiing') 
-                        exit()
-                    if 'name_for_plotting' in entry.keys():
-                        self.prediction_info['names_for_plotting'].append(entry['name_for_plotting'])
-                    else:
-                        self.prediction_info['names_for_plotting'].append(entry['variable'])
-                    if 'experiment_idx' in entry.keys():
-                        self.prediction_info['experiment_idxs'].append(entry['experiment_idx'])
-                    else:
-                        self.prediction_info['experiment_idxs'].append(0)
-            else:
-                self.prediction_info = None
-        else:
-            print(f"unknown data type for imported json object of {type(json_obj)}")
-        
-        self.obs_info = {}
-        self.obs_info["obs_names"] = [self.gt_df.iloc[II]["variable"] for II in range(self.gt_df.shape[0])]
-
-        # OBSOLETE self.obs_types = [self.gt_df.iloc[II]["obs_type"] for II in range(self.gt_df.shape[0])]
-        self.obs_info["data_types"] = [self.gt_df.iloc[II]["data_type"] for II in range(self.gt_df.shape[0])]
-        self.obs_info["units"] = [self.gt_df.iloc[II]["unit"] for II in range(self.gt_df.shape[0])]
-        self.obs_info["experiment_idxs"] = [self.gt_df.iloc[II]["experiment_idx"] if "experiment_idx" in 
-                                            self.gt_df.iloc[II].keys() else 0 for II in range(self.gt_df.shape[0])]
-        self.obs_info["subexperiment_idxs"] = [self.gt_df.iloc[II]["subexperiment_idx"] if "subexperiment_idx" in
-                                               self.gt_df.iloc[II].keys() else 0 for II in range(self.gt_df.shape[0])]
-
-        # get plotting color, asign to randomish color if not defined
-        # list of all possible colors
-        possible_colors = ['b', 'g', 'c', 'm', 'y', 
-                           'tab:brown', 'tab:pink', 'tab:olive', 'tab:orange'] # don't include red or black, 
-                                                    # because they are used for plotting the series
-        self.obs_info["plot_colors"] = [self.gt_df.iloc[II]["plot_color"] if "plot_color" in 
-                                        self.gt_df.iloc[II].keys() else possible_colors[II%len(possible_colors)] 
-                                        for II in range(self.gt_df.shape[0])]
-        self.obs_info["plot_type"] = []
-
-        # get plotting type
-        # TODO make the plot_types operation_funcs so the user can defined how they are plotted.
-        warning_printed = False
-        for II in range(self.gt_df.shape[0]):
-            if "plot_type" not in self.gt_df.iloc[II].keys():
-                if self.gt_df.iloc[II]["data_type"] == "constant":
-                    if not warning_printed:
-                        print('constant data types plot type defaults to horizontal lines',
-                            'change "plot_type" in obs_data.json to change this')
-                        warning_printed = True
-                    self.obs_info["plot_type"].append("horizontal")
-                elif self.gt_df.iloc[II]["data_type"] == "prob_dist":
-                    if not warning_printed:
-                        print('prob_dist data types plot type defaults to horizontal lines',
-                            'change "plot_type" in obs_data.json to change this')
-                        warning_printed = True
-                    self.obs_info["plot_type"].append("horizontal")
-                elif self.gt_df.iloc[II]["data_type"] == "series":
-                    self.obs_info["plot_type"].append("series")
-                elif self.gt_df.iloc[II]["data_type"] == "frequency":
-                    self.obs_info["plot_type"].append("frequency")
-                elif self.gt_df.iloc[II]["data_type"] == "plot_dist":
-                    self.obs_info["plot_type"].append("horizontal")
-                else:
-                    print(f'data type {self.gt_df.iloc[II]["data_type"]} not recognised')
-            else:
-                self.obs_info["plot_type"].append(self.gt_df.iloc[II]["plot_type"])
-                if self.obs_info["plot_type"][II] in ["None", "null", "Null", "none", "NONE"]:
-                    self.obs_info["plot_type"][II] = None
-
-        self.obs_info["operations"] = []
-        self.obs_info["names_for_plotting"] = []
-        self.obs_info["operands"] = []
-        self.obs_info["freqs"] = []
-        self.obs_info["operation_kwargs"] = []
-        self.obs_info["faeture_range"] = []
-        # below we remove the need for obs_types, but keep it backwards compatible so 
-        # previous specifications of obs_type = mean etc should still work
-        for II in range(self.gt_df.shape[0]):
-            if "operation" not in self.gt_df.iloc[II].keys() or \
-                    self.gt_df.iloc[II]["operation"] in ["Null", "None", "null", "none", "", "nan", np.nan]:
-                if "obs_type" in self.gt_df.iloc[II].keys():
-                    if self.gt_df.iloc[II]["obs_type"] == "series":
-                        self.obs_info["operations"].append(None)
-                        if "operands" in self.gt_df.iloc[II].keys():
-                            self.obs_info["operands"].append(self.gt_df.iloc[II]["operands"])
-                        else:
-                            self.obs_info["operands"].append(None)
-                    elif self.gt_df.iloc[II]["obs_type"] == "frequency":
-                        self.obs_info["operations"].append(None)
-                        if "operands" in self.gt_df.iloc[II].keys():
-                            self.obs_info["operands"].append(self.gt_df.iloc[II]["operands"])
-                        else:
-                            self.obs_info["operands"].append(None)
-                    # TODO remove these eventually when I get rid of obs_type
-                    elif self.gt_df.iloc[II]["obs_type"] == "min":
-                        self.obs_info["operations"].append("min")
-                        self.obs_info["operands"].append([self.gt_df.iloc[II]["variable"]])
-                    elif self.gt_df.iloc[II]["obs_type"] == "max":
-                        self.obs_info["operations"].append("max")
-                        self.obs_info["operands"].append([self.gt_df.iloc[II]["variable"]])
-                    elif self.gt_df.iloc[II]["obs_type"] == "mean":
-                        self.obs_info["operations"].append("mean")
-                        self.obs_info["operands"].append([self.gt_df.iloc[II]["variable"]])
-                else:
-                    self.obs_info["operations"].append(None)
-                    if "operands" in self.gt_df.iloc[II].keys():
-                        self.obs_info["operands"].append(self.gt_df.iloc[II]["operands"])
-                    else:
-                        self.obs_info["operands"].append(None)
-            elif self.gt_df.iloc[II]["operation"] in ["Null", "None", "null", "none", ""]:
-                self.obs_info["operations"].append(None)
-                self.obs_info["operands"].append(None)
-            else:
-                self.obs_info["operations"].append(self.gt_df.iloc[II]["operation"])
-                self.obs_info["operands"].append(self.gt_df.iloc[II]["operands"])
-
-            if "frequencies" not in self.gt_df.iloc[II].keys():
-                self.obs_info["freqs"].append(None)
-            else:
-                self.obs_info["freqs"].append(self.gt_df.iloc[II]["frequencies"])
-
-            if "name_for_plotting" in self.gt_df.iloc[II].keys():
-                self.obs_info['names_for_plotting'].append(self.gt_df.iloc[II]["name_for_plotting"])
-            else:
-                self.obs_info['names_for_plotting'].append(self.obs_info["obs_names"][II])
-
-            if "operation_kwargs" in self.gt_df.iloc[II].keys() and self.gt_df.iloc[II]["operation_kwargs"] \
-                    not in ["Null", "None", "null", "none", "", np.nan]:
-                self.obs_info["operation_kwargs"].append(self.gt_df.iloc[II]["operation_kwargs"])
-            else:
-                self.obs_info["operation_kwargs"].append({})
-
-            if "lookup_range" in self.gt_df.iloc[II].keys():
-                self.obs_info["faeture_range"].append(self.gt_df.iloc[II]["lookup_range"])
-            else:
-                self.obs_info["faeture_range"].append({})
-
-        self.obs_info["num_obs"] = len(self.obs_info["obs_names"])
-
-        # how much to weight the different observable errors by
-        self.obs_info["weight_const_vec"] = np.array([self.gt_df.iloc[II]["weight"] for II in range(self.gt_df.shape[0])
-                                          if self.gt_df.iloc[II]["data_type"] == "constant"])
-
-        self.obs_info["weight_series_vec"] = np.array([self.gt_df.iloc[II]["weight"] for II in range(self.gt_df.shape[0])
-                                           if self.gt_df.iloc[II]["data_type"] == "series"])
-
-        self.obs_info["weight_amp_vec"] = np.array([self.gt_df.iloc[II]["weight"] for II in range(self.gt_df.shape[0])
-                                           if self.gt_df.iloc[II]["data_type"] == "frequency"])
-        
-        self.obs_info["weight_prob_dist_vec"] = np.array([self.gt_df.iloc[II]["weight"] for II in range(self.gt_df.shape[0])
-                                          if self.gt_df.iloc[II]["data_type"] == "prob_dist"])
-
-        weight_phase_list = [] 
-        for II in range(self.gt_df.shape[0]):
-            if self.gt_df.iloc[II]["data_type"] == "frequency":
-                if "phase_weight" not in self.gt_df.iloc[II].keys():
-                    weight_phase_list.append(1)
-                else:
-                    weight_phase_list.append(self.gt_df.iloc[II]["phase_weight"])
-        self.obs_info["weight_phase_vec"] = np.array(weight_phase_list)
-
-        # set the cost type for each observable
-        self.obs_info["cost_type"] = []
-        for II in range(self.gt_df.shape[0]):
-            if "cost_type" in self.gt_df.iloc[II].keys() and self.gt_df.iloc[II]["cost_type"] not in [np.nan, None, "None", ""]:
-                self.obs_info["cost_type"].append(self.gt_df.iloc[II]["cost_type"])
-            else:
-                if self.ga_options is not None:
-                    if "cost_type" in self.ga_options.keys():
-                        self.obs_info["cost_type"].append(self.ga_options["cost_type"]) # default to cost type in ga_options
-                    else:
-                        self.obs_info["cost_type"].append("MSE") # default to mean squared error
-                elif self.mcmc_options is not None:
-                    if "cost_type" in self.mcmc_options.keys():
-                        self.obs_info["cost_type"].append(self.mcmc_options["cost_type"]) # default to cost type in mcmc_options
-                    else:
-                        self.obs_info["cost_type"].append("MSE") # default to mean squared error
-                else:
-                    print("cost_type not found in obs_data.json, ga_options, or mcmc_options, exiting")
-                    exit()
-
-
-
-        # preprocess information in the protocol_info dataframe
-        self.protocol_info['num_experiments'] = len(self.protocol_info["sim_times"])
-        self.protocol_info['num_sub_per_exp'] = [len(self.protocol_info["sim_times"][II]) for II in range(self.protocol_info["num_experiments"])]
-        self.protocol_info['num_sub_total'] = sum(self.protocol_info['num_sub_per_exp'])
-
-        # calculate total experiment sim times
-        self.protocol_info["total_sim_times_per_exp"] = []
-        self.protocol_info["tSims_per_exp"] = []
-        self.protocol_info["num_steps_total_per_exp"] = []
-
-        for exp_idx in range(self.protocol_info['num_experiments']):
-            total_sim_time = np.sum([self.protocol_info["sim_times"][exp_idx][II] for
-                            II in range(self.protocol_info["num_sub_per_exp"][exp_idx])])
-            num_steps_total = int(total_sim_time/self.dt)
-            tSim_per_exp = np.linspace(0.0, total_sim_time, num_steps_total + 1)
-            self.protocol_info["total_sim_times_per_exp"].append(total_sim_time)
-            self.protocol_info["tSims_per_exp"].append(tSim_per_exp)
-            self.protocol_info["num_steps_total_per_exp"].append(num_steps_total)
-            
-
-        if "experiment_colors" not in self.protocol_info.keys():
-            self.protocol_info["experiment_colors"] = ['r']
-            if self.protocol_info['num_experiments'] > 1:
-                self.protocol_info["experiment_colors"] = ['r']*self.protocol_info['num_experiments']
-        else:
-            if len(self.protocol_info["experiment_colors"]) != self.protocol_info['num_experiments']:
-                print('experiment_colors in obs_data.json not the same length as num_experiments, exiting')
-                exit()
-
-        if "experiment_labels" in self.protocol_info.keys():
-            if len(self.protocol_info["experiment_labels"]) != self.protocol_info['num_experiments']:
-                print('experiment_labels in obs_data.json not the same length as num_experiments, exiting')
-                exit()
-        else:
-            self.protocol_info["experiment_labels"] = [None]
-            if self.protocol_info['num_experiments'] > 1:
-                self.protocol_info["experiment_labels"] = [None]*self.protocol_info['num_experiments']
-        
-        # set experiment and subexperiment idxs to 0 if they are not defined. print warning if multiple subexperiments
-        for II in range(self.gt_df.shape[0]):
-            if "experiment_idx" not in self.gt_df.iloc[II].keys():
-                self.gt_df["experiment_idx"] = 0
-                if self.protocol_info['num_sub_total'] > 1:
-                    print(f'experiment_idx not found in obs_data.json entry {self.gt_df.iloc[II]["variable"]}, '
-                          'but multiple experiments are defined.',
-                          'Setting experiment_idx to 0 for all data points')
-            if "subexperiment_idx" not in self.gt_df.iloc[II].keys():
-                self.gt_df["subexperiment_idx"] = 0
-                if self.protocol_info['num_sub_total'] > 1:
-                    print(f'subexperiment_idx not found in obs_data.json entry {self.gt_df.iloc[II]["variable"]}, '
-                          'but multiple subexperiments are defined.',
-                          'Setting subexperiment_idx to 0 for all data points')
-        
-        # calculate the mapping from sub and experiment idx to the weight of the observable for that subexperiment
-        const_map = [[[] for sub_idx in range(self.protocol_info['num_sub_per_exp'][exp_idx])]
-                     for exp_idx in range(self.protocol_info['num_experiments'])]
-        series_map = [[[] for sub_idx in range(self.protocol_info['num_sub_per_exp'][exp_idx])]
-                     for exp_idx in range(self.protocol_info['num_experiments'])]
-        amp_map = [[[] for sub_idx in range(self.protocol_info['num_sub_per_exp'][exp_idx])]
-                     for exp_idx in range(self.protocol_info['num_experiments'])]
-        phase_map = [[[] for sub_idx in range(self.protocol_info['num_sub_per_exp'][exp_idx])]
-                     for exp_idx in range(self.protocol_info['num_experiments'])]
-        prob_dist_map = [[[] for sub_idx in range(self.protocol_info['num_sub_per_exp'][exp_idx])]
-                     for exp_idx in range(self.protocol_info['num_experiments'])]
-
-        for exp_idx in range(self.protocol_info['num_experiments']):
-            for this_sub_idx in range(self.protocol_info['num_sub_per_exp'][exp_idx]):
-
-                for II in range(self.gt_df.shape[0]):
-                    if self.gt_df.iloc[II]["data_type"] == "constant":
-                        if self.gt_df.iloc[II]["experiment_idx"] == exp_idx and \
-                            self.gt_df.iloc[II]["subexperiment_idx"] == this_sub_idx:
-                            const_map[exp_idx][this_sub_idx].append(self.gt_df.iloc[II]["weight"])
-                        else:
-                            # if the data point is not in assigned to this experiment/subexperiment, 
-                            # set the weight mapping to 0, so it doesn't influence the cost in this 
-                            # subexperiment
-                            const_map[exp_idx][this_sub_idx].append(0.0)
-                    if self.gt_df.iloc[II]["data_type"] == "series":
-                        if self.gt_df.iloc[II]["experiment_idx"] == exp_idx and \
-                            self.gt_df.iloc[II]["subexperiment_idx"] == this_sub_idx:
-                            series_map[exp_idx][this_sub_idx].append(self.gt_df.iloc[II]["weight"])
-                        else:
-                            series_map[exp_idx][this_sub_idx].append(0.0)
-
-                    if self.gt_df.iloc[II]["data_type"] == "frequency":
-                        if self.gt_df.iloc[II]["experiment_idx"] == exp_idx and \
-                            self.gt_df.iloc[II]["subexperiment_idx"] == this_sub_idx:
-                            amp_map[exp_idx][this_sub_idx].append(self.gt_df.iloc[II]["weight"])
-                            if "phase_weight" not in self.gt_df.iloc[II].keys():
-                                # if there is no phase weight, weight it the same as the amplitude
-                                phase_map[exp_idx][this_sub_idx].append(self.gt_df.iloc[II]["weight"])
-                            else:
-                                phase_map[exp_idx][this_sub_idx].append(self.gt_df.iloc[II]["phase_weight"])
-                        else:
-                            amp_map[exp_idx][this_sub_idx].append(0.0)
-                            phase_map[exp_idx][this_sub_idx].append(0.0)
-
-                    if self.gt_df.iloc[II]["data_type"] == "prob_dist":
-                        if self.gt_df.iloc[II]["experiment_idx"] == exp_idx and \
-                            self.gt_df.iloc[II]["subexperiment_idx"] == this_sub_idx:
-                            prob_dist_map[exp_idx][this_sub_idx].append(self.gt_df.iloc[II]["weight"])
-                        else:
-                            prob_dist_map[exp_idx][this_sub_idx].append(0.0)
-
-                # make each weight vector a numpy array
-                const_map[exp_idx][this_sub_idx] = np.array(const_map[exp_idx][this_sub_idx])
-                series_map[exp_idx][this_sub_idx] = np.array(series_map[exp_idx][this_sub_idx])
-                amp_map[exp_idx][this_sub_idx] = np.array(amp_map[exp_idx][this_sub_idx])
-                phase_map[exp_idx][this_sub_idx] = np.array(phase_map[exp_idx][this_sub_idx])
-                prob_dist_map[exp_idx][this_sub_idx] = np.array(prob_dist_map[exp_idx][this_sub_idx])
-
-        self.protocol_info["scaled_weight_const_from_exp_sub"] = const_map
-        self.protocol_info["scaled_weight_series_from_exp_sub"] = series_map
-        self.protocol_info["scaled_weight_amp_from_exp_sub"] = amp_map
-        self.protocol_info["scaled_weight_phase_from_exp_sub"] = phase_map
-        self.protocol_info["scaled_weight_prob_dist_from_exp_sub"] = prob_dist_map
-        return
-    
-=======
->>>>>>> dev_parser
     def set_output_dir(self, path):
         
         self.output_dir = path
@@ -570,10 +208,6 @@ class sobol_SA():
     
     def generate_outputs_mpi(self, samples):
 
-        failed_params = []     # 1. Simulation failures
-        warning_params = []    # 2. Feature extraction warnings
-        lookup_range_params = []   # 3. Outputs within provided range
-
         # Split samples across ranks
         n_samples = len(samples)
         samples_per_rank = n_samples // self.num_procs
@@ -591,14 +225,26 @@ class sobol_SA():
         print(f"[MPI Rank {self.rank}] Starting samples {start}:{end} (total {len(local_samples)})")
 
         local_outputs = []
+        local_sim_flags = []
 
-        # Create a single progress bar for this rank
-        with tqdm(total=len(local_samples), desc=f"Rank {self.rank}", position=self.rank, leave=True) as pbar:
+        if self.rank == 0:
+            # Initialize tqdm only if the current rank is 0
+            pbar = tqdm(total=len(local_samples), desc=f"Rank {self.rank}", position=self.rank, leave=True)
+        else:
+            # Create a simple context manager that does nothing for other ranks
+            class DummyPbar:
+                def __enter__(self):
+                    return self
+                def __exit__(self, exc_type, exc_val, exc_tb):
+                    pass
+                def close(self):
+                    pass
+                def update(self, n=1):
+                    pass # No operation
+            pbar = DummyPbar()
+
+        with pbar:
             for param_vals in local_samples:
-
-                sim_failed = False      # internal tracking
-                warn_flag = False
-                lookup_range_flag = False    # if provided
 
                 # --- handle single vs multi subexperiment ---
                 if self.protocol_info["num_sub_total"] == 1:
@@ -610,7 +256,7 @@ class sobol_SA():
                     operands_outputs_dict = {}
 
                     retry_count = 0
-                    max_retries = 0
+                    max_retries = 5
                     original_MaximumStep = self.solver_info.get("MaximumStep", None)
                     original_MaximumNumberOfSteps = self.solver_info.get("MaximumNumberOfSteps", None)
 
@@ -636,14 +282,14 @@ class sobol_SA():
                         operands_outputs = self.sim_helper.get_results(self.obs_info["operands"])
                         operands_outputs_dict[(0, 0)] = operands_outputs
 
+                        sim_flag = f"success_after_{retry_count}tries"
                         self.sim_helper.reset_and_clear()
                     else:
                         print(f"[MPI Rank {self.rank}] Simulation failed for params: {param_vals}, subexp={subexp_count} after {retry_count} retries")
                         # Set a flag in operands_outputs_dict to indicate failure
                         operands_outputs_dict[(0, 0)] = {"failed": True}
 
-                        sim_failed = True
-                        failed_params.append(param_vals)
+                        sim_flag = "failed"
 
                         # reset at the end of each experiment
                         self.sim_helper.reset_and_clear()
@@ -709,6 +355,7 @@ class sobol_SA():
                                 operands_outputs = self.sim_helper.get_results(self.obs_info["operands"])
                                 operands_outputs_dict[(exp_idx, this_sub_idx)] = operands_outputs
 
+                                sim_flag = f"success_after_{retry_count}tries"
                                 # reset at the end of each experiment
                                 if this_sub_idx == self.protocol_info["num_sub_per_exp"][exp_idx] - 1:
                                     self.sim_helper.reset_and_clear()
@@ -716,14 +363,14 @@ class sobol_SA():
                                 print(f"[MPI Rank {self.rank}] Simulation failed for params: {param_vals}, subexp={subexp_count} after {retry_count} retries")
                                 # Set a flag in operands_outputs_dict to indicate failure
                                 operands_outputs_dict[(exp_idx, this_sub_idx)] = {"failed": True}
-                                sim_failed = True
-                                failed_params.append(param_vals)
+                                sim_flag = "failed"
                                 
                                 # reset at the end of each experiment
                                 if this_sub_idx == self.protocol_info["num_sub_per_exp"][exp_idx] - 1:
                                     self.sim_helper.reset_and_clear()
 
                 features = []
+                sim_flags = []
                 cost = 0.0
                 for j in range(len(self.obs_info["operations"])):
                     func = self.operation_funcs_dict[self.obs_info["operations"][j]]
@@ -731,6 +378,7 @@ class sobol_SA():
                     subexp_idx = self.obs_info["subexperiment_idxs"][j]
                     operands_outputs = operands_outputs_dict.get((exp_idx, subexp_idx), None)
                     if operands_outputs is not None and not (isinstance(operands_outputs, dict) and operands_outputs == {"failed": True}):
+
                         feature = func(*operands_outputs[j], **self.obs_info["operation_kwargs"][j])
 
                         if self.param_id is not None:                        
@@ -742,10 +390,18 @@ class sobol_SA():
                         if isinstance(feature, tuple):
                             val, flag = feature
                             features.append(val)
-                            if flag:
-                                warn_flag = True
+                            sim_flag = f"warning_{flag}"
                         else:
                             features.append(feature)
+
+                        if hasattr(self, "feature_lookup_ranges"):
+                            for i, f in enumerate(features):
+                                f_min, f_max = self.feature_lookup_ranges[f"{i}"]
+                                # print(f"Feature {i}: {features[i]} - ({f_min}, {f_max})")
+                                if f_max != None or f_min != None:
+                                    if (f_min <= f <= f_max):
+                                        sim_flag = "in_lookup_range"
+                                        break
 
                     else:
                         # WARNING: using mean biases variance estimates (shrinks variance), underestimates sensitivity
@@ -753,35 +409,27 @@ class sobol_SA():
                         # Append the mean of the current features (ignoring None) -> reduces variance and bias induces toward zero
                         features.append(np.mean(features))
 
+                    sim_flags.append(sim_flag)
+
                 # adding cost as extra feature
                 if self.param_id is not None:
                     features.append(cost)
-                
-                if warn_flag:
-                    warning_params.append((param_vals, features))
-
-                if hasattr(self, "feature_lookup_ranges"):
-                    print(">>>>>>>>")
-                    for i, f in enumerate(features):
-                        f_min, f_max = self.feature_lookup_ranges[f"{i}"]
-                        print(f"Feature {i}: {f}, Range: ({f_min}, {f_max})")
-                        if not (f_min <= f <= f_max):
-                            print("break")
-                            lookup_range_flag = True
-                            break
-                    if lookup_range_flag:
-                        lookup_range_params.append((param_vals, features))
 
                 local_outputs.append(features)
+                local_sim_flags.append(sim_flags)
                 pbar.update(1)
 
+        pbar.close()
         print(f"[MPI Rank {self.rank}] Finished processing samples {start}:{end}")
 
         # Gather results at rank 0
         all_outputs = self.comm.gather(local_outputs, root=0)
+        all_sim_flags = self.comm.gather(local_sim_flags, root=0)
 
         if self.rank == 0:
             outputs = [item for sublist in all_outputs for item in sublist]
+            outputs_sim_flags = [item for sublist in all_sim_flags for item in sublist]
+
             outputs = np.array(outputs)
             print(f"[MPI Rank 0] Gathered and flattened all outputs. Total outputs: {outputs.shape}")
 
@@ -792,9 +440,7 @@ class sobol_SA():
             self.save_output_results(
                 samples=samples_arr,
                 outputs=outputs,
-                failed_params=failed_params,
-                warning_params=warning_params,
-                lookup_range_params=lookup_range_params
+                outputs_sim_flags = outputs_sim_flags
             )
 
             return outputs
@@ -900,7 +546,7 @@ class sobol_SA():
             ST = ST_all[i]
             
             if i >= len(self.obs_info['names_for_plotting']):
-                output_name = rf"Cost"
+                output_name = rf"Cost Function"
             else:
                 output_name = rf"${self.obs_info['names_for_plotting'][i]}$ - experiment{self.obs_info["experiment_idxs"][i]}, subexperiment{self.obs_info["subexperiment_idxs"][i]}"
             # output_name = self.obs_info["names_for_plotting"][i] if hasattr(self, "obs_info") else f"Output_{i}"
@@ -911,7 +557,8 @@ class sobol_SA():
             plt.bar(x - 0.2, S1, width=0.4, label='First-order', color='blue', alpha=0.7)
             plt.bar(x + 0.2, ST, width=0.4, label='Total-order', color='red', alpha=0.7)
 
-            plt.xticks(x, self.SA_cfg["param_names"], rotation=45, fontsize=8)
+            param_labels = [rf"${name}$" for name in self.param_id_info["param_names_for_plotting"]]
+            plt.xticks(x, param_labels, rotation=45, fontsize=8)
             plt.ylabel('Sensitivity Index')
             plt.title(rf'Sobol Sensitivity - {output_name}')
             plt.legend()
@@ -937,16 +584,15 @@ class sobol_SA():
         for i in range(n_outputs):
             S2 = S2_all[i]
             
-            # output_name = rf"${self.obs_info['names_for_plotting'][i]}$ - experiment{self.obs_info["experiment_idxs"][i]}, subexperiment{self.obs_info["subexperiment_idxs"][i]}"
             if i >= len(self.obs_info['names_for_plotting']):
-                output_name = rf"Cost"
+                output_name = rf"Cost Function"
             else:
                 output_name = rf"${self.obs_info['names_for_plotting'][i]}$ - experiment{self.obs_info["experiment_idxs"][i]}, subexperiment{self.obs_info["subexperiment_idxs"][i]}"
 
-            # plt.figure(figsize=(6, 5))
             fig_width = max(6, 1.0 * len(self.SA_cfg["param_names"]))
             plt.figure(figsize=(fig_width, fig_width))
-            sns.heatmap(S2, annot=True, fmt=".2f", xticklabels=self.SA_cfg["param_names"], yticklabels=self.SA_cfg["param_names"], cmap="coolwarm")
+            param_labels = [rf"${name}$" for name in self.param_id_info["param_names_for_plotting"]]
+            sns.heatmap(S2, annot=True, fmt=".2f", xticklabels=param_labels, yticklabels=param_labels, cmap="coolwarm")
             plt.title(rf"2nd order Sobol Indices - {output_name}")
             plt.tight_layout()
 
@@ -976,19 +622,9 @@ class sobol_SA():
         print("\nGenerating Sobol Index Heatmaps...")
         
         # 1. Define Axis Labels
-        if S1_all.shape[0] < len(self.obs_info['names_for_plotting']):
-            output_labels = [
-                rf"{self.obs_info['names_for_plotting'][i]} (Exp{self.obs_info['experiment_idxs'][i]}, Sub{self.obs_info['subexperiment_idxs'][i]})"
-                for i in range(S1_all.shape[0])
-            ]
-        else:
-            output_labels = [
-                rf"{self.obs_info['names_for_plotting'][i]} (Exp{self.obs_info['experiment_idxs'][i]}, Sub{self.obs_info['subexperiment_idxs'][i]})"
-                for i in range(S1_all.shape[0]-1)
-            ]
-            output_labels.append(rf"Cost")
+        output_labels = self.get_sobol_output_labels(S1_all.shape[0])
 
-        param_labels = self.SA_cfg["param_names"]
+        param_labels = [rf"${name}$" for name in self.param_id_info["param_names_for_plotting"]]
 
         # Current shape: (n_outputs, n_params) -> Desired shape: (n_params, n_outputs)
         S1_heatmap_data = S1_all.T
@@ -1059,24 +695,8 @@ class sobol_SA():
         
         sobol_indices = S1_all if index_type == 'First-Order' else ST_all
 
-        # Output labels need to be created by combining the name, experiment, and subexperiment
-        # output_labels = [
-        #     self.obs_info['names_for_plotting'][i] 
-        #     for i in range(sobol_indices.shape[0])
-        # ]
-        if sobol_indices.shape[0] < len(self.obs_info['names_for_plotting']):
-            output_labels = [
-                rf"{self.obs_info['names_for_plotting'][i]} (Exp{self.obs_info['experiment_idxs'][i]}, Sub{self.obs_info['subexperiment_idxs'][i]})"
-                for i in range(S1_all.shape[0])
-            ]
-        else:
-            output_labels = [
-                rf"{self.obs_info['names_for_plotting'][i]} (Exp{self.obs_info['experiment_idxs'][i]}, Sub{self.obs_info['subexperiment_idxs'][i]})"
-                for i in range(S1_all.shape[0]-1)
-            ]
-            output_labels.append(rf"Cost")
-        
-        param_labels = self.SA_cfg["param_names"]
+        output_labels = self.get_sobol_output_labels(sobol_indices.shape[0])
+        param_labels = [rf"${name}$" for name in self.param_id_info["param_names_for_plotting"]]
         
         n_outputs = sobol_indices.shape[0]
         n_params = sobol_indices.shape[1]
@@ -1153,7 +773,7 @@ class sobol_SA():
         plt.close()
         print(f"Saved {index_type} bubble plot to {save_path}")
 
-    def save_output_results(self, samples, outputs, failed_params=None, warning_params=None, lookup_range_params=None):
+    def save_output_results(self, samples, outputs, outputs_sim_flags=None):
         """
         Saves parameters and outputs, including tracking issues, into CSV files.
         """
@@ -1164,58 +784,37 @@ class sobol_SA():
         except:
             param_labels = [f"param_{i}" for i in range(samples.shape[1])]
 
-        try:
-            # output_labels = self.obs_info['names_for_plotting']  # user-defined names
+        output_labels = self.get_sobol_output_labels(outputs.shape[1])
+        
+        # Prepare DataFrame including output_sim_flags (which may be strings)
+        if outputs_sim_flags is not None:
+            # Ensure outputs_sim_flags is a numpy array of dtype object (to allow strings)
+            outputs_sim_flags = np.array(outputs_sim_flags, dtype=object)
+            # Create column names for flags
             if outputs.shape[1] > len(self.obs_info['names_for_plotting']):
-                output_labels = [
-                    rf"{self.obs_info['names_for_plotting'][i]} (Exp{self.obs_info['experiment_idxs'][i]}, Sub{self.obs_info['subexperiment_idxs'][i]})"
-                    for i in range(outputs.shape[1])
+                flag_labels = [
+                    f"{label}_flag"
+                    for label in output_labels
+                    if label != "Cost Function" and label != f"feature_{outputs.shape[1]-1}"
                 ]
             else:
-                output_labels = [
-                    rf"{self.obs_info['names_for_plotting'][i]} (Exp{self.obs_info['experiment_idxs'][i]}, Sub{self.obs_info['subexperiment_idxs'][i]})"
-                    for i in range(outputs.shape[1]-1)
+                flag_labels = [
+                    f"{label}_flag"
+                    for label in output_labels
                 ]
-                output_labels.append(rf"Cost")
-        except:
-            output_labels = [f"feature_{i}" for i in range(outputs.shape[1])]
-        
-        df = pd.DataFrame(
+            # Concatenate samples, outputs, and flags horizontally
+            df = pd.DataFrame(
+            np.hstack((samples, outputs, outputs_sim_flags)),
+            columns=param_labels + output_labels + flag_labels
+            )
+        else:
+            df = pd.DataFrame(
             np.hstack((samples, outputs)),
             columns=param_labels + output_labels
-        )
+            )
         file_name = "all_outputs.csv"
         save_path = os.path.join(self.save_path, file_name)
         df.to_csv(save_path, index=False)
-
-        # 2) Save failed simulation parameters
-        
-        if failed_params:
-            print(failed_params)
-            file_name = "failed_simulation.csv"
-            save_path = os.path.join(self.save_path, file_name)
-            pd.DataFrame(failed_params, columns=param_labels).to_csv(save_path, index=False)
-
-        # 3) Save feature extraction warnings
-        if warning_params:
-            file_name = "warnings.csv"
-            save_path = os.path.join(self.save_path, file_name)
-            pd.DataFrame([
-                {**{p: val for p, val in zip(param_labels, params)},
-                **{f: val for f, val in zip(output_labels, outputs_)},
-                "warning_flags": flags}
-                for params, outputs_, flags in warning_params
-            ]).to_csv(save_path, index=False)
-
-        # 4) Save outputs that meet desired range criteria
-        if lookup_range_params:
-            file_name = "lookup_range.csv"
-            save_path = os.path.join(self.save_path, file_name)
-            pd.DataFrame([
-                {**{p: val for p, val in zip(param_labels, params)},
-                **{f: val for f, val in zip(output_labels, outputs_)}}
-                for params, outputs_ in lookup_range_params
-            ]).to_csv(save_path, index=False)
 
     def load_category_data(self):
         """
@@ -1224,274 +823,44 @@ class sobol_SA():
         Returns:
             df_all (pd.DataFrame): Combined dataframe with parameters and Category label.
         """
-        category_files = {
-            "all": "all_outputs.csv",
-            "failed": "failed.csv",
-            "warning": "warning.csv",
-            "lookup_range": "lookup_range.csv"
-        }
 
-        df_list = []
-        param_labels = self.SA_cfg["param_names"]
+        filename = "all_outputs.csv"
+        file_path = os.path.join(self.save_path, filename)
+        if os.path.isfile(file_path):
+            try:
+                df = pd.read_csv(file_path)
+            except Exception as e:
+                print(f"⚠️ Error loading {filename}: {e}")
+        else:
+                print(f"ℹ️ {filename} not found, skipping.")                
 
-        for cat, filename in category_files.items():
-            file_path = os.path.join(self.save_path, filename)
-            if os.path.isfile(file_path):
-                try:
-                    df = pd.read_csv(file_path)
-                    df["Category"] = cat
-                    df_list.append(df[param_labels + ["Category"]])
-                    print(f"Loaded {filename}")
-                except Exception as e:
-                    print(f"⚠️ Error loading {filename}: {e}")
-            else:
-                print(f"ℹ️ {filename} not found, skipping.")
-
-        if not df_list:
-            raise ValueError("❌ No category CSV files were found.")
-
-        df_all = pd.concat(df_list, ignore_index=True)
-        return df_all
+        return df
     
-    def plot_corner_overlay_old(self, df: pd.DataFrame, param_names: list[str]):
-        """
-        Overlay all categories in a corner plot.
-        """
-        unique_categories = df["Category"].unique()
-        fig = None
-
-        for i, cat in enumerate(unique_categories):
-            data_cat = df[df["Category"] == cat][param_names].values
-            
-            print(data_cat)
-
-            fig = corner.corner(
-                data_cat,
-                fig=fig,
-                labels=param_names,
-                color=f"C{i}",
-                plot_datapoints=True,
-                plot_density=True,
-                hist_kwargs={"alpha": 0.4},
-                plot_contours=False,
-                use_math_text=True
-            )
-
-        # Legend
-        fig.axes[0].plot([], [], label="Categories:")
-        for i, cat in enumerate(unique_categories):
-            fig.axes[0].plot([], [], color=f"C{i}", label=str(cat))
-        fig.axes[0].legend(loc="upper right", fontsize=10)
-
-        file_name = f"corner_plots.png"
-        save_path = os.path.join(self.save_path, file_name)
-        if save_path is not None:
-            fig.savefig(save_path, dpi=300)
-            print(f"📌 Corner plot saved to: {save_path}")
-
-    def plot_corner_overlay_old2(self, df: pd.DataFrame, param_names: list[str]):
-        """
-        Creates a corner-style plot using pure Matplotlib, suitable for overlaying
-        categories, even those with very few samples (bypassing corner library limitations).
-        """
-        N_dims = len(param_names)
-        unique_categories = df["Category"].unique()
-        print(f"Unique categories found: {unique_categories}")
-        
-        # 1. Initialize the Plotting Grid
-        # Create an N_dims x N_dims figure with shared axes for aligning the scatter plots
-        fig, axes = plt.subplots(N_dims, N_dims, figsize=(12, 12))
-        
-        # Adjust spacing for a tighter fit like a standard corner plot
-        fig.subplots_adjust(hspace=0.05, wspace=0.05)
-
-        # 2. Iterate through Categories and Plot Data
-        for i, cat in enumerate(unique_categories):
-            data_cat = df[df["Category"] == cat][param_names].values
-            N_samples = data_cat.shape[0]
-            print(f"Category '{cat}' has {N_samples} samples.")
-            color = f"C{i}"
-            
-            if N_samples == 0:
-                print(f"Skipping category '{cat}': No samples found.")
-                continue
-                
-            print(f"Plotting category '{cat}' with {N_samples} samples.")
-
-            # Iterate over all possible pairs of dimensions (i.e., subplots)
-            for row in range(N_dims):
-                for col in range(N_dims):
-                    ax = axes[row, col]
-                    
-                    # --- A. Diagonal Plots (i == j): Use for Parameter Labels ---
-                    if row == col:
-                        # Clear the plotting area and just place the label
-                        ax.set_xticks([])
-                        ax.set_yticks([])
-                        if row == 0:
-                            ax.text(0.5, 0.5, param_names[row], transform=ax.transAxes, 
-                                    fontsize=14, ha='center', va='center')
-                        
-                    # --- B. Upper Triangle (i < j): Skip (Corner plots are symmetric) ---
-                    elif col > row:
-                        ax.set_visible(False)
-                        
-                    # --- C. Lower Triangle Plots (i > j): Scatter Plots ---
-                    elif col < row:
-                        # x-axis corresponds to the column index (col)
-                        # y-axis corresponds to the row index (row)
-                        
-                        # Scatter plot the data for this category
-                        ax.scatter(data_cat[:, col], data_cat[:, row], 
-                                c=color, 
-                                s=20,          # Marker size
-                                alpha=0.7,     # Transparency
-                                label=str(cat) if (row == N_dims-1 and col == 0) else None)
-                        
-                        # Clean up axis limits and labels
-                        ax.tick_params(axis='both', which='major', labelsize=8)
-                        
-                        # Remove y-tick labels for inner columns
-                        if col != 0:
-                            ax.set_yticklabels([])
-                        # Remove x-tick labels for inner rows
-                        if row != N_dims - 1:
-                            ax.set_xticklabels([])
-                            
-                        # Add X-axis label only to the bottom row
-                        if row == N_dims - 1:
-                            ax.set_xlabel(param_names[col], fontsize=10)
-                            
-                        # Add Y-axis label only to the first column
-                        if col == 0:
-                            ax.set_ylabel(param_names[row], fontsize=10)
-
-        # 3. Add Global Legend and Clean Up Axes
-        # Use the bottom-left axis (last row, first column) for the legend
-        # Find all unique labels from the scatter plots to generate the legend
-        handles, labels = axes[N_dims-1, 0].get_legend_handles_labels()
-        
-        if handles:
-            fig.legend(handles, labels, loc='upper right', bbox_to_anchor=(0.95, 0.95), 
-                    title="Categories", fontsize=10)
-
-        # 4. Save Figure
-        file_name = f"corner_style_plots_matplotlib.png"
-        save_path = os.path.join(self.save_path, file_name)
-        
-        # Ensure save_path exists (you might need to create the directory if it doesn't exist)
-        os.makedirs(os.path.dirname(save_path), exist_ok=True) 
-
-        fig.savefig(save_path, dpi=300, bbox_inches='tight')
-        plt.close(fig) # Close the figure to free memory
-        print(f"📌 Corner-style plot (Matplotlib) saved to: {save_path}")
-
-    def plot_corner_overlay_old3(self, df: pd.DataFrame, param_names: list[str]):
-        """
-        Creates a corner-style plot using pure Matplotlib with improved axis
-        and label alignment for visual appeal.
-        """
-        N_dims = len(param_names)
-        unique_categories = df["Category"].unique()
-        
-        # 1. Initialize the Plotting Grid
-        # Use plt.figure and manually set subplots to prevent the diagonal from
-        # automatically taking up the full width/height of the row/column.
-        fig, axes = plt.subplots(N_dims, N_dims, figsize=(12, 12))
-        
-        # Adjust spacing for a tighter fit like a standard corner plot
-        fig.subplots_adjust(hspace=0.05, wspace=0.05)
-
-        # 2. Iterate through Categories and Plot Data
-        for i, cat in enumerate(unique_categories):
-            data_cat = df[df["Category"] == cat][param_names].values
-            N_samples = data_cat.shape[0]
-            color = f"C{i}"
-            
-            if N_samples == 0:
-                continue
-                
-            # Iterate over all possible pairs of dimensions (i.e., subplots)
-            for row in range(N_dims):
-                for col in range(N_dims):
-                    ax = axes[row, col]
-                    
-                    # --- A. Upper Triangle (col > row): Remove entirely ---
-                    if col > row:
-                        ax.set_visible(False)
-                        continue # Skip to the next subplot
-                    
-                    # --- B. Diagonal Plots (row == col): Use for Parameter Labels/Names ---
-                    elif row == col:
-                        ax.set_xticks([])
-                        ax.set_yticks([])
-                        # Remove the box frame around the diagonal plot
-                        ax.axis('off') 
-                        
-                        # Place the parameter name in the center
-                        ax.text(0.5, 0.5, param_names[row], transform=ax.transAxes, 
-                                fontsize=14, ha='center', va='center')
-                    
-                    # --- C. Lower Triangle Plots (col < row): Scatter Plots ---
-                    elif col < row:
-                        # Scatter plot the data for this category
-                        ax.scatter(data_cat[:, col], data_cat[:, row], 
-                                c=color, 
-                                s=20,          
-                                alpha=0.7,     
-                                # Only add a label for the legend in the bottom-left plot
-                                label=str(cat) if (row == N_dims-1 and col == 0) else None)
-                        
-                        # --- AXIS CLEANUP AND ALIGNMENT ---
-                        
-                        # 1. Ticks and Labels for X-axis (Columns)
-                        if row == N_dims - 1:
-                            # Only show x-ticks/labels on the bottom row
-                            ax.set_xlabel(param_names[col], fontsize=10)
-                            # Rotate ticks for better visual separation
-                            ax.tick_params(axis='x', which='major', rotation=45, labelsize=8)
-                        else:
-                            # Hide x-ticks/labels on all inner rows
-                            ax.set_xticklabels([])
-                            ax.tick_params(axis='x', which='major', length=0) # Remove ticks themselves
-                            
-                        # 2. Ticks and Labels for Y-axis (Rows)
-                        if col == 0:
-                            # Only show y-ticks/labels on the first column
-                            ax.set_ylabel(param_names[row], fontsize=10)
-                            ax.tick_params(axis='y', which='major', labelsize=8)
-                        else:
-                            # Hide y-ticks/labels on all inner columns
-                            ax.set_yticklabels([])
-                            ax.tick_params(axis='y', which='major', length=0) # Remove ticks themselves
-
-        # 3. Add Global Legend
-        # The legend handles and labels come from the bottom-left axis (0, N_dims-1)
-        handles, labels = axes[N_dims-1, 0].get_legend_handles_labels()
-        
-        if handles:
-            # Place the legend outside the main plotting area
-            fig.legend(handles, labels, loc='upper right', bbox_to_anchor=(0.98, 0.98), 
-                    title="Categories", fontsize=10)
-
-        # 4. Save Figure
-        file_name = f"corner_style_plots_aligned.png"
-        save_path = os.path.join(self.save_path, file_name)
-        
-        # Ensure save_path exists
-        os.makedirs(os.path.dirname(save_path), exist_ok=True) 
-
-        # Use bbox_inches='tight' to ensure labels and legend are not cut off
-        fig.savefig(save_path, dpi=300, bbox_inches='tight')
-        plt.close(fig)
-
-    def plot_corner_overlay(self, df: pd.DataFrame, param_names: list[str]):
+    def plot_corner_overlay(self, df: pd.DataFrame):
         """
         Creates a corner-style plot using pure Matplotlib with optimized
         axis formatting and alignment for high visual appeal and minimal overlap.
         """
+        param_names = self.SA_cfg["param_names"]
         N_dims = len(param_names)
-        unique_categories = df["Category"].unique()
+        # Find all columns ending with '_flag'
+        flag_cols = [col for col in df.columns if col.endswith('_flag')]
+
+        # Define a function to classify each row
+        def classify_category(row):
+            flags = row[flag_cols].astype(str).str.lower()
+            if any('fail' in flag for flag in flags):
+                return 'fail'
+            elif any('warning' in flag for flag in flags):
+                return 'warning'
+            elif any('lookup' in flag for flag in flags):
+                return 'lookup'
+            else:
+                return 'success'
+
+        # Create a new 'Category' column based on flags
+        df["Category"] = df.apply(classify_category, axis=1)
+        unique_categories = ['success', 'fail', 'warning', 'lookup']
         
         # 1. Initialize the Plotting Grid
         fig, axes = plt.subplots(N_dims, N_dims, figsize=(12, 12))
@@ -1508,6 +877,7 @@ class sobol_SA():
                 continue
                 
             # Iterate over all possible pairs of dimensions (i.e., subplots)
+            param_labels = self.param_id_info["param_names_for_plotting"]
             for row in range(N_dims):
                 for col in range(N_dims):
                     ax = axes[row, col]
@@ -1521,7 +891,7 @@ class sobol_SA():
                     elif row == col:
                         ax.axis('off') 
                         # Place the parameter name in the center
-                        ax.text(0.5, 0.5, param_names[row], transform=ax.transAxes, 
+                        ax.text(0.5, 0.5, rf"${param_labels[row]}$", transform=ax.transAxes, 
                                 fontsize=14, ha='center', va='center')
                     
                     # --- C. Lower Triangle Plots (col < row): Scatter Plots ---
@@ -1549,14 +919,14 @@ class sobol_SA():
                         
                         # X-Axis Labels: Only on the bottom row
                         if row == N_dims - 1:
-                            ax.set_xlabel(param_names[col], fontsize=10)
+                            ax.set_xlabel(rf"${param_labels[col]}$", fontsize=10)
                             ax.tick_params(axis='x', which='major', rotation=45, labelsize=8)
                         else:
                             ax.set_xticklabels([])
                             
                         # Y-Axis Labels: Only on the first column
                         if col == 0:
-                            ax.set_ylabel(param_names[row], fontsize=10)
+                            ax.set_ylabel(rf"${param_labels[col]}$", fontsize=10)
                             ax.tick_params(axis='y', which='major', labelsize=8)
                         else:
                             ax.set_yticklabels([])
@@ -1583,13 +953,65 @@ class sobol_SA():
         fig.savefig(save_path, dpi=300, bbox_inches='tight')
         plt.close(fig)
 
+    import numpy as np
+
+    def get_sobol_output_labels(self, num_labels):
+        """
+        Generates a list of output labels for Sobol sensitivity analysis plots.
+
+        Labels are generated based on whether plotting information exists in self.obs_info
+        and whether a 'Cost Function' label needs to be appended based on array shapes.
+
+        Args:
+            self (object): The instance containing the obs_info dictionary.
+            sobol_indices (np.ndarray): Array used for determining the number of labels.
+            S1_all (np.ndarray): Array used for determining the number of labels (often has same shape as sobol_indices).
+
+        Returns:
+            list: A list of formatted label strings.
+        """
+        
+        names_for_plotting = self.obs_info.get('names_for_plotting', [])
+        should_append_cost_function = (num_labels >= len(names_for_plotting))
+        
+        # Define the ending index for the list comprehension (exclusive)
+        end_range = num_labels - 1 if should_append_cost_function else num_labels
+
+        print(end_range)
+
+        has_plotting_info = (
+            hasattr(self, "obs_info") and 
+            self.obs_info and 
+            "names_for_plotting" in self.obs_info
+        )
+        
+        if has_plotting_info:
+            # Use a rich label format with experimental details
+            def generate_label(i):
+                name = self.obs_info['names_for_plotting'][i]
+                # Use .get() with a default for slightly more robustness
+                exp_idx = self.obs_info.get('experiment_idxs', ['?'])[i]
+                sub_idx = self.obs_info.get('subexperiment_idxs', ['?'])[i]
+                # The rf"..." is used to render text as LaTeX/Math Text
+                return rf"{name} (Exp{exp_idx}, Sub{sub_idx})"
+        else:
+            # Use a generic label format
+            def generate_label(i):
+                return f"feature_{i}"
+
+        output_labels = [generate_label(i) for i in range(end_range)]
+        
+        if should_append_cost_function:
+            output_labels.append(rf"Cost Function")
+            
+        return output_labels
+
     def run(self):
         samples = self.generate_samples()
         if self.use_mpi:
             outputs = self.generate_outputs_mpi(samples)
             if self.rank == 0:
                 S1_all, ST_all, S2_all = self.sobol_index(outputs)
-                # print(f">>>>>>>>>>  {S1_all}, {ST_all}, {S2_all}")
                 return S1_all, ST_all, S2_all
             else:
                 return None, None, None

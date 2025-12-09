@@ -668,7 +668,7 @@ def calc_CTD(time, cai, recovery_pct=50, resolution=0.001,
 
         # Imputed estimate (scaled like APD)
         imputed_CTD = fallback_CTD + (min_acceptable_CTD - fallback_CTD) * (Cai_max / Cai_max)  
-        return float(np.clip(imputed_CTD, fallback_CTD, min_acceptable_CTD))
+        return (float(np.clip(imputed_CTD, fallback_CTD, min_acceptable_CTD)), "fallback_CTP")
 
     CaiD = np.min(fine_cai[:peak_idx])
     CTpeak = fine_cai[peak_idx]
