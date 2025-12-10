@@ -2065,7 +2065,8 @@ class OpencorParamID():
                             success = True
                             break
 
-                        cost_proc[II] = self.get_cost_from_params(param_vals_proc[:, II])
+                        cost_proc[II] = -1*self.get_lnlikelihood_lnprior_from_params(param_vals_proc[:, II])
+                        # cost_proc[II] = self.get_cost_from_params(param_vals_proc[:, II])
 
                         if cost_proc[II] == np.inf:
                             print('... choosing a new random point')
