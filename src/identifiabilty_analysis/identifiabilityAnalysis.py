@@ -92,7 +92,7 @@ class IdentifiabilityAnalysis():
 
         # TODO fix hessian calculation now that it uses lnlikelihood + lnprior
         Hessian = calculate_hessian(self.param_id)
-        covariance_matrix = np.linalg.inv(Hessian)
+        covariance_matrix = np.linalg.inv(-1*Hessian)
         mean = self.best_param_vals
         print("Laplace Approximation Results:")
         print("Mean (Best Parameter Values):", mean)
