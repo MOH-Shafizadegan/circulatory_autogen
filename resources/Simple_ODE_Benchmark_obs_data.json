@@ -17,12 +17,12 @@
   "prediction_items": [],
   "data_items": [
     {
-      "variable": "main/x",
+      "variable": "benchmark/x",
       "name_for_plotting": "x_{SS}",
       "data_type": "constant",
       "operation": "steady_state_avg",
       "operands": [
-        "main/x"
+        "benchmark/x"
       ],
       "unit": "dimensionless",
       "weight": 1.0,
@@ -33,12 +33,12 @@
       "plot_type": "horizontal"
     },
     {
-      "variable": "main/y",
+      "variable": "benchmark/y",
       "name_for_plotting": "y_{SS}",
       "data_type": "constant",
       "operation": "steady_state_avg",
       "operands": [
-        "main/y"
+        "benchmark/y"
       ],
       "unit": "dimensionless",
       "weight": 1.0,
