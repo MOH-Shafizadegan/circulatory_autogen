@@ -23,7 +23,7 @@ if __name__ == '__main__':
         rank = comm.Get_rank()
         num_procs = comm.Get_size()
         if rank == 0:
-            print('_________Running all param_id tests_____________')
+            print('_________Running Benchmark tests_____________')
             print('')
 
         # generate_with_new_architecture(False, inp_data_dict)
@@ -40,36 +40,42 @@ if __name__ == '__main__':
         
         if rank == 0:
             print('')
-            print('running 3compartment parameter id test')
-        inp_data_dict['file_prefix'] = '3compartment'
-        inp_data_dict['input_param_file'] = '3compartment_parameters.csv'
+            print('running Simple ODE Benchmark parameter id test')
+        inp_data_dict['file_prefix'] = 'Simple_ODE_Benchmark'
+        inp_data_dict['input_param_file'] = 'Simple_ODE_Benchmark_parameters.csv'
         inp_data_dict['param_id_method'] = 'genetic_algorithm'
         inp_data_dict['solver'] = 'CVODE'
-        inp_data_dict['pre_time'] = 20
-        inp_data_dict['sim_time'] = 2
+        inp_data_dict['pre_time'] = 0
+        inp_data_dict['sim_time'] = 8
         inp_data_dict['solver_info'] = {}
         inp_data_dict['solver_info']['MaximumStep'] = 0.001
         inp_data_dict['solver_info']['MaximumNumberOfSteps'] = 5000
         inp_data_dict['dt'] = 0.01
-        inp_data_dict['DEBUG'] = True
-        inp_data_dict['param_id_obs_path'] = os.path.join(root_dir_path,'resources/3compartment_obs_data.json')
+        inp_data_dict['DEBUG'] = False
+        inp_data_dict['param_id_obs_path'] = os.path.join(root_dir_path,'resources/Simple_ODE_Benchmark_obs_data.json')
+        inp_data_dict["ga_options"] = {
+            "cost_convergence": 0.0001,
+        }
         inp_data_dict['do_mcmc'] = True
-        inp_data_dict['debug_ga_options']['num_calls_to_function'] = 60
+        inp_data_dict["mcmc_options"] = {
+            "num_steps": 100,
+            "num_walkers": 64
+        }
         inp_data_dict['plot_predictions'] = True
         inp_data_dict['do_ia'] = True
         inp_data_dict['ia_options'] = {
             'method': 'Laplace'
             }
         if rank == 0:
-            print('running 3compartment param id')
+            print('running Simple ODE Benchmark param id')
         run_param_id(inp_data_dict)
 
         if rank == 0:
             # also test running autogeneration with the fit parameters
-            print('running autogeneration with fit parameters for 3compartment model')
+            print('running autogeneration with fit parameters for Simple ODE Benchmark model')
             generate_with_new_architecture(True, inp_data_dict)
             # also test plotting
-            print('running plotting for 3compartment model')
+            print('running plotting for Simple ODE Benchmark model')
 
 
         plot_param_id(inp_data_dict, generate=False)

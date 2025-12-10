@@ -27,6 +27,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
 import corner
+from matplotlib.ticker import ScalarFormatter
 
 
 def plot_param_id(inp_data_dict=None, generate=True):
@@ -154,132 +155,179 @@ def plot_param_id(inp_data_dict=None, generate=True):
 
 def plot_mcmc_and_laplace(param_id, id_analysis):
     """
-    Generates a corner plot from MCMC flat samples and overlays a Gaussian 
-    distribution by generating and plotting samples from the Laplace Approximation 
-    (LA) mean and covariance matrix. Axis limits are set based on the LA uncertainty.
-    
-    Args:
-        param_id: An instance of the ParamID class containing MCMC samples.
-        id_analysis: An instance of the class containing the LA results 
-                     (mean_Lapalace and covariance_matrix_Laplace).
+    Same layout as original MCMC corner plot, but overlays
+    ANALYTIC Laplace approximation:
+        - 1D Gaussian PDFs + 95% CI lines
+        - 2D Gaussian contours
+        - 95% confidence ellipse
     """
-    
-    # Assuming these functions/attributes exist on param_id
-    flat_samples, samples, num_params = param_id.get_mcmc_samples()
-    
-    print('\nGenerating MCMC and Laplace Approximation overlay corner plot...')
-    
-    # 1. Define common plotting labels and indices
-    label_list = [f'${param_id.param_id_info["param_names_for_plotting"][II]}$' 
-                  for II in range(len(param_id.param_id_info["param_names_for_plotting"]))]
-    
-    overwrite_params_to_plot_idxs = [II for II in range(num_params)] 
 
-    # Determine best parameter values for plotting truths (from MCMC/Param ID object)
+    from matplotlib.patches import Ellipse
+    from scipy.stats import norm, multivariate_normal
+    import matplotlib
+
+    # -------------------------------
+    # 1. Load MCMC samples
+    # -------------------------------
+    flat_samples, samples, num_params = param_id.get_mcmc_samples()
+
+    label_list = [
+        f'${param_id.param_id_info["param_names_for_plotting"][II]}$'
+        for II in range(num_params)
+    ]
+    overwrite_params_to_plot_idxs = list(range(num_params))
+
+    # Truths
     if param_id.mcmc_instead:
-        mcmc_object = param_id.mcmc_object 
+        mcmc_object = param_id.mcmc_object
         if mcmc_object.best_param_vals is None:
             best_param_vals = np.load(os.path.join(param_id.output_dir, 'best_param_vals.npy'))
             mcmc_object.set_best_param_vals(best_param_vals)
         truths = mcmc_object.best_param_vals[overwrite_params_to_plot_idxs]
+
     else:
         if param_id.param_id.best_param_vals is None:
             best_param_vals = np.load(os.path.join(param_id.output_dir, 'best_param_vals.npy'))
             param_id.param_id.set_best_param_vals(best_param_vals)
         truths = param_id.param_id.best_param_vals[overwrite_params_to_plot_idxs]
 
+    # -------------------------------
+    # 2. Load Laplace results
+    # -------------------------------
+    if id_analysis.mean_Lapalace is None:
+        parent = os.path.dirname(id_analysis.param_id_output_dir)
+        id_analysis.mean_Lapalace = np.load(os.path.join(parent, id_analysis.file_name_prefix + "_laplace_mean.npy"))
+        id_analysis.covariance_matrix_Laplace = np.load(os.path.join(parent, id_analysis.file_name_prefix + "_laplace_covariance.npy"))
 
-    # 2. Slice Data and LA Results
-    plot_samples = flat_samples[:, overwrite_params_to_plot_idxs]
-    plot_labels = [label_list[II] for II in overwrite_params_to_plot_idxs]
-    
-    print("Laplace mean:", id_analysis.mean_Lapalace)
-    if id_analysis.covariance_matrix_Laplace is None or id_analysis.mean_Lapalace is None:
-            try:
-                parent_dir = os.path.dirname(id_analysis.param_id_output_dir)
-                id_analysis.mean_Lapalace = np.load(os.path.join(parent_dir, id_analysis.file_name_prefix + '_laplace_mean.npy'))
-                id_analysis.covariance_matrix_Laplace = np.load(os.path.join(parent_dir, id_analysis.file_name_prefix + '_laplace_covariance.npy'))
-                print("Loaded Laplace approximation results from files.")
-            except Exception as e:
-                print("Error loading Laplace approximation results:", e)
-                print("Please run the Laplace approximation before plotting.")
-                return
-            
-    plot_mean = id_analysis.mean_Lapalace[overwrite_params_to_plot_idxs]
-    plot_cov = id_analysis.covariance_matrix_Laplace[np.ix_(overwrite_params_to_plot_idxs, overwrite_params_to_plot_idxs)]
-    
-    # 2a. Calculate New Axis Limits based on LA 
-    # Set limits to cover +/- 3 standard deviations of the LA Gaussian
-    plot_stdev = np.sqrt(np.diag(plot_cov))
-    plot_limits = [(plot_mean[i] - 3 * plot_stdev[i], plot_mean[i] + 3 * plot_stdev[i]) 
-                   for i in range(num_params)]
-    
-    # 2b. Generate Samples from Laplace Approximation Gaussian
-    num_la_samples = 50000 # Generate a large number of samples for smooth contours
-    la_samples = np.random.multivariate_normal(plot_mean, plot_cov, size=num_la_samples)
+    mean = id_analysis.mean_Lapalace[overwrite_params_to_plot_idxs]
+    cov  = id_analysis.covariance_matrix_Laplace[np.ix_(overwrite_params_to_plot_idxs, overwrite_params_to_plot_idxs)]
 
+    # # Repair covariance: symmetry + PSD
+    # cov = (cov + cov.T)/2
+    # eigvals, eigvecs = np.linalg.eigh(cov)
+    # eigvals[eigvals < 1e-14] = 1e-14
+    # cov = eigvecs @ np.diag(eigvals) @ eigvecs.T
 
-    # 3. Generate the MCMC Corner Plot (Base Plot)
-    fig = corner.corner(plot_samples, bins=20, hist_bin_factor=2, smooth=0.5, 
-                        quantiles=(0.05, 0.5, 0.95),
-                        labels=plot_labels,
-                        truths=truths,
-                        range=plot_limits, # Apply LA-based limits
-                        # Base plot configuration for MCMC
-                        plot_density=True, plot_contours=True,
-                        data_kwargs={"color": "darkblue", "alpha": 0.1},
-                        label_kwargs={"fontsize": 18},
-                        fontsize=20)
+    std = np.sqrt(np.diag(cov))
 
-    # 4. Overlay Laplace Approximation by Plotting Gaussian Samples
+    # Axis limits
+    plot_limits = [(mean[i] - 5*std[i], mean[i] + 5*std[i]) for i in range(num_params)]
 
-    # Plot the LA samples on the existing figure to generate LA histograms/contours
-    corner.corner(la_samples, bins=20, 
-                  fig=fig, # Plot onto the existing figure
-                  color='red', # Use a contrasting color for LA
-                  smooth=0.5,
-                  range=plot_limits, # Ensure samples are plotted within the new limits
-                  # Use a different style for the LA overlay (e.g., solid contours, dashed lines)
-                  data_kwargs={"color": "red", "alpha": 0.1}, # Scatter points for LA samples (can be transparent)
-                  hist_kwargs={'histtype': 'step', 'density': True, 'alpha': 0.5, 'linewidth': 2}, # 1D Histograms as lines
-                  contour_kwargs={"linestyles": 'solid', "linewidths": 1.5}) # 2D Contours as solid lines
+    # -------------------------------
+    # 3. Create standard MCMC corner plot
+    # -------------------------------
+    fig = corner.corner(
+        flat_samples[:, overwrite_params_to_plot_idxs],
+        bins=20,
+        hist_bin_factor=2,
+        smooth=0.5,
+        quantiles=(0.05, 0.5, 0.95),
+        labels=label_list,
+        truths=truths,
+        range=plot_limits,
+        plot_density=True,
+        plot_contours=True,
+        data_kwargs={"color": "darkblue", "alpha": 0.10},
+        label_kwargs={"fontsize": 18},
+        hist_kwargs={"density": True},
+        fontsize=20
+    )
 
-    
-    # 5. Final Formatting and Saving
-    
-    axes = fig.get_axes()
-    num_plot_params = len(overwrite_params_to_plot_idxs)
-    
-    # Custom axis formatting for better scientific notation and tick alignment
-    for idx, ax in enumerate(axes):
-        # Format X-axis on bottom row 
-        if idx >= num_plot_params * (num_plot_params - 1):
+    axes = np.array(fig.axes).reshape(num_params, num_params)
+
+    # -------------------------------
+    # Helper for ellipse
+    # -------------------------------
+    def ellipse_params(cov2):
+        vals, vecs = np.linalg.eigh(cov2)
+        # vals[vals < 1e-14] = 1e-14
+        chi2 = 5.991 # 95% CI for 2D
+        width  = 2*np.sqrt(vals[0]*chi2)
+        height = 2*np.sqrt(vals[1]*chi2)
+        vx = vecs[:, 0]
+        angle = np.degrees(np.arctan2(vx[1], vx[0]))
+        print(width, height, angle)
+        return width, height, angle
+
+    # -------------------------------
+    # 4. Overlay analytic Laplace
+    # -------------------------------
+    for i in range(num_params):
+        for j in range(num_params):
+            ax = axes[i, j]
+
+            # -------------------------------------
+            # 1D diagonal: analytic Gaussian PDF
+            # -------------------------------------
+            if i == j:
+                mu = mean[i]
+                s  = std[i]
+
+                x = np.linspace(mu - 4*s, mu + 4*s, 300)
+                y = norm.pdf(x, mu, s)
+
+                # Blue analytic PDF
+                ax.plot(x, y, color="blue", linewidth=2)
+                ax.fill_between(x, y, color="blue", alpha=0.25)
+
+                # 95% CI
+                ci_low  = mu - 1.96*s
+                ci_high = mu + 1.96*s
+                ax.axvline(ci_low,  color="black", linestyle="--", linewidth=1.2)
+                ax.axvline(ci_high, color="black", linestyle="--", linewidth=1.2)
+
+            # -------------------------------------
+            # 2D off–diagonal: analytic contours
+            # -------------------------------------
+            elif i>j:
+                mu = [mean[j], mean[j]]
+                cov2 = cov[np.ix_([j, i], [j, i])]
+
+                # grid
+                xs = np.linspace(mu[0] - 3*np.sqrt(cov2[0,0]),
+                                 mu[0] + 3*np.sqrt(cov2[0,0]), 200)
+                ys = np.linspace(mu[1] - 3*np.sqrt(cov2[1,1]),
+                                 mu[1] + 3*np.sqrt(cov2[1,1]), 200)
+                X, Y = np.meshgrid(xs, ys)
+                Z = multivariate_normal(mu, cov2).pdf(np.dstack((X, Y)))
+
+                # analytic contours
+                ax.contour(X, Y, Z, levels=10, cmap="Blues")
+
+                # 95% ellipse
+                w, h, ang = ellipse_params(cov2)
+                ell = Ellipse(mu, w, h, angle=ang,
+                              facecolor="blue", alpha=0.15, edgecolor="black")
+                ax.add_patch(ell)
+
+    # -------------------------------
+    # 5. Formatting & Saving
+    # -------------------------------
+    axes_all = fig.get_axes()
+    for idx, ax in enumerate(axes_all):
+        if idx >= num_params*(num_params-1):
             ax.tick_params(axis='x', rotation=45, labelsize=10)
-            formatterx = matplotlib.ticker.ScalarFormatter()
-            ax.xaxis.set_major_formatter(formatterx)
-            ax.ticklabel_format(axis="x", style="sci", scilimits=(0, 0))
+            ax.ticklabel_format(axis='x', style='sci', scilimits=(0,0))
         else:
             ax.tick_params(axis='x', labelbottom=False)
 
-        # Format Y-axis on leftmost column 
-        if idx % num_plot_params == 0:
-            ax.tick_params(axis='y', rotation=0, labelsize=10)
-            formattery = matplotlib.ticker.ScalarFormatter()
-            ax.yaxis.set_major_formatter(formattery)
-            ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0))
+        if idx % num_params == 0:
+            ax.tick_params(axis='y', labelsize=10)
+            ax.yaxis.set_major_formatter(ScalarFormatter(useMathText=True))
+            ax.ticklabel_format(axis='y', style='sci', scilimits=(0,0))
         else:
             ax.tick_params(axis='y', labelleft=False)
 
     plt.subplots_adjust(hspace=0.15, wspace=0.15)
 
-    save_path = os.path.join(param_id.plot_dir, 
-                             f'mcmc_laplace_overlay_{param_id.file_name_prefix}_'
-                             f'{param_id.param_id_obs_file_prefix}.pdf')
-    plt.savefig(save_path, bbox_inches='tight')
+    save_path = os.path.join(
+        param_id.plot_dir,
+        f"mcmc_laplace_overlay_{param_id.file_name_prefix}_{param_id.param_id_obs_file_prefix}.pdf"
+    )
+    fig.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.close()
-    
-    print(f"✅ Overlay corner plot saved to: {save_path}")
 
+    print(f"✅ Analytic Laplace overlay saved: {save_path}")
 
 if __name__ == '__main__':
     comm = MPI.COMM_WORLD
