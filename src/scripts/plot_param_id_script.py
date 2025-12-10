@@ -24,6 +24,9 @@ from distutils import util
 import yaml
 from parsers.PrimitiveParsers import YamlFileParser
 import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib
+import corner
 
 
 def plot_param_id(inp_data_dict=None, generate=True):
@@ -144,7 +147,139 @@ def plot_param_id(inp_data_dict=None, generate=True):
         if do_mcmc:
             mcmc_plotter.plot_mcmc_and_predictions()
     
+        if do_mcmc and do_identify:
+            plot_mcmc_and_laplace(param_id, id_analysis)
+
     return
+
+def plot_mcmc_and_laplace(param_id, id_analysis):
+    """
+    Generates a corner plot from MCMC flat samples and overlays a Gaussian 
+    distribution by generating and plotting samples from the Laplace Approximation 
+    (LA) mean and covariance matrix. Axis limits are set based on the LA uncertainty.
+    
+    Args:
+        param_id: An instance of the ParamID class containing MCMC samples.
+        id_analysis: An instance of the class containing the LA results 
+                     (mean_Lapalace and covariance_matrix_Laplace).
+    """
+    
+    # Assuming these functions/attributes exist on param_id
+    flat_samples, samples, num_params = param_id.get_mcmc_samples()
+    
+    print('\nGenerating MCMC and Laplace Approximation overlay corner plot...')
+    
+    # 1. Define common plotting labels and indices
+    label_list = [f'${param_id.param_id_info["param_names_for_plotting"][II]}$' 
+                  for II in range(len(param_id.param_id_info["param_names_for_plotting"]))]
+    
+    overwrite_params_to_plot_idxs = [II for II in range(num_params)] 
+
+    # Determine best parameter values for plotting truths (from MCMC/Param ID object)
+    if param_id.mcmc_instead:
+        mcmc_object = param_id.mcmc_object 
+        if mcmc_object.best_param_vals is None:
+            best_param_vals = np.load(os.path.join(param_id.output_dir, 'best_param_vals.npy'))
+            mcmc_object.set_best_param_vals(best_param_vals)
+        truths = mcmc_object.best_param_vals[overwrite_params_to_plot_idxs]
+    else:
+        if param_id.param_id.best_param_vals is None:
+            best_param_vals = np.load(os.path.join(param_id.output_dir, 'best_param_vals.npy'))
+            param_id.param_id.set_best_param_vals(best_param_vals)
+        truths = param_id.param_id.best_param_vals[overwrite_params_to_plot_idxs]
+
+
+    # 2. Slice Data and LA Results
+    plot_samples = flat_samples[:, overwrite_params_to_plot_idxs]
+    plot_labels = [label_list[II] for II in overwrite_params_to_plot_idxs]
+    
+    print("Laplace mean:", id_analysis.mean_Lapalace)
+    if id_analysis.covariance_matrix_Laplace is None or id_analysis.mean_Lapalace is None:
+            try:
+                parent_dir = os.path.dirname(id_analysis.param_id_output_dir)
+                id_analysis.mean_Lapalace = np.load(os.path.join(parent_dir, id_analysis.file_name_prefix + '_laplace_mean.npy'))
+                id_analysis.covariance_matrix_Laplace = np.load(os.path.join(parent_dir, id_analysis.file_name_prefix + '_laplace_covariance.npy'))
+                print("Loaded Laplace approximation results from files.")
+            except Exception as e:
+                print("Error loading Laplace approximation results:", e)
+                print("Please run the Laplace approximation before plotting.")
+                return
+            
+    plot_mean = id_analysis.mean_Lapalace[overwrite_params_to_plot_idxs]
+    plot_cov = id_analysis.covariance_matrix_Laplace[np.ix_(overwrite_params_to_plot_idxs, overwrite_params_to_plot_idxs)]
+    
+    # 2a. Calculate New Axis Limits based on LA 
+    # Set limits to cover +/- 3 standard deviations of the LA Gaussian
+    plot_stdev = np.sqrt(np.diag(plot_cov))
+    plot_limits = [(plot_mean[i] - 3 * plot_stdev[i], plot_mean[i] + 3 * plot_stdev[i]) 
+                   for i in range(num_params)]
+    
+    # 2b. Generate Samples from Laplace Approximation Gaussian
+    num_la_samples = 50000 # Generate a large number of samples for smooth contours
+    la_samples = np.random.multivariate_normal(plot_mean, plot_cov, size=num_la_samples)
+
+
+    # 3. Generate the MCMC Corner Plot (Base Plot)
+    fig = corner.corner(plot_samples, bins=20, hist_bin_factor=2, smooth=0.5, 
+                        quantiles=(0.05, 0.5, 0.95),
+                        labels=plot_labels,
+                        truths=truths,
+                        range=plot_limits, # Apply LA-based limits
+                        # Base plot configuration for MCMC
+                        plot_density=True, plot_contours=True,
+                        data_kwargs={"color": "darkblue", "alpha": 0.1},
+                        label_kwargs={"fontsize": 18},
+                        fontsize=20)
+
+    # 4. Overlay Laplace Approximation by Plotting Gaussian Samples
+
+    # Plot the LA samples on the existing figure to generate LA histograms/contours
+    corner.corner(la_samples, bins=20, 
+                  fig=fig, # Plot onto the existing figure
+                  color='red', # Use a contrasting color for LA
+                  smooth=0.5,
+                  range=plot_limits, # Ensure samples are plotted within the new limits
+                  # Use a different style for the LA overlay (e.g., solid contours, dashed lines)
+                  data_kwargs={"color": "red", "alpha": 0.1}, # Scatter points for LA samples (can be transparent)
+                  hist_kwargs={'histtype': 'step', 'density': True, 'alpha': 0.5, 'linewidth': 2}, # 1D Histograms as lines
+                  contour_kwargs={"linestyles": 'solid', "linewidths": 1.5}) # 2D Contours as solid lines
+
+    
+    # 5. Final Formatting and Saving
+    
+    axes = fig.get_axes()
+    num_plot_params = len(overwrite_params_to_plot_idxs)
+    
+    # Custom axis formatting for better scientific notation and tick alignment
+    for idx, ax in enumerate(axes):
+        # Format X-axis on bottom row 
+        if idx >= num_plot_params * (num_plot_params - 1):
+            ax.tick_params(axis='x', rotation=45, labelsize=10)
+            formatterx = matplotlib.ticker.ScalarFormatter()
+            ax.xaxis.set_major_formatter(formatterx)
+            ax.ticklabel_format(axis="x", style="sci", scilimits=(0, 0))
+        else:
+            ax.tick_params(axis='x', labelbottom=False)
+
+        # Format Y-axis on leftmost column 
+        if idx % num_plot_params == 0:
+            ax.tick_params(axis='y', rotation=0, labelsize=10)
+            formattery = matplotlib.ticker.ScalarFormatter()
+            ax.yaxis.set_major_formatter(formattery)
+            ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0))
+        else:
+            ax.tick_params(axis='y', labelleft=False)
+
+    plt.subplots_adjust(hspace=0.15, wspace=0.15)
+
+    save_path = os.path.join(param_id.plot_dir, 
+                             f'mcmc_laplace_overlay_{param_id.file_name_prefix}_'
+                             f'{param_id.param_id_obs_file_prefix}.pdf')
+    plt.savefig(save_path, bbox_inches='tight')
+    plt.close()
+    
+    print(f"✅ Overlay corner plot saved to: {save_path}")
+
 
 if __name__ == '__main__':
     comm = MPI.COMM_WORLD

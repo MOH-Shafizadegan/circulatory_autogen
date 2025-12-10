@@ -4,6 +4,7 @@ import os,sys
 import libcellml
 import utilities.libcellml_helper_funcs as cellml
 import utilities.libcellml_utilities as libcellml_utils
+import numdifftools as nd
 
 class Normalise_class:
     def __init__(self, param_mins, param_maxs, mod_first_variables=0, modVal = 1.0):
@@ -192,7 +193,9 @@ def calculate_hessian(param_id, AD=False):
 
     else:
         # calculate hessian of the lnlikelihood with finite differences
-        hessian = hessian_fd(param_id.get_lnlikelihood_lnprior_from_params, best_params, eps=epsilon)
+        # hessian = hessian_fd(param_id.get_lnlikelihood_lnprior_from_params, best_params, eps=epsilon)
+        hessian = hessian_nd(param_id.get_lnlikelihood_lnprior_from_params, best_params)
+        
     return hessian
 
         
@@ -218,6 +221,9 @@ def hessian_fd(f, theta, eps=1e-6):
             H[j, i] = H[i, j]
     print(h)
     return H
+
+def hessian_nd(f, theta):
+    return nd.Hessian(f)(theta)
 
 def hessian_gauss_newton(residual, theta, eps=1e-6):
     """
