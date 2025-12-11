@@ -1,0 +1,6 @@
+vessel_name, param_name, min, max, name_for_plotting, prior
+benchmark, V_m, 0, 10, V_{m} , uniform
+benchmark, K, 0, 10, K, uniform
+benchmark, k_1, 0, 10, k_1, uniform
+benchmark, k_2, 0, 10, k_1, uniform
+benchmark, k_3, 0, 10, k_1, uniform

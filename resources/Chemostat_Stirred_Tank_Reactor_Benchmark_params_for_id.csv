@@ -1,0 +1,6 @@
+vessel_name, param_name, min, max, name_for_plotting, prior
+benchmark, F, 0.01, 20, F , uniform
+benchmark, V, 0.01, 20, V, uniform
+benchmark, nu_max, 0.01, 20, \mu_{max}, uniform
+benchmark, K_S, 0.01, 20, K_S, uniform
+benchmark, gamma, 0.01, 20, \gamma, uniform

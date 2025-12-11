@@ -1,0 +1,7 @@
+variable_name,units,value,data_reference
+x_init_benchmark,dimensionless,10,None
+y_init_benchmark,dimensionless,10,None
+alpha_benchmark,dimensionless,1.1,None
+beta_benchmark,dimensionless,0.4,None
+delta_benchmark,dimensionless,0.4,None
+gamma_benchmark,dimensionless,0.1,None

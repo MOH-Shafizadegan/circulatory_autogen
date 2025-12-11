@@ -5,45 +5,45 @@
     ],
     "sim_times": [
       [
-        8.0
+        100.0
       ]
     ],
     "params_to_change": {
     },
     "experiment_labels": [
-      "Benchmark - Simple ODE"
+      "Benchmark - Lotka_Volterra"
     ]
   },
   "prediction_items": [],
   "data_items": [
     {
-      "variable": "benchmark/x",
-      "name_for_plotting": "x_{SS}",
+      "variable": "benchmark/S",
+      "name_for_plotting": "S_{SS}",
       "data_type": "constant",
       "operation": "steady_state_avg",
       "operands": [
-        "benchmark/x"
+        "benchmark/S"
       ],
       "unit": "dimensionless",
       "weight": 1.0,
-      "value": 1.0,
-      "std": 0.1,
+      "value": 0.2,
+      "std": 0.02,
       "experiment_idx": 0,
       "subexperiment_idx": 0,
       "plot_type": "horizontal"
     },
     {
-      "variable": "benchmark/y",
-      "name_for_plotting": "y_{SS}",
+      "variable": "benchmark/X",
+      "name_for_plotting": "X_{SS}",
       "data_type": "constant",
       "operation": "steady_state_avg",
       "operands": [
-        "benchmark/y"
+        "benchmark/X"
       ],
       "unit": "dimensionless",
       "weight": 1.0,
-      "value": 0.333,
-      "std": 0.1,
+      "value": 3.9,
+      "std": 0.4,
       "experiment_idx": 0,
       "subexperiment_idx": 0,
       "plot_type": "horizontal"

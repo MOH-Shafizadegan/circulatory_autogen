@@ -5,45 +5,46 @@
     ],
     "sim_times": [
       [
-        8.0
+        100.0
       ]
     ],
     "params_to_change": {
     },
     "experiment_labels": [
-      "Benchmark - Simple ODE"
+      "Benchmark - SIR_Epidemic"
     ]
   },
   "prediction_items": [],
   "data_items": [
     {
-      "variable": "benchmark/x",
-      "name_for_plotting": "x_{SS}",
+      "variable": "benchmark/I",
+      "name_for_plotting": "I_{max}",
       "data_type": "constant",
-      "operation": "steady_state_avg",
+      "operation": "max",
       "operands": [
-        "benchmark/x"
+        "benchmark/I"
       ],
       "unit": "dimensionless",
       "weight": 1.0,
-      "value": 1.0,
-      "std": 0.1,
+      "value": 205.0,
+      "std": 20,
       "experiment_idx": 0,
       "subexperiment_idx": 0,
       "plot_type": "horizontal"
     },
     {
-      "variable": "benchmark/y",
-      "name_for_plotting": "y_{SS}",
+      "variable": "benchmark/I",
+      "name_for_plotting": "T_{I_{peak}}",
       "data_type": "constant",
-      "operation": "steady_state_avg",
+      "operation": "first_peak_time",
       "operands": [
-        "benchmark/y"
+        "time",
+        "benchmark/I"
       ],
       "unit": "dimensionless",
       "weight": 1.0,
-      "value": 0.333,
-      "std": 0.1,
+      "value": 24.3,
+      "std": 3,
       "experiment_idx": 0,
       "subexperiment_idx": 0,
       "plot_type": "horizontal"

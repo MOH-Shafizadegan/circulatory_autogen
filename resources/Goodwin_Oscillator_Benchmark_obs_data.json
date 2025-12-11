@@ -5,44 +5,44 @@
     ],
     "sim_times": [
       [
-        8.0
+        20.0
       ]
     ],
     "params_to_change": {
     },
     "experiment_labels": [
-      "Benchmark - Simple ODE"
+      "Benchmark - Goodwin_Oscillator"
     ]
   },
   "prediction_items": [],
   "data_items": [
     {
       "variable": "benchmark/x",
-      "name_for_plotting": "x_{SS}",
+      "name_for_plotting": "x_{max}",
       "data_type": "constant",
-      "operation": "steady_state_avg",
+      "operation": "max",
       "operands": [
         "benchmark/x"
       ],
       "unit": "dimensionless",
       "weight": 1.0,
-      "value": 1.0,
-      "std": 0.1,
+      "value": 2.1,
+      "std": 0.2,
       "experiment_idx": 0,
       "subexperiment_idx": 0,
       "plot_type": "horizontal"
     },
     {
-      "variable": "benchmark/y",
-      "name_for_plotting": "y_{SS}",
+      "variable": "benchmark/z",
+      "name_for_plotting": "z_{max}",
       "data_type": "constant",
-      "operation": "steady_state_avg",
+      "operation": "max",
       "operands": [
-        "benchmark/y"
+        "benchmark/z"
       ],
       "unit": "dimensionless",
       "weight": 1.0,
-      "value": 0.333,
+      "value": 1.5,
       "std": 0.1,
       "experiment_idx": 0,
       "subexperiment_idx": 0,

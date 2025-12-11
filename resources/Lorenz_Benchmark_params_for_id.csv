@@ -1,0 +1,4 @@
+vessel_name, param_name, min, max, name_for_plotting, prior
+benchmark, sigma, 5, 15, \sigma , uniform
+benchmark, rho, 10, 40, \rho, uniform
+benchmark, beta, 1, 4, \beta, uniform

@@ -1,3 +1,3 @@
 vessel_name,                  param_name,       min,        max,      name_for_plotting,  prior
-benchmark,                        p,        0.5,      2,    p , normal
-benchmark,              q,              0.5,        2,      q, normal
+benchmark,                        p,        0.5,      1.5,    p , uniform
+benchmark,              q,              0.5,        1.5,      q, uniform

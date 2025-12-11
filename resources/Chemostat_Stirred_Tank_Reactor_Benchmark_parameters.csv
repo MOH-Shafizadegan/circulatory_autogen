@@ -1,0 +1,9 @@
+variable_name,units,value,data_reference
+S_init_benchmark,dimensionless,0,None
+X_init_benchmark,dimensionless,0.1,None
+S_in_benchmark,dimensionless,10,None
+F_benchmark,dimensionless,0.1,None
+V_benchmark,dimensionless,1,None
+gamma_benchmark,dimensionless,0.4,None
+K_S_benchmark,dimensionless,0.2,None
+mu_max_benchmark,dimensionless,0.5,None

@@ -1,0 +1,36 @@
+{
+  "protocol_info": {
+    "pre_times": [
+      0.0
+    ],
+    "sim_times": [
+      [
+        50.0
+      ]
+    ],
+    "params_to_change": {
+    },
+    "experiment_labels": [
+      "Benchmark - Lotka_Volterra"
+    ]
+  },
+  "prediction_items": [],
+  "data_items": [
+    {
+      "variable": "benchmark/z",
+      "name_for_plotting": "z_{SS}",
+      "data_type": "constant",
+      "operation": "steady_state_avg",
+      "operands": [
+        "benchmark/x"
+      ],
+      "unit": "dimensionless",
+      "weight": 1.0,
+      "value": 24,
+      "std": 3,
+      "experiment_idx": 0,
+      "subexperiment_idx": 0,
+      "plot_type": "horizontal"
+    }
+  ]
+}
