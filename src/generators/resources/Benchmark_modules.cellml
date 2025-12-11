@@ -1,0 +1,491 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<model name="Benchmark" xmlns="http://www.cellml.org/cellml/1.1#" xmlns:cellml="http://www.cellml.org/cellml/1.1#">
+    <component name="Simple_ODE_Benchmark_main_type">
+        <variable name="t" public_interface="in" units="dimensionless"/>
+        <variable name="x_init" public_interface="in" units="dimensionless"/>
+        <variable name="y_init" public_interface="in" units="dimensionless"/>
+        <variable name="p" public_interface="in" units="dimensionless"/>
+        <variable name="q" public_interface="in" units="dimensionless"/>
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq/>
+                <apply>
+                    <diff/>
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>x</ci>
+                </apply>
+                <apply>
+                    <plus/>
+                    <apply>
+                        <times/>
+                        <apply>
+                            <minus/>
+                            <cn cellml:units="dimensionless">1</cn>
+                        </apply>
+                        <ci>x</ci>
+                    </apply>
+                    <ci>p</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq/>
+                <apply>
+                    <diff/>
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>y</ci>
+                </apply>
+                <apply>
+                    <plus/>
+                    <apply>
+                        <times/>
+                        <apply>
+                            <minus/>
+                            <cn cellml:units="dimensionless">3</cn>
+                        </apply>
+                        <ci>y</ci>
+                    </apply>
+                    <ci>q</ci>
+                </apply>
+            </apply>
+        </math>
+        <variable initial_value="x_init" name="x" public_interface="out" units="dimensionless"/>
+        <variable initial_value="y_init" name="y" public_interface="out" units="dimensionless"/>
+    </component>
+    <component name="Lotka_Volterra">
+        <variable name="t" public_interface="in" units="dimensionless"/>
+        <variable name="x_init" public_interface="in" units="dimensionless"/>
+        <variable name="y_init" public_interface="in" units="dimensionless"/>
+        <variable name="alpha" public_interface="in" units="dimensionless"/>
+        <variable name="beta" public_interface="in" units="dimensionless"/>
+        <variable name="delta" public_interface="in" units="dimensionless"/>
+        <variable name="gamma" public_interface="in" units="dimensionless"/>
+        <variable initial_value="x_init" name="x" public_interface="out" units="dimensionless"/>
+        <variable initial_value="y_init" name="y" public_interface="out" units="dimensionless"/>
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq/>
+                <apply>
+                    <diff/>
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>x</ci>
+                </apply>
+                <apply>
+                    <minus/>
+                    <apply>
+                        <times/>
+                        <ci>alpha</ci>
+                        <ci>x</ci>
+                    </apply>
+                    <apply>
+                        <times/>
+                        <ci>beta</ci>
+                        <ci>x</ci>
+                        <ci>y</ci>
+                    </apply>
+                </apply>
+            </apply>
+            <apply>
+                <eq/>
+                <apply>
+                    <diff/>
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>y</ci>
+                </apply>
+                <apply>
+                    <minus/>
+                    <apply>
+                        <times/>
+                        <ci>delta</ci>
+                        <ci>x</ci>
+                        <ci>y</ci>
+                    </apply>
+                    <apply>
+                        <times/>
+                        <ci>gamma</ci>
+                        <ci>y</ci>
+                    </apply>
+                </apply>
+            </apply>
+        </math>
+    </component>
+    <component name="SIR_Epidemic">
+        <variable name="t" public_interface="in" units="dimensionless"/>
+        <variable name="S_init" public_interface="in" units="dimensionless"/>
+        <variable name="I_init" public_interface="in" units="dimensionless"/>
+        <variable name="R_init" public_interface="in" units="dimensionless"/>
+        <variable name="beta" public_interface="in" units="dimensionless"/>
+        <variable name="gamma" public_interface="in" units="dimensionless"/>
+        <variable initial_value="S_init" name="S" public_interface="out" units="dimensionless"/>
+        <variable initial_value="I_init" name="I" public_interface="out" units="dimensionless"/>
+        <variable initial_value="R_init" name="R" public_interface="out" units="dimensionless"/>
+        <variable name="N" public_interface="out" units="dimensionless"/>
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq/>
+                <apply>
+                    <diff/>
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>S</ci>
+                </apply>
+                <apply>
+                    <divide/>
+                    <apply>
+                        <times/>
+                        <apply>
+                            <minus/>
+                            <ci>beta</ci>
+                        </apply>
+                        <apply>
+                            <times/>
+                            <ci>S</ci>
+                            <ci>I</ci>
+                        </apply>
+                    </apply>
+                    <ci>N</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq/>
+                <apply>
+                    <diff/>
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>I</ci>
+                </apply>
+                <apply>
+                    <minus/>
+                    <apply>
+                        <divide/>
+                        <apply>
+                            <times/>
+                            <ci>beta</ci>
+                            <apply>
+                                <times/>
+                                <ci>S</ci>
+                                <ci>I</ci>
+                            </apply>
+                        </apply>
+                        <ci>N</ci>
+                    </apply>
+                    <apply>
+                        <times/>
+                        <ci>gamma</ci>
+                        <ci>I</ci>
+                    </apply>
+                </apply>
+            </apply>
+            <apply>
+                <eq/>
+                <apply>
+                    <diff/>
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>R</ci>
+                </apply>
+                <apply>
+                    <times/>
+                    <ci>gamma</ci>
+                    <ci>I</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq/>
+                <ci>N</ci>
+                <apply>
+                    <plus/>
+                    <ci>S</ci>
+                    <ci>I</ci>
+                    <ci>R</ci>
+                </apply>
+            </apply>
+        </math>
+    </component>
+    <component name="Lorenz">
+        <variable name="t" public_interface="in" units="dimensionless"/>
+        <variable name="x_init" public_interface="in" units="dimensionless"/>
+        <variable name="y_init" public_interface="in" units="dimensionless"/>
+        <variable name="z_init" public_interface="in" units="dimensionless"/>
+        <variable name="sigma" public_interface="in" units="dimensionless"/>
+        <variable name="rho" public_interface="in" units="dimensionless"/>
+        <variable name="beta" public_interface="in" units="dimensionless"/>
+        <variable initial_value="x_init" name="x" public_interface="out" units="dimensionless"/>
+        <variable initial_value="y_init" name="y" public_interface="out" units="dimensionless"/>
+        <variable initial_value="z_init" name="z" public_interface="out" units="dimensionless"/>
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq/>
+                <apply>
+                    <diff/>
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>x</ci>
+                </apply>
+                <apply>
+                    <times/>
+                    <ci>sigma</ci>
+                    <apply>
+                        <minus/>
+                        <ci>y</ci>
+                        <ci>x</ci>
+                    </apply>
+                </apply>
+            </apply>
+            <apply>
+                <eq/>
+                <apply>
+                    <diff/>
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>y</ci>
+                </apply>
+                <apply>
+                    <minus/>
+                    <apply>
+                        <times/>
+                        <ci>x</ci>
+                        <apply>
+                            <minus/>
+                            <ci>rho</ci>
+                            <ci>z</ci>
+                        </apply>
+                    </apply>
+                    <ci>y</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq/>
+                <apply>
+                    <diff/>
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>z</ci>
+                </apply>
+                <apply>
+                    <minus/>
+                    <apply>
+                        <times/>
+                        <ci>x</ci>
+                        <ci>y</ci>
+                    </apply>
+                    <apply>
+                        <times/>
+                        <ci>beta</ci>
+                        <ci>z</ci>
+                    </apply>
+                </apply>
+            </apply>
+        </math>
+    </component>
+    <component name="Goodwin_Oscillator">
+        <variable name="t" public_interface="in" units="dimensionless"/>
+        <variable name="x_init" public_interface="in" units="dimensionless"/>
+        <variable name="y_init" public_interface="in" units="dimensionless"/>
+        <variable name="z_init" public_interface="in" units="dimensionless"/>
+        <variable name="V_m" public_interface="in" units="dimensionless"/>
+        <variable name="K" public_interface="in" units="dimensionless"/>
+        <variable name="n" public_interface="in" units="dimensionless"/>
+        <variable name="k_1" public_interface="in" units="dimensionless"/>
+        <variable name="k_2" public_interface="in" units="dimensionless"/>
+        <variable name="k_3" public_interface="in" units="dimensionless"/>
+        <variable initial_value="x_init" name="x" public_interface="out" units="dimensionless"/>
+        <variable initial_value="y_init" name="y" public_interface="out" units="dimensionless"/>
+        <variable initial_value="z_init" name="z" public_interface="out" units="dimensionless"/>
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq/>
+                <apply>
+                    <diff/>
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>x</ci>
+                </apply>
+                <apply>
+                    <minus/>
+                    <apply>
+                        <divide/>
+                        <apply>
+                            <times/>
+                            <ci>V_m</ci>
+                            <apply>
+                                <power/>
+                                <ci>K</ci>
+                                <ci>n</ci>
+                            </apply>
+                        </apply>
+                        <apply>
+                            <plus/>
+                            <apply>
+                                <power/>
+                                <ci>K</ci>
+                                <ci>n</ci>
+                            </apply>
+                            <apply>
+                                <power/>
+                                <ci>z</ci>
+                                <ci>n</ci>
+                            </apply>
+                        </apply>
+                    </apply>
+                    <apply>
+                        <times/>
+                        <ci>k_1</ci>
+                        <ci>x</ci>
+                    </apply>
+                </apply>
+            </apply>
+            <apply>
+                <eq/>
+                <apply>
+                    <diff/>
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>y</ci>
+                </apply>
+                <apply>
+                    <minus/>
+                    <apply>
+                        <times/>
+                        <ci>k_1</ci>
+                        <ci>x</ci>
+                    </apply>
+                    <apply>
+                        <times/>
+                        <ci>k_2</ci>
+                        <ci>y</ci>
+                    </apply>
+                </apply>
+            </apply>
+            <apply>
+                <eq/>
+                <apply>
+                    <diff/>
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>z</ci>
+                </apply>
+                <apply>
+                    <minus/>
+                    <apply>
+                        <times/>
+                        <ci>k_2</ci>
+                        <ci>y</ci>
+                    </apply>
+                    <apply>
+                        <times/>
+                        <ci>k_3</ci>
+                        <ci>z</ci>
+                    </apply>
+                </apply>
+            </apply>
+        </math>
+    </component>
+    <component name="Chemostat_Stirred_Tank_Reactor">
+        <variable name="t" public_interface="in" units="dimensionless"/>
+        <variable name="S_init" public_interface="in" units="dimensionless"/>
+        <variable name="X_init" public_interface="in" units="dimensionless"/>
+        <variable name="S_in" public_interface="in" units="dimensionless"/>
+        <variable name="F" public_interface="in" units="dimensionless"/>
+        <variable name="V" public_interface="in" units="dimensionless"/>
+        <variable name="gamma" public_interface="in" units="dimensionless"/>
+        <variable name="K_S" public_interface="in" units="dimensionless"/>
+        <variable name="mu_max" public_interface="in" units="dimensionless"/>
+        <variable initial_value="S_init" name="S" public_interface="out" units="dimensionless"/>
+        <variable initial_value="X_init" name="X" public_interface="out" units="dimensionless"/>
+        <variable name="mu" public_interface="out" units="dimensionless"/>
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq/>
+                <apply>
+                    <diff/>
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>S</ci>
+                </apply>
+                <apply>
+                    <minus/>
+                    <apply>
+                        <divide/>
+                        <apply>
+                            <times/>
+                            <apply>
+                                <minus/>
+                                <ci>S_in</ci>
+                                <ci>S</ci>
+                            </apply>
+                            <ci>F</ci>
+                        </apply>
+                        <ci>V</ci>
+                    </apply>
+                    <apply>
+                        <divide/>
+                        <apply>
+                            <times/>
+                            <ci>mu</ci>
+                            <ci>X</ci>
+                        </apply>
+                        <ci>gamma</ci>
+                    </apply>
+                </apply>
+            </apply>
+            <apply>
+                <eq/>
+                <apply>
+                    <diff/>
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>X</ci>
+                </apply>
+                <apply>
+                    <times/>
+                    <apply>
+                        <minus/>
+                        <ci>mu</ci>
+                        <apply>
+                            <divide/>
+                            <ci>F</ci>
+                            <ci>V</ci>
+                        </apply>
+                    </apply>
+                    <ci>X</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq/>
+                <ci>mu</ci>
+                <apply>
+                    <divide/>
+                    <apply>
+                        <times/>
+                        <ci>mu_max</ci>
+                        <ci>S</ci>
+                    </apply>
+                    <apply>
+                        <plus/>
+                        <ci>K_S</ci>
+                        <ci>S</ci>
+                    </apply>
+                </apply>
+            </apply>
+        </math>
+    </component>
+</model>
