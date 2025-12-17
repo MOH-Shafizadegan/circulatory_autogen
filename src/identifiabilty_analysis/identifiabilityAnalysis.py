@@ -40,6 +40,9 @@ import math
 # from scipy.optimize import curve_fit
 import warnings
 warnings.filterwarnings( "ignore", module = "matplotlib/..*" )
+from matplotlib.patches import Ellipse
+from scipy.stats import norm, multivariate_normal
+from matplotlib.ticker import ScalarFormatter
 
 class IdentifiabilityAnalysis():
     """
@@ -58,6 +61,7 @@ class IdentifiabilityAnalysis():
         self.covariance_matrix_Laplace = None
         self.mean_Lapalace = None
         self.param_id = param_id
+        self.fd_step = 1e-6
         if self.param_id is None:
             # TODO intialise the param_id_object here
             raise ValueError("param_id object must be provided to IdentifiabilityAnalysis")
@@ -91,7 +95,7 @@ class IdentifiabilityAnalysis():
     def run_laplace_approximation(self, ia_options):
 
         # TODO fix hessian calculation now that it uses lnlikelihood + lnprior
-        Hessian = calculate_hessian(self.param_id)
+        Hessian = calculate_hessian(self.param_id, epsilon=self.fd_step)
         covariance_matrix = np.linalg.inv(-1*Hessian)
         mean = self.best_param_vals
         print("Laplace Approximation Results:")
@@ -102,6 +106,9 @@ class IdentifiabilityAnalysis():
         parent_dir = os.path.dirname(self.param_id_output_dir)
         np.save(os.path.join(parent_dir, self.file_name_prefix + '_laplace_mean.npy'), self.mean_Lapalace)
         np.save(os.path.join(parent_dir, self.file_name_prefix + '_laplace_covariance.npy'), self.covariance_matrix_Laplace)
+
+    def set_fd_step(self, step):
+        self.fd_step = step
 
     def plot_laplace_results(self, parameter_names, output_dir):
         """
@@ -207,3 +214,136 @@ class IdentifiabilityAnalysis():
         figure.savefig(plot_path)
         print(f"Laplace approximation corner plot saved to {plot_path}")
 
+    def plot_laplace_results_analytical(self, parameter_names, output_dir):
+        """
+        ANALYTIC Laplace approximation:
+            - 1D Gaussian PDFs + 95% CI lines
+            - 2D Gaussian contours
+            - 95% confidence ellipse
+        """
+
+        num_params = len(parameter_names)
+
+        # -------------------------------
+        # 2. Load Laplace results
+        # -------------------------------
+        if self.mean_Lapalace is None:
+            parent = os.path.dirname(self.param_id_output_dir)
+            self.mean_Lapalace = np.load(os.path.join(parent, self.file_name_prefix + "_laplace_mean.npy"))
+            self.covariance_matrix_Laplace = np.load(os.path.join(parent, self.file_name_prefix + "_laplace_covariance.npy"))
+
+        mean = self.mean_Lapalace
+        cov  = self.covariance_matrix_Laplace
+        w, V = np.linalg.eigh(cov)
+        w_clipped = np.clip(w, 1e-8, None)
+        cov = V @ np.diag(w_clipped) @ V.T
+        std = np.sqrt(np.diag(cov))
+
+        # -------------------------------
+        # Helper for ellipse
+        # -------------------------------
+        def ellipse_params(cov2):
+            vals, vecs = np.linalg.eigh(cov2)
+            # vals[vals < 1e-14] = 1e-14
+            chi2 = 5.991 # 95% CI for 2D
+            width  = 2*np.sqrt(vals[0]*chi2)
+            height = 2*np.sqrt(vals[1]*chi2)
+            vx = vecs[:, 0]
+            angle = np.degrees(np.arctan2(vx[1], vx[0]))
+            print(width, height, angle)
+            return width, height, angle
+
+        # -------------------------------
+        # 4. Overlay analytic Laplace
+        # -------------------------------
+        fig, axes = plt.subplots(num_params, num_params, figsize=(3*num_params, 3*num_params))
+
+        for i in range(num_params):
+            for j in range(num_params):
+                ax = axes[i, j]
+
+                # -------------------------------------
+                # 1D diagonal: analytic Gaussian PDF
+                # -------------------------------------
+                if i < j:
+                    ax.set_axis_off()
+                    continue  # Skip all subsequent plotting logic for this subplot
+
+                if i == j:
+                    mu = mean[i]
+                    s  = std[i]
+
+                    x = np.linspace(mu - 4*s, mu + 4*s, 300)
+                    y = norm.pdf(x, mu, s)
+
+                    # Blue analytic PDF
+                    ax.plot(x, y, color="blue", linewidth=2)
+                    ax.fill_between(x, y, color="blue", alpha=0.25)
+
+                    # 95% CI
+                    ci_low  = mu - 1.96*s
+                    ci_high = mu + 1.96*s
+                    ax.axvline(ci_low,  color="black", linestyle="--", linewidth=1.2)
+                    ax.axvline(ci_high, color="black", linestyle="--", linewidth=1.2)
+
+                    std_str = f"$\sigma$ = {s:.2g}"
+                    # Place the text in the top-left corner of the subplot
+                    ax.text(0.05, 0.95, std_str, 
+                            transform=ax.transAxes, 
+                            fontsize=10, 
+                            verticalalignment='top', 
+                            horizontalalignment='left',
+                            bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.7, ec="none"))
+                    
+                    # Ensure PDF plots are not cropped by ticks
+                    ax.margins(x=0)
+
+                # -------------------------------------
+                # 2D off–diagonal: analytic contours
+                # -------------------------------------
+                elif i>j:
+                    mu = [mean[j], mean[j]]
+                    cov2 = cov[np.ix_([j, i], [j, i])]
+
+                    # grid
+                    xs = np.linspace(mu[0] - 3*np.sqrt(cov2[0,0]),
+                                    mu[0] + 3*np.sqrt(cov2[0,0]), 200)
+                    ys = np.linspace(mu[1] - 3*np.sqrt(cov2[1,1]),
+                                    mu[1] + 3*np.sqrt(cov2[1,1]), 200)
+                    X, Y = np.meshgrid(xs, ys)
+                    Z = multivariate_normal(mu, cov2).pdf(np.dstack((X, Y)))
+
+                    # analytic contours
+                    ax.contour(X, Y, Z, levels=10, cmap="Blues")
+
+                    # 95% ellipse
+                    w, h, ang = ellipse_params(cov2)
+                    ell = Ellipse(mu, w, h, angle=ang,
+                                facecolor="blue", alpha=0.15, edgecolor="black")
+                    ax.add_patch(ell)
+
+        # -------------------------------
+        # 5. Formatting & Saving
+        # -------------------------------
+        axes_all = fig.get_axes()
+        for idx, ax in enumerate(axes_all):
+            if idx >= num_params*(num_params-1):
+                ax.tick_params(axis='x', rotation=45, labelsize=10)
+                ax.ticklabel_format(axis='x', style='sci', scilimits=(0,0))
+            else:
+                ax.tick_params(axis='x', labelbottom=False)
+
+            if idx % num_params == 0:
+                ax.tick_params(axis='y', labelsize=10)
+                ax.yaxis.set_major_formatter(ScalarFormatter(useMathText=True))
+                ax.ticklabel_format(axis='y', style='sci', scilimits=(0,0))
+            else:
+                ax.tick_params(axis='y', labelleft=False)
+
+        plt.subplots_adjust(hspace=0.15, wspace=0.15)
+
+        plot_path = os.path.join(output_dir, f"{self.file_name_prefix}_laplace_corner_plot.pdf")
+        fig.savefig(plot_path, dpi=300, bbox_inches="tight")
+        plt.close()
+
+        print(f"Analytic Laplace results saved: {plot_path}")

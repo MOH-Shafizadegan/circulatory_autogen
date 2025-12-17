@@ -54,9 +54,10 @@ if __name__ == '__main__':
         inp_data_dict['DEBUG'] = False
         inp_data_dict['param_id_obs_path'] = os.path.join(root_dir_path,'resources/Simple_ODE_Benchmark_obs_data.json')
         inp_data_dict["ga_options"] = {
-            "cost_convergence": 0.0001,
+            "cost_convergence": 0.001,
+            "cost_type": "gaussian_MLE"
         }
-        inp_data_dict['do_mcmc'] = True
+        inp_data_dict['do_mcmc'] = False
         inp_data_dict["mcmc_options"] = {
             "num_steps": 100,
             "num_walkers": 64
@@ -68,7 +69,7 @@ if __name__ == '__main__':
             }
         if rank == 0:
             print('running Simple ODE Benchmark param id')
-        run_param_id(inp_data_dict)
+        # run_param_id(inp_data_dict)
 
         if rank == 0:
             # also test running autogeneration with the fit parameters
@@ -78,9 +79,197 @@ if __name__ == '__main__':
             print('running plotting for Simple ODE Benchmark model')
 
 
+        # plot_param_id(inp_data_dict, generate=False)
+        comm.Barrier()
+
+        if rank == 0:
+            print('')
+            print('running Lotka-Volterra Benchmark parameter id test')
+            
+        inp_data_dict['file_prefix'] = 'Lotka_Volterra_Benchmark'
+        inp_data_dict['input_param_file'] = 'Lotka_Volterra_Benchmark_parameters.csv'
+        inp_data_dict['param_id_method'] = 'genetic_algorithm'
+        inp_data_dict['solver'] = 'CVODE'
+        inp_data_dict['pre_time'] = 0
+        inp_data_dict['sim_time'] = 5
+        inp_data_dict['solver_info'] = {}
+        inp_data_dict['solver_info']['MaximumStep'] = 1e-3
+        inp_data_dict['solver_info']['MaximumNumberOfSteps'] = 5000
+        inp_data_dict['dt'] = 0.01
+        inp_data_dict['DEBUG'] = False
+        inp_data_dict['param_id_obs_path'] = os.path.join(root_dir_path,'resources/Lotka_Volterra_Benchmark_obs_data.json')
+        inp_data_dict["ga_options"] = {
+            "cost_convergence": 0.001,
+            "cost_type": "gaussian_MLE"
+        }
+        inp_data_dict['do_mcmc'] = False
+        inp_data_dict["mcmc_options"] = {
+            "num_steps": 100,
+            "num_walkers": 64
+        }
+        inp_data_dict['plot_predictions'] = True
+        inp_data_dict['do_ia'] = True
+        inp_data_dict['ia_options'] = {
+            'method': 'Laplace'
+            }
+        if rank == 0:
+            print('running Lotka-Volterra Benchmark param id')
+            generate_with_new_architecture(False, inp_data_dict)
+
+        run_param_id(inp_data_dict)
+
+        if rank == 0:
+            # also test running autogeneration with the fit parameters
+            print('running autogeneration with fit parameters for Lotka-Volterra Benchmark model')
+            generate_with_new_architecture(True, inp_data_dict)
+            # also test plotting
+            print('running plotting for Lotka-Volterra Benchmark model')
+
+
         plot_param_id(inp_data_dict, generate=False)
         comm.Barrier()
-        
+
+        if rank == 0:
+            print('')
+            print('SIR Epidemic Benchmark parameter id test')
+            
+        inp_data_dict['file_prefix'] = 'SIR_Epidemic_Benchmark'
+        inp_data_dict['input_param_file'] = 'SIR_Epidemic_Benchmark_parameters.csv'
+        inp_data_dict['param_id_method'] = 'genetic_algorithm'
+        inp_data_dict['solver'] = 'CVODE'
+        inp_data_dict['pre_time'] = 0
+        inp_data_dict['sim_time'] = 100
+        inp_data_dict['solver_info'] = {}
+        inp_data_dict['solver_info']['MaximumStep'] = 0.001
+        inp_data_dict['solver_info']['MaximumNumberOfSteps'] = 5000
+        inp_data_dict['dt'] = 0.0001
+        inp_data_dict['DEBUG'] = False
+        inp_data_dict['param_id_obs_path'] = os.path.join(root_dir_path,'resources/SIR_Epidemic_Benchmark_obs_data.json')
+        inp_data_dict["ga_options"] = {
+            "cost_convergence": 0.001,
+            "cost_type": "gaussian_MLE"
+        }
+        inp_data_dict['do_mcmc'] = False
+        inp_data_dict["mcmc_options"] = {
+            "num_steps": 100,
+            "num_walkers": 64
+        }
+        inp_data_dict['plot_predictions'] = True
+        inp_data_dict['do_ia'] = True
+        inp_data_dict['ia_options'] = {
+            'method': 'Laplace'
+            }
+        if rank == 0:
+            print('running SIR_Epidemic Benchmark param id')
+            generate_with_new_architecture(False, inp_data_dict)
+
+        # run_param_id(inp_data_dict)
+
+        if rank == 0:
+            # also test running autogeneration with the fit parameters
+            print('running autogeneration with fit parameters for SIR_Epidemic Benchmark model')
+            generate_with_new_architecture(True, inp_data_dict)
+            # also test plotting
+            print('running plotting for SIR_Epidemic Benchmark model')
+
+
+        # plot_param_id(inp_data_dict, generate=False)
+        comm.Barrier()
+
+        # if rank == 0:
+        #     print('')
+        #     print('Lorenz Benchmark parameter id test')
+            
+        inp_data_dict['file_prefix'] = 'Lorenz_Benchmark'
+        inp_data_dict['input_param_file'] = 'Lorenz_Benchmark_parameters.csv'
+        inp_data_dict['param_id_method'] = 'genetic_algorithm'
+        inp_data_dict['solver'] = 'CVODE'
+        inp_data_dict['pre_time'] = 0
+        inp_data_dict['sim_time'] = 20
+        inp_data_dict['solver_info'] = {}
+        inp_data_dict['solver_info']['MaximumStep'] = 0.001
+        inp_data_dict['solver_info']['MaximumNumberOfSteps'] = 5000
+        inp_data_dict['dt'] = 0.01
+        inp_data_dict['DEBUG'] = False
+        inp_data_dict['param_id_obs_path'] = os.path.join(root_dir_path,'resources/Lorenz_Benchmark_obs_data.json')
+        inp_data_dict["ga_options"] = {
+            "cost_convergence": 0.001,
+            "cost_type": "gaussian_MLE"
+        }
+        inp_data_dict['do_mcmc'] = False
+        inp_data_dict["mcmc_options"] = {
+            "num_steps": 100,
+            "num_walkers": 64
+        }
+        inp_data_dict['plot_predictions'] = True
+        inp_data_dict['do_ia'] = True
+        inp_data_dict['ia_options'] = {
+            'method': 'Laplace'
+            }
+        if rank == 0:
+            print('running Lorenz Benchmark param id')
+            generate_with_new_architecture(False, inp_data_dict)
+
+        # run_param_id(inp_data_dict)
+
+        if rank == 0:
+            # also test running autogeneration with the fit parameters
+            print('running autogeneration with fit parameters for Lorenz Benchmark model')
+            generate_with_new_architecture(True, inp_data_dict)
+            # also test plotting
+            print('running plotting for Lorenz Benchmark model')
+
+
+        # plot_param_id(inp_data_dict, generate=False)
+        comm.Barrier()
+
+        if rank == 0:
+            print('')
+            print('Goodwin_Oscillator Benchmark parameter id test')
+            
+        inp_data_dict['file_prefix'] = 'Goodwin_Oscillator_Benchmark'
+        inp_data_dict['input_param_file'] = 'Goodwin_Oscillator_Benchmark_parameters.csv'
+        inp_data_dict['param_id_method'] = 'genetic_algorithm'
+        inp_data_dict['solver'] = 'CVODE'
+        inp_data_dict['pre_time'] = 0
+        inp_data_dict['sim_time'] = 20
+        inp_data_dict['solver_info'] = {}
+        inp_data_dict['solver_info']['MaximumStep'] = 0.001
+        inp_data_dict['solver_info']['MaximumNumberOfSteps'] = 5000
+        inp_data_dict['dt'] = 0.01
+        inp_data_dict['DEBUG'] = False
+        inp_data_dict['param_id_obs_path'] = os.path.join(root_dir_path,'resources/Goodwin_Oscillator_Benchmark_obs_data.json')
+        inp_data_dict["ga_options"] = {
+            "cost_convergence": 0.001,
+            "cost_type": "gaussian_MLE"
+        }
+        inp_data_dict['do_mcmc'] = False
+        inp_data_dict["mcmc_options"] = {
+            "num_steps": 100,
+            "num_walkers": 64
+        }
+        inp_data_dict['plot_predictions'] = True
+        inp_data_dict['do_ia'] = True
+        inp_data_dict['ia_options'] = {
+            'method': 'Laplace'
+            }
+        if rank == 0:
+            print('running Goodwin_Oscillator Benchmark param id')
+            generate_with_new_architecture(False, inp_data_dict)
+
+        # run_param_id(inp_data_dict)
+
+        if rank == 0:
+            # also test running autogeneration with the fit parameters
+            print('running autogeneration with fit parameters for Goodwin_Oscillator Benchmark model')
+            generate_with_new_architecture(True, inp_data_dict)
+            # also test plotting
+            print('running plotting for Goodwin_Oscillator Benchmark model')
+
+
+        # plot_param_id(inp_data_dict, generate=False)
+        comm.Barrier() 
+                
         
         print('param ID tests complete. TODO add more param id tests to test',
               'all functionality')

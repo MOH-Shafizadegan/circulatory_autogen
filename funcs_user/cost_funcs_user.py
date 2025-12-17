@@ -10,7 +10,11 @@ use it as the cost.
 When making your own cost function make sure it works for scalars and vectors. Otherwise put an error message so that if it is used
 for the wrong data type it gets called out and stopped.
 """
+def is_MLE(func):
+    func.is_MLE = True
+    return func
 
+@is_MLE
 def gaussian_MLE(output, desired_mean, std, weight):
     # cost = np.sum(np.power(updated_weight_const_vec*(const -
     #                            self.obs_info["ground_truth_const"])/self.obs_info["std_const_vec"], 2))
@@ -20,7 +24,7 @@ def gaussian_MLE(output, desired_mean, std, weight):
     #                                            :min_len_series]) * updated_weight_series_vec.reshape(-1, 1) /
     #                                           self.obs_info["std_series_vec"].reshape(-1, 1), 2)) / min_len_series
 
-    cost = np.power((output - desired_mean)/std, 2)*weight
+    cost = 0.5 * np.power((output - desired_mean)/std, 2)*weight
     if hasattr(output, '__len__'):
         # if entry is a vector then turn the vector of costs for each data point into a average cost
         cost = np.sum(cost)/len(output)
@@ -31,8 +35,9 @@ def gaussian_MLE(output, desired_mean, std, weight):
 
 def MSE(*args, **kwargs):
     # The mean squared error cost is the same as the 
-    return gaussian_MLE(*args, **kwargs)
+    return 2 * gaussian_MLE(*args, **kwargs)
 
+@is_MLE
 def multimodal_gaussian(output, prob_dist_params, weight):
     if hasattr(output, '__len__'):
         print("ERROR: multimodal_gaussian cost function is not implemented for series data")
@@ -97,7 +102,21 @@ def AE(output, desired_mean, std, weight):
         # if entry is a vector then turn the vector of costs for each data point into a average cost
         cost = np.sum(cost)/len(output)
 
+# decorator for cost combiners
+def cost_combiner(func):
+    func.cost_combiner = True
+    return func
 
+@is_MLE
+@cost_combiner
+def additive(costs):
+    cost = np.sum(costs)
+    return cost
+
+@cost_combiner
+def norm_additive(costs):
+    cost = np.sum(costs)/len(costs)
+    return cost
 
 
 

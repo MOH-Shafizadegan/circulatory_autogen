@@ -22,15 +22,97 @@
       "data_type": "constant",
       "operation": "steady_state_avg",
       "operands": [
+        "benchmark/z"
+      ],
+      "unit": "dimensionless",
+      "weight": 1.0,
+      "value": 20,
+      "std": 2,
+      "experiment_idx": 0,
+      "subexperiment_idx": 0,
+      "plot_type": "horizontal"
+    },
+    {
+      "variable": "benchmark/x",
+      "name_for_plotting": "x_{SS}",
+      "data_type": "constant",
+      "operation": "steady_state_avg",
+      "operands": [
         "benchmark/x"
       ],
       "unit": "dimensionless",
       "weight": 1.0,
-      "value": 24,
-      "std": 3,
+      "value": 9,
+      "std": 1,
       "experiment_idx": 0,
       "subexperiment_idx": 0,
       "plot_type": "horizontal"
+    },
+    {
+      "variable": "benchmark/x",
+      "name_for_plotting": "overshoot",
+      "data_type": "constant",
+      "operation": "calc_max_overshoot",
+      "operands": [
+        "benchmark/x"
+      ],
+      "unit": "dimensionless",
+      "weight": 1.0,
+      "value": 4.25,
+      "std": 0.5,
+      "experiment_idx": 0,
+      "subexperiment_idx": 0,
+      "plot_type": "horizontal"
+    },
+    {
+      "variable": "benchmark/y",
+      "name_for_plotting": "y overshoot",
+      "data_type": "constant",
+      "operation": "calc_max_overshoot",
+      "operands": [
+        "benchmark/y"
+      ],
+      "unit": "dimensionless",
+      "weight": 1.0,
+      "value": 12.3,
+      "std": 1,
+      "experiment_idx": 0,
+      "subexperiment_idx": 0,
+      "plot_type": "horizontal"
+    },
+    {
+      "variable": "benchmark/x",
+      "name_for_plotting": "T_{xPeak}",
+      "data_type": "constant",
+      "operation": "first_peak_time",
+      "operands": [
+        "time",
+        "benchmark/x"
+      ],
+      "unit": "dimensionless",
+      "weight": 1.0,
+      "value": 0.56,
+      "std": 0.05,
+      "experiment_idx": 0,
+      "subexperiment_idx": 0,
+      "plot_type": "vertical"
+    },
+    {
+      "variable": "benchmark/y",
+      "name_for_plotting": "T_{yPeak}",
+      "data_type": "constant",
+      "operation": "first_peak_time",
+      "operands": [
+        "time",
+        "benchmark/y"
+      ],
+      "unit": "dimensionless",
+      "weight": 1.0,
+      "value": 0.46,
+      "std": 0.05,
+      "experiment_idx": 0,
+      "subexperiment_idx": 0,
+      "plot_type": "vertical"
     }
   ]
 }

@@ -8,6 +8,7 @@ import sys
 from sys import exit
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(os.path.join(os.path.dirname(__file__), '../utilities'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '../../funcs_user'))
 import math as math
 import opencor as oc
 import time
@@ -48,6 +49,8 @@ import scipy.linalg as la
 # from scipy.optimize import curve_fit
 import warnings
 warnings.filterwarnings( "ignore", module = "matplotlib/..*" )
+from cost_funcs_user import additive, norm_additive
+
 # TODO maybe remove matplotlib warnings as above
 
 # set resource limit to inf to stop seg fault problem #TODO remove this, I don't think it does much
@@ -2640,7 +2643,7 @@ class OpencorParamID():
 
     def get_lnlikelihood_from_params(self, param_vals):
         cost = self.get_cost_from_params(param_vals)
-        lnlikelihood = -0.5*cost # TODO check this is correct for all multimodal distributions
+        lnlikelihood = -cost # TODO check this is correct for all multimodal distributions
 
         return lnlikelihood
     
@@ -2723,19 +2726,21 @@ class OpencorParamID():
         # else:
         #     print(f'cost type of {self.cost_type} not implemented')
         #     exit()
-        cost = 0.0
+        costs = []
         if const is not None:
             for const_idx in range(len(const)):
                 obs_idx = self.obs_info['const_idx_to_obs_idx'][const_idx]
                 if updated_weight_const_vec[const_idx] != 0:
-                    cost += self.cost_funcs_dict[self.cost_type[obs_idx]](const[const_idx], self.obs_info["ground_truth_const"][const_idx],
+                    cost_val = self.cost_funcs_dict[self.cost_type[obs_idx]](const[const_idx], self.obs_info["ground_truth_const"][const_idx],
                                                     self.obs_info["std_const_vec"][const_idx], updated_weight_const_vec[const_idx])
-        
+                    costs.append(cost_val)
+
         # TODO debugging a strange error that occurs occasionally in GA
         # assert not np.isnan(cost), 'cost is nan'
-        assert isinstance(cost, float), 'cost is not a float'
+        # assert isinstance(cost, float), 'cost is not a float'
+        assert not any(not isinstance(x, float) for x in costs), "The cost list contains non-float elements."
 
-        series_cost = 0
+        series_costs = []
         if series is not None:
             #print(series)
             # TODO make the above applicable for different length series? If we have different dt for series data
@@ -2775,10 +2780,11 @@ class OpencorParamID():
                 
                 obs_idx = self.obs_info['series_idx_to_obs_idx'][series_idx]
                 if weight_entry != 0:
-                    series_cost += self.cost_funcs_dict[self.cost_type[obs_idx]](series_entry, obs_entry, std_entry, weight_entry)
+                    series_cost_val = self.cost_funcs_dict[self.cost_type[obs_idx]](series_entry, obs_entry, std_entry, weight_entry)
+                    series_costs.append(series_cost_val)
 
 
-        amp_cost = 0
+        amp_costs = []
         if amp is not None:
             # calculate sum of squares cost and divide by number data points in freq data
             # divide by number data points in series data
@@ -2798,12 +2804,14 @@ class OpencorParamID():
                 std_entry = self.obs_info["std_amp_vec"][amp_idx]
                 if hasattr(weight_entry, '__len__'):
                     if not all(val==0 for val in weight_entry):
-                        amp_cost += self.cost_funcs_dict[self.cost_type[obs_idx]](amp_entry, obs_entry, std_entry, weight_entry)
+                        amp_cost_val = self.cost_funcs_dict[self.cost_type[obs_idx]](amp_entry, obs_entry, std_entry, weight_entry)
+                        amp_costs.append(amp_cost_val)
                 else:
                     if weight_entry != 0:
-                        amp_cost += self.cost_funcs_dict[self.cost_type[obs_idx]](amp_entry, obs_entry, std_entry, weight_entry)
+                        amp_cost_val = self.cost_funcs_dict[self.cost_type[obs_idx]](amp_entry, obs_entry, std_entry, weight_entry)
+                        amp_costs.append(amp_cost_val)
 
-        phase_cost = 0
+        phase_costs = []
         if phase is not None:
             # calculate sum of squares cost and divide by number data points in freq data
             # divide by number data points in series data
@@ -2825,22 +2833,29 @@ class OpencorParamID():
                 weight_entry = updated_weight_phase_vec[phase_idx]
                 if hasattr(weight_entry, '__len__'):
                     if not all(val==0 for val in weight_entry):
-                        phase_cost += self.cost_funcs_dict[self.cost_type[obs_idx]](phase_entry, obs_entry, std_entry, weight_entry)
+                        phase_cost_val = self.cost_funcs_dict[self.cost_type[obs_idx]](phase_entry, obs_entry, std_entry, weight_entry)
+                        phase_costs.append(phase_cost_val)
                 else:
                     if weight_entry != 0:
-                        phase_cost += self.cost_funcs_dict[self.cost_type[obs_idx]](phase_entry, obs_entry, std_entry, weight_entry)
+                        phase_cost_val = self.cost_funcs_dict[self.cost_type[obs_idx]](phase_entry, obs_entry, std_entry, weight_entry)
+                        phase_costs.append(phase_cost_val)
 
-        prob_dist_cost = 0
+        prob_dist_costs = []
         if val_for_prob_dist is not None:
             for prob_dist_idx in range(len(val_for_prob_dist)):
                 obs_idx = self.obs_info['prob_dist_idx_to_obs_idx'][prob_dist_idx]
                 if updated_weight_prob_dist_vec[prob_dist_idx] != 0:
-                    prob_dist_cost += self.cost_funcs_dict[self.cost_type[obs_idx]](val_for_prob_dist[prob_dist_idx], 
+                    prob_dist_cost_val = self.cost_funcs_dict[self.cost_type[obs_idx]](val_for_prob_dist[prob_dist_idx], 
                                                                     self.obs_info["ground_truth_prob_dist_params"][prob_dist_idx],
                                                                     updated_weight_prob_dist_vec[prob_dist_idx])
+                    prob_dist_costs.append(prob_dist_cost_val)
             
 
-        cost = (cost + series_cost + amp_cost + phase_cost + prob_dist_cost) / num_weighted_obs
+        costs = (costs + series_costs + amp_costs + phase_costs + prob_dist_costs)
+        if hasattr(self.cost_funcs_dict[self.cost_type[obs_idx]], 'is_MLE'):
+            cost = additive(costs)
+        else:
+            cost = norm_additive(costs)
 
         return cost
 

@@ -26,15 +26,15 @@
       ],
       "unit": "dimensionless",
       "weight": 1.0,
-      "value": 205.0,
-      "std": 20,
+      "value": 300.0,
+      "std": 30,
       "experiment_idx": 0,
       "subexperiment_idx": 0,
       "plot_type": "horizontal"
     },
     {
       "variable": "benchmark/I",
-      "name_for_plotting": "T_{I_{peak}}",
+      "name_for_plotting": "T_{Ipeak}",
       "data_type": "constant",
       "operation": "first_peak_time",
       "operands": [
@@ -43,11 +43,11 @@
       ],
       "unit": "dimensionless",
       "weight": 1.0,
-      "value": 24.3,
-      "std": 3,
+      "value": 38.3,
+      "std": 4,
       "experiment_idx": 0,
       "subexperiment_idx": 0,
-      "plot_type": "horizontal"
+      "plot_type": "vertical"
     }
   ]
 }

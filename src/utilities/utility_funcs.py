@@ -4,7 +4,6 @@ import os,sys
 import libcellml
 import utilities.libcellml_helper_funcs as cellml
 import utilities.libcellml_utilities as libcellml_utils
-import numdifftools as nd
 
 class Normalise_class:
     def __init__(self, param_mins, param_maxs, mod_first_variables=0, modVal = 1.0):
@@ -12,6 +11,7 @@ class Normalise_class:
         self.param_maxs = param_maxs
         self.mod_first_variables=mod_first_variables
         self.modVal = modVal
+        self.range = self.param_maxs - self.param_mins
 
     def normalise(self, x):
         xDim = len(x.shape)
@@ -42,6 +42,26 @@ class Normalise_class:
             print('normalising not set up for xDim = {}, exiting'.format(xDim))
             exit()
         return y
+    
+    def get_jacobian(self):
+        """
+        Returns the Jacobian matrix J at point p, where J[i, j] = d(theta_i) / d(p_j).
+        For Min-Max (linear) scaling, J is a diagonal matrix where J[i, i] = 1/Range_i.
+        
+        Args:
+            p (np.ndarray): The unnormalized parameter vector (not strictly needed here, 
+                            but required for general non-linear transformations).
+        
+        Returns:
+            np.ndarray: The n x n Jacobian matrix J.
+        """
+        n = len(self.param_mins)
+        J = np.zeros((n, n))
+        
+        # Diagonal elements are 1 / Range_i
+        np.fill_diagonal(J, 1.0 / self.range)
+        
+        return J
 
 
 def obj_to_string(obj, extra='    '):
@@ -167,7 +187,7 @@ def change_parameter_values_and_save(cellml_file, parameter_names, parameter_val
     with open(target, 'w', encoding='utf-8') as f:
         f.write(new_content)
 
-def calculate_hessian(param_id, AD=False):    
+def calculate_hessian(param_id, AD=False, epsilon=1e-7):    
     """
     Calculate the Hessian matrix of the cost function at the best parameter values.
 
@@ -185,7 +205,6 @@ def calculate_hessian(param_id, AD=False):
     best_params = param_id.best_param_vals
     n_params = len(best_params)
     hessian = np.zeros((n_params, n_params))
-    epsilon = 1e-7  # Small perturbation for finite difference
 
     if AD:
         # If using automatic differentiation, implement accordingly
@@ -193,39 +212,133 @@ def calculate_hessian(param_id, AD=False):
 
     else:
         # calculate hessian of the lnlikelihood with finite differences
-        # hessian = hessian_fd(param_id.get_lnlikelihood_lnprior_from_params, best_params, eps=epsilon)
-        hessian = hessian_nd(param_id.get_lnlikelihood_lnprior_from_params, best_params)
+        hessian = hessian_fd(param_id.get_lnlikelihood_lnprior_from_params, best_params, eps=epsilon, param_norm_obj=param_id.param_norm_obj)
+        # hessian = nd.Hessian(param_id.get_lnlikelihood_lnprior_from_params)(best_params)
+
+        # print(hessian)
+        # print(hessian_nd)
         
     return hessian
 
-        
-def hessian_fd(f, theta, eps=1e-6):
+def hessian_fd(f, theta, eps=2.5e-3, param_norm_obj=None):
     theta = np.asarray(theta, dtype=float)
     n = len(theta)
     H = np.zeros((n, n))
-    
-    # Relative step sizes
-    h = eps * np.minimum(np.abs(theta), 1.0)
+
+    if param_norm_obj:
+        theta_norm = param_norm_obj.normalise(theta)
+        h = eps * np.minimum(np.abs(theta_norm), 1.0)
+    else:
+        h = eps * np.minimum(np.abs(theta), 1.0)    
     
     for i in range(n):
         for j in range(i, n):
             ei = np.zeros(n); ej = np.zeros(n)
             ei[i] = h[i]; ej[j] = h[j]
             
-            fpp = f(theta + ei + ej)
-            fpm = f(theta + ei - ej)
-            fmp = f(theta - ei + ej)
-            fmm = f(theta - ei - ej)
+            if param_norm_obj:
+                fpp = f(param_norm_obj.unnormalise(theta_norm + ei + ej))
+                fpm = f(param_norm_obj.unnormalise(theta_norm + ei - ej))
+                fmp = f(param_norm_obj.unnormalise(theta_norm - ei + ej))
+                fmm = f(param_norm_obj.unnormalise(theta_norm - ei - ej))
+            else:
+                fpp = f(theta + ei + ej)
+                fpm = f(theta + ei - ej)
+                fmp = f(theta - ei + ej)
+                fmm = f(theta - ei - ej)
             
             H[i, j] = (fpp - fpm - fmp + fmm) / (4 * h[i] * h[j])
             H[j, i] = H[i, j]
-    print(h)
+
+    if param_norm_obj:
+        J = param_norm_obj.get_jacobian()          
+        # Apply the transformation: H_p[i, j] = H_theta[i, j] * J_ii * J_jj
+        H_p = J.T @ H @ J
+
+        return H_p
+    
     return H
 
-def hessian_nd(f, theta):
-    return nd.Hessian(f)(theta)
+def gradient_fd(f, theta, eps=1e-6, param_norm_obj=None):
+    
+    theta = np.asarray(theta, dtype=float)
+    n = len(theta)
+    g = np.zeros(n)
 
-def hessian_gauss_newton(residual, theta, eps=1e-6):
+    # --- Setup ---
+    if param_norm_obj:
+        theta_norm = param_norm_obj.normalise(theta)
+        h = eps * np.minimum(np.abs(theta_norm), 1.0)
+        print(theta)
+        print(theta_norm)
+        print(h)
+    else:
+        h = eps * np.minimum(np.abs(theta), 1.0)
+
+    # --- Loop ---
+    for i in range(n):
+        ei = np.zeros(n)
+        ei[i] = h[i]
+
+        if param_norm_obj:
+            f_plus  = f(param_norm_obj.unnormalise(theta_norm + ei))
+            f_minus = f(param_norm_obj.unnormalise(theta_norm - ei))
+        else:
+            f_plus  = f(theta + ei)
+            f_minus = f(theta - ei)
+
+        g[i] = (f_plus - f_minus) / (2.0 * h[i])
+        
+    # --- Chain rule ---
+    if param_norm_obj:
+        J = param_norm_obj.get_jacobian()
+        return J.T @ g
+
+    return g
+
+def gradient_fd_4th(f, theta, eps=1e-3, param_norm_obj=None):
+    # print(eps)
+    # print(theta)
+    theta = np.asarray(theta, dtype=float)
+    n = len(theta)
+    g = np.zeros(n)
+
+    # --- Setup ---
+    if param_norm_obj:
+        # print('using param norm obj')
+        theta_norm = param_norm_obj.normalise(theta)
+        h = eps * np.maximum(np.abs(theta_norm), 1.0)
+        # unnorm = param_norm_obj.unnormalise
+        unnorm = lambda x: x
+    else:
+        theta_norm = theta
+        h = eps * np.maximum(np.abs(theta), 1.0)
+        unnorm = lambda x: x
+
+    # --- Loop ---
+    for i in range(n):
+        ei = np.zeros(n)
+        ei[i] = h[i]
+
+        f_p2 = f(unnorm(theta_norm + 2*ei))
+        f_p1 = f(unnorm(theta_norm + ei))
+        f_m1 = f(unnorm(theta_norm - ei))
+        f_m2 = f(unnorm(theta_norm - 2*ei))
+
+        # print(f'Theta: [{unnorm(theta_norm + 2*ei)}], [{unnorm(theta_norm + ei)}], [{unnorm(theta_norm - ei)}], [{unnorm(theta_norm - 2*ei)}]')
+        # print(f'Theta norm: [{theta_norm + 2*ei}], [{theta_norm + ei}], [{theta_norm - ei}], [{theta_norm - 2*ei}]')
+        # print(f'Gradient calc at index {i}: step = {ei[i]}, f_p2={f_p2}, f_p1={f_p1}, f_m1={f_m1}, f_m2={f_m2}')
+
+        g[i] = (-f_p2 + 8*f_p1 - 8*f_m1 + f_m2) / (12*h[i])
+
+    # --- Chain rule ---
+    if param_norm_obj:
+        J = param_norm_obj.get_jacobian()
+        return J.T @ g
+
+    return g
+
+def hessian_gauss_newton(residual, theta, eps=1e-3):
     """
     Calculate the Gauss-Newton approximation of the Hessian matrix.
 
@@ -256,7 +369,102 @@ def hessian_gauss_newton(residual, theta, eps=1e-6):
     H_gn = J.T @ J
     return H_gn
 
+def gradient_descent(fun, x0, grad_fun, step0=1e-2, max_iter=500, tol=1e-4, backtracking=True, verbose=True):
+    
+    x = np.asarray(x0, dtype=float)
+    fval = fun(x)
 
+    history = {
+        "x": [x.copy()],
+        "f": [fval],
+        "grad_norm": [],
+        "step": []
+    }
+
+    for k in range(max_iter):
+
+        # Step size
+        alpha = step0
+
+        g = grad_fun(x)
+        g_norm = np.linalg.norm(g)
+
+        history["grad_norm"].append(g_norm)
+
+        if g_norm < tol:
+            if verbose:
+                print(f"[GD] Converged at iter {k}, ||g||={g_norm:.3e}")
+            break
+
+        # Descent direction
+        p = -g
+
+        if backtracking:
+            c = 1e-4
+            rho = 0.5
+
+            # Armijo condition
+            while True:
+                x_new = x + alpha * p
+                f_new = fun(x_new)
+
+                if f_new <= fval + c * alpha * np.dot(g, p):
+                    break
+
+                alpha *= rho
+
+                if alpha < 1e-8:
+                    if verbose:
+                        print("[GD] Step size collapsed")
+                    
+                    # alpha = 1e-6  # take a small but safe step
+                    
+                    print("[GD] Checking function values near current point:")
+                    for delta in [-2, -1, 0, 1, 2]:
+                                test_x = x + delta * alpha * p
+                                test_f = fun(test_x)
+                                print(f"  f(x + {delta} * alpha * p) = f ({test_x}) = {test_f:.6e}")
+                            
+                    breakpoint()
+
+                    # g_safe = grad_fun(x, eps=1e-4)  # could use finite difference with safe_step here
+                    # g = g_safe
+                    # p = -g
+                    # x_new = x + alpha * p
+                    # f_new = fun(x_new) 
+                    # break
+                    return x, history
+
+        else:
+
+            # Print function values in the vicinity of the current point to check for local minimum
+            print("[GD] Checking function values near current point:")
+            for delta in [-2, -1, 0, 1, 2]:
+                        test_x = x + delta * alpha * p
+                        test_f = fun(test_x)
+                        print(f"  f(x + {delta} * alpha * p) = f ({test_x}) = {test_f:.6e}")
+                    
+            breakpoint()
+
+            x_new = x + alpha * p
+            f_new = fun(x_new)
+
+        # Update
+        x = x_new
+        fval = f_new
+
+        history["x"].append(x.copy())
+        history["f"].append(fval)
+        history["step"].append(alpha)
+
+        if verbose:
+            print(
+                f"[GD] iter={k:4d}  f={fval:.6e}  "
+                f"||g||={g_norm:.3e}  alpha={alpha:.3e}  "
+                f"x_new={x_new}"
+            )
+
+    return x, history
 
 
 

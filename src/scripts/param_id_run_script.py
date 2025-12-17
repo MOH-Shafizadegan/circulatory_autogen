@@ -15,6 +15,7 @@ import yaml
 import numpy as np
 from parsers.PrimitiveParsers import YamlFileParser
 from identifiabilty_analysis.identifiabilityAnalysis import IdentifiabilityAnalysis
+from utilities.utility_funcs import gradient_fd_4th, gradient_descent
 
 def run_param_id(inp_data_dict=None):
 
@@ -74,9 +75,51 @@ def run_param_id(inp_data_dict=None):
             num_calls_to_function = inp_data_dict['ga_options']['num_calls_to_function']
         param_id.set_bayesian_parameters(num_calls_to_function, n_initial_points, acq_func,  random_seed,
                                             acq_func_kwargs=acq_func_kwargs)
-    param_id.run()
-    # param_id.param_id.set_best_param_vals(np.asarray([0.59779409, 0.32321317, 0.05664833, 0.35665839]))
+    # param_id.run()
+    # param_id.param_id.set_best_param_vals(np.asarray([5.0,         0.2503606,  8.13095765, 0.42525994]))
+    # param_id.param_id.set_best_param_vals(np.asarray([1.9159433, 0.0959415, 4.69310993, 0.22715065]))
+    # param_id.param_id.set_best_param_vals(np.asarray([1.9376382, 0.09732969, 4.70212316, 0.22340672]))
+    # param_id.param_id.set_best_param_vals(np.asarray([1.83649539, 0.09269065, 5.18408127, 0.24448176]))
+    # param_id.param_id.set_best_param_vals(np.asarray([3.98464999, 20.95608989, 4.06212272]))
+    # param_id.param_id.set_best_param_vals(np.asarray([10.76528131,  2.13884358,  1.15140459,  2.41859019,  3.67832026]))
+    # param_id.param_id.set_best_param_vals(param_id.param_id.param_norm_obj.unnormalise(np.asarray([0.38416302, 0.09465154])))
+    # param_id.param_id.set_best_param_vals(param_id.param_id.param_norm_obj.unnormalise(np.asarray([0.50756665, 0.49541924])))
+    # param_id.param_id.set_best_param_vals(np.asarray([0.30009163, 0.09994633]))
+    # param_id.param_id.set_best_param_vals(np.asarray([2.00278165, 4.06986398]))
+    param_id.param_id.set_best_param_vals(np.asarray([1.97068532, 0.09984034, 5.47444089, 0.24829631]))
+    # param_id.param_id.set_best_param_vals(np.asarray([2.14223108, 0.87047693, 3.70784294, 1.34989044]))
+    # param_id.param_id.set_best_param_vals(np.asarray([2.15278257, 0.85762446, 3.72747759, 1.35065014]))
     best_param_vals = param_id.get_best_param_vals()
+
+    from scipy.optimize import minimize
+
+    # gradient_at_best = gradient_fd_4th(param_id.param_id.get_lnlikelihood_lnprior_from_params, best_param_vals, param_norm_obj = param_id.param_id.param_norm_obj)
+    # print(f'Gradient at best parameters: {gradient_at_best}')
+    if True: # gradient_at_best.any()>1e-3:
+        print('Warning: best parameters do not appear to be optimal, gradient is not close to zero.')
+        check = "y"
+        if check.lower() == 'y':
+            print('running convex optimization...')
+
+            # bounds = [(min_val, max_val) for min_val, max_val in zip(param_id.param_id_info["param_mins"], param_id.param_id_info["param_maxs"])]
+            # bounds = [(p * 0.9, p * 1.1) for p in param_id.param_id.param_norm_obj.normalise(best_param_vals)]
+            # results_convex = minimize(lambda p: -1 * param_id.param_id.get_lnlikelihood_lnprior_from_params(param_id.param_id.param_norm_obj.unnormalise(p)), param_id.param_id.param_norm_obj.normalise(best_param_vals), method='BFGS', 
+            #                           options={'disp': True, 'gtol': 1e-5})
+            # results_convex = minimize(lambda p: -1 * param_id.param_id.get_lnlikelihood_lnprior_from_params(param_id.param_id.param_norm_obj.unnormalise(p)), 
+            #                           param_id.param_id.param_norm_obj.normalise(best_param_vals), method='L-BFGS-B', bounds=bounds,
+            #                           options={'disp': True, 'gtol': 1e-9, 'ftol': 1e-9})
+            
+            # breakpoint()
+            fun = lambda p: -1 * param_id.param_id.get_lnlikelihood_lnprior_from_params(param_id.param_id.param_norm_obj.unnormalise(p))
+            x, convex_opt_hist = gradient_descent(fun, param_id.param_id.param_norm_obj.normalise(best_param_vals), lambda x, eps=1e-3, param_norm_obj=param_id.param_id.param_norm_obj: 
+                                                  gradient_fd_4th(fun, param_id.param_id.param_norm_obj.unnormalise(x), eps=eps, param_norm_obj=param_norm_obj), backtracking=True)
+            
+            best_param_vals = param_id.param_id.param_norm_obj.unnormalise(x)
+            print(f'new best parameters: {best_param_vals}')
+            gradient_at_best = gradient_fd_4th(param_id.param_id.get_lnlikelihood_lnprior_from_params, best_param_vals, param_norm_obj = param_id.param_id.param_norm_obj)
+            print(f'Gradient at new best parameters: {gradient_at_best}')
+        else:
+            print('continuing with current best parameters...')
     
     # param_id.close_simulation() comment for identifiability analysis run otherwise the model will be closed before analysis
     do_mcmc = inp_data_dict['do_mcmc']
@@ -112,6 +155,8 @@ def run_param_id(inp_data_dict=None):
         id_analysis.set_best_param_vals(best_param_vals)    
         print('Running identifiability analysis with method:', inp_data_dict['ia_options']['method'])
         #id_analysis.run_identifiability_analysis(inp_data_dict['identifiability_analysis_options'])
+        id_analysis.set_fd_step(convex_opt_hist["step"][-1])
+        # id_analysis.set_fd_step(1e-3)
         id_analysis.run(inp_data_dict['ia_options'])
     
     if rank == 0:

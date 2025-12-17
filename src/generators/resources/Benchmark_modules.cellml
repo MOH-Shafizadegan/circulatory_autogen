@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='UTF-8'?>
 <model name="Benchmark" xmlns="http://www.cellml.org/cellml/1.1#" xmlns:cellml="http://www.cellml.org/cellml/1.1#">
     <component name="Simple_ODE_Benchmark_main_type">
-        <variable name="t" public_interface="in" units="dimensionless"/>
+        <variable name="t" public_interface="in" units="second"/>
         <variable name="x_init" public_interface="in" units="dimensionless"/>
         <variable name="y_init" public_interface="in" units="dimensionless"/>
         <variable name="p" public_interface="in" units="dimensionless"/>
@@ -56,7 +56,7 @@
         <variable initial_value="y_init" name="y" public_interface="out" units="dimensionless"/>
     </component>
     <component name="Lotka_Volterra">
-        <variable name="t" public_interface="in" units="dimensionless"/>
+        <variable name="t" public_interface="in" units="second"/>
         <variable name="x_init" public_interface="in" units="dimensionless"/>
         <variable name="y_init" public_interface="in" units="dimensionless"/>
         <variable name="alpha" public_interface="in" units="dimensionless"/>
@@ -117,7 +117,7 @@
         </math>
     </component>
     <component name="SIR_Epidemic">
-        <variable name="t" public_interface="in" units="dimensionless"/>
+        <variable name="t" public_interface="in" units="second"/>
         <variable name="S_init" public_interface="in" units="dimensionless"/>
         <variable name="I_init" public_interface="in" units="dimensionless"/>
         <variable name="R_init" public_interface="in" units="dimensionless"/>
@@ -145,11 +145,8 @@
                             <minus/>
                             <ci>beta</ci>
                         </apply>
-                        <apply>
-                            <times/>
-                            <ci>S</ci>
-                            <ci>I</ci>
-                        </apply>
+                        <ci>S</ci>
+                        <ci>I</ci>
                     </apply>
                     <ci>N</ci>
                 </apply>
@@ -170,11 +167,8 @@
                         <apply>
                             <times/>
                             <ci>beta</ci>
-                            <apply>
-                                <times/>
-                                <ci>S</ci>
-                                <ci>I</ci>
-                            </apply>
+                            <ci>S</ci>
+                            <ci>I</ci>
                         </apply>
                         <ci>N</ci>
                     </apply>
@@ -213,7 +207,7 @@
         </math>
     </component>
     <component name="Lorenz">
-        <variable name="t" public_interface="in" units="dimensionless"/>
+        <variable name="t" public_interface="in" units="second"/>
         <variable name="x_init" public_interface="in" units="dimensionless"/>
         <variable name="y_init" public_interface="in" units="dimensionless"/>
         <variable name="z_init" public_interface="in" units="dimensionless"/>
@@ -292,7 +286,7 @@
         </math>
     </component>
     <component name="Goodwin_Oscillator">
-        <variable name="t" public_interface="in" units="dimensionless"/>
+        <variable name="t" public_interface="in" units="second"/>
         <variable name="x_init" public_interface="in" units="dimensionless"/>
         <variable name="y_init" public_interface="in" units="dimensionless"/>
         <variable name="z_init" public_interface="in" units="dimensionless"/>
@@ -398,7 +392,7 @@
         </math>
     </component>
     <component name="Chemostat_Stirred_Tank_Reactor">
-        <variable name="t" public_interface="in" units="dimensionless"/>
+        <variable name="t" public_interface="in" units="second"/>
         <variable name="S_init" public_interface="in" units="dimensionless"/>
         <variable name="X_init" public_interface="in" units="dimensionless"/>
         <variable name="S_in" public_interface="in" units="dimensionless"/>

@@ -18,7 +18,7 @@
     ]
   },
   {
-    "vessel_type": "Lotka_Volterra_Benchmark",
+    "vessel_type": "Lotka_Volterra",
     "BC_type": "nn",
     "module_format": "cellml",
     "module_file": "Benchmark_modules.cellml",
@@ -38,7 +38,7 @@
     ]
   },
   {
-    "vessel_type": "SIR_Epidemic_Benchmark",
+    "vessel_type": "SIR_Epidemic",
     "BC_type": "nn",
     "module_format": "cellml",
     "module_file": "Benchmark_modules.cellml",
@@ -59,7 +59,7 @@
     ]
   },
   {
-    "vessel_type": "Lorenz_Benchmark",
+    "vessel_type": "Lorenz",
     "BC_type": "nn",
     "module_format": "cellml",
     "module_file": "Benchmark_modules.cellml",
@@ -80,7 +80,7 @@
     ]
   },
   {
-    "vessel_type": "Goodwin_Oscillator_Benchmark",
+    "vessel_type": "Goodwin_Oscillator",
     "BC_type": "nn",
     "module_format": "cellml",
     "module_file": "Benchmark_modules.cellml",
@@ -104,7 +104,7 @@
     ]
   },
   {
-    "vessel_type": "CSTR_Benchmark",
+    "vessel_type": "CSTR",
     "BC_type": "nn",
     "module_format": "cellml",
     "module_file": "Benchmark_modules.cellml",

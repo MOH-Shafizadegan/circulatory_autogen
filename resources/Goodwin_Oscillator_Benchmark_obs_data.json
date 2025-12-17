@@ -26,8 +26,24 @@
       ],
       "unit": "dimensionless",
       "weight": 1.0,
-      "value": 2.1,
-      "std": 0.2,
+      "value": 7.65,
+      "std": 0.5,
+      "experiment_idx": 0,
+      "subexperiment_idx": 0,
+      "plot_type": "horizontal"
+    },
+    {
+      "variable": "benchmark/y",
+      "name_for_plotting": "y_{max}",
+      "data_type": "constant",
+      "operation": "max",
+      "operands": [
+        "benchmark/y"
+      ],
+      "unit": "dimensionless",
+      "weight": 1.0,
+      "value": 3.45,
+      "std": 0.5,
       "experiment_idx": 0,
       "subexperiment_idx": 0,
       "plot_type": "horizontal"
@@ -42,11 +58,93 @@
       ],
       "unit": "dimensionless",
       "weight": 1.0,
-      "value": 1.5,
+      "value": 2.2,
       "std": 0.1,
       "experiment_idx": 0,
       "subexperiment_idx": 0,
       "plot_type": "horizontal"
+    },
+    {
+      "variable": "benchmark/x",
+      "name_for_plotting": "x_{SS}",
+      "data_type": "constant",
+      "operation": "steady_state_avg",
+      "operands": [
+        "benchmark/x"
+      ],
+      "unit": "dimensionless",
+      "weight": 1.0,
+      "value": 5.8,
+      "std": 0.5,
+      "experiment_idx": 0,
+      "subexperiment_idx": 0,
+      "plot_type": "horizontal"
+    },
+    {
+      "variable": "benchmark/y",
+      "name_for_plotting": "y_{ss}",
+      "data_type": "constant",
+      "operation": "steady_state_avg",
+      "operands": [
+        "benchmark/y"
+      ],
+      "unit": "dimensionless",
+      "weight": 1.0,
+      "value": 2.9,
+      "std": 0.3,
+      "experiment_idx": 0,
+      "subexperiment_idx": 0,
+      "plot_type": "horizontal"
+    },
+    {
+      "variable": "benchmark/z",
+      "name_for_plotting": "z_{ss}",
+      "data_type": "constant",
+      "operation": "steady_state_avg",
+      "operands": [
+        "benchmark/z"
+      ],
+      "unit": "dimensionless",
+      "weight": 1.0,
+      "value": 1.9,
+      "std": 0.1,
+      "experiment_idx": 0,
+      "subexperiment_idx": 0,
+      "plot_type": "horizontal"
+    },
+    {
+      "variable": "benchmark/x",
+      "name_for_plotting": "T_{xPeak}",
+      "data_type": "constant",
+      "operation": "first_peak_time",
+      "operands": [
+        "time",
+        "benchmark/x"
+      ],
+      "unit": "dimensionless",
+      "weight": 1.0,
+      "value": 1.6,
+      "std": 0.1,
+      "experiment_idx": 0,
+      "subexperiment_idx": 0,
+      "plot_type": "vertical"
+    },
+    {
+      "variable": "benchmark/y",
+      "name_for_plotting": "T_{yPeak}",
+      "data_type": "constant",
+      "operation": "first_peak_time",
+      "operands": [
+        "time",
+        "benchmark/y"
+      ],
+      "unit": "dimensionless",
+      "weight": 1.0,
+      "value": 2,
+      "std": 0.2,
+      "experiment_idx": 0,
+      "subexperiment_idx": 0,
+      "plot_type": "vertical"
     }
   ]
 }

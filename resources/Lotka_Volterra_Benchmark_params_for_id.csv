@@ -1,5 +1,5 @@
 vessel_name, param_name, min, max, name_for_plotting, prior
-benchmark, alpha, 0, 2, \alpha , uniform
-benchmark, beta, 0, 2, \beta, uniform
-benchmark, gamma, 0, 2, \gamma, uniform
-benchmark, delta, 0, 2, \delta, uniform
+benchmark, alpha, 0.1, 5, \alpha , normal
+benchmark, beta, 0.01, 2, \beta, normal
+benchmark, gamma, 0.1, 10, \gamma, normal
+benchmark, delta, 0.01, 2, \delta, normal

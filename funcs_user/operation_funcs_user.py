@@ -3,6 +3,14 @@ import os
 import sys
 import sympy
 from scipy.signal import find_peaks
+import warnings
+from sklearn.exceptions import UndefinedMetricWarning
+
+# Ignore specific RuntimeWarnings from nolds
+warnings.filterwarnings('ignore', category=RuntimeWarning)
+
+# Ignore the specific UndefinedMetricWarning from sklearn
+warnings.filterwarnings('ignore', category=UndefinedMetricWarning)
 
 # decorator for functions that turn a series into a constant
 # Needed if you want to plot the series ontop of estimated constants
@@ -126,13 +134,21 @@ def first_peak_time(t, V, series_output=False, spike_min_thresh=None):
     """
     if series_output:
         return V
-    peak_idxs, peak_properties = find_peaks(V, height=spike_min_thresh)
+    
+    # Interpolate the signal to increase resolution before finding peaks
+
+    interp_factor = 100  # Increase resolution by this factor
+    t_interp = np.linspace(t[0], t[-1], len(t) * interp_factor)
+    interp_func = interp1d(t, V, kind='cubic')
+    V_interp = interp_func(t_interp)
+
+    peak_idxs, peak_properties = find_peaks(V_interp, height=spike_min_thresh)
     
     if len(peak_idxs) == 0:
         # there are no peaks, return the time of the subexperiment
-        return t[-1]
+        return t_interp[-1]
     
-    t_first_peak = t[peak_idxs[0]] # this is from the start of the pre_time, not the start of experiment.
+    t_first_peak = t_interp[peak_idxs[0]] # this is from the start of the pre_time, not the start of experiment.
     return t_first_peak
 
 @series_to_constant
@@ -548,3 +564,19 @@ def calc_AHP_duration(t, V, baseline_voltage=None, series_output=False):
         return np.nan
     else:
         return np.nanmean(ahp_durations)
+    
+import nolds
+from scipy.interpolate import interp1d
+
+@series_to_constant
+def calc_max_overshoot(x, series_output=False):
+    if series_output:
+        return x
+    max = np.max(x)
+    ss = np.mean(x[-int(len(x)/4)])
+    return max -ss
+
+@series_to_constant
+def calc_lyapunov(x, series_output=False):
+    lle = nolds.lyap_r(x, emb_dim=3, tau=0.01, min_tsep=10)
+    return lle

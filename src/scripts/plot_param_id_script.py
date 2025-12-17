@@ -129,7 +129,7 @@ def plot_param_id(inp_data_dict=None, generate=True):
         # id_analysis.run_identifiability_analysis(ia_option) # this should already be done
         label_list =[f'${param_id.param_id_info["param_names_for_plotting"][II]}$' for II in range(len(param_id.param_id_info["param_names_for_plotting"]))]
         print(label_list)
-        id_analysis.plot_laplace_results(label_list, param_id.plot_dir)
+        id_analysis.plot_laplace_results_analytical(label_list, param_id.plot_dir)
         print('Identifiability analysis plotting complete')
     
     param_id.close_simulation()
@@ -201,13 +201,6 @@ def plot_mcmc_and_laplace(param_id, id_analysis):
 
     mean = id_analysis.mean_Lapalace[overwrite_params_to_plot_idxs]
     cov  = id_analysis.covariance_matrix_Laplace[np.ix_(overwrite_params_to_plot_idxs, overwrite_params_to_plot_idxs)]
-
-    # # Repair covariance: symmetry + PSD
-    # cov = (cov + cov.T)/2
-    # eigvals, eigvecs = np.linalg.eigh(cov)
-    # eigvals[eigvals < 1e-14] = 1e-14
-    # cov = eigvecs @ np.diag(eigvals) @ eigvecs.T
-
     std = np.sqrt(np.diag(cov))
 
     # Axis limits

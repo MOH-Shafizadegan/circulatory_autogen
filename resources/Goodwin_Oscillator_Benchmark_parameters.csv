@@ -2,9 +2,9 @@ variable_name,units,value,data_reference
 x_init_benchmark,dimensionless,0.5,None
 y_init_benchmark,dimensionless,1,None
 z_init_benchmark,dimensionless,2,None
-V_m_benchmark,dimensionless,5,None
-K_benchmark,dimensionless,1,None
+V_m_benchmark,dimensionless,10,None
+K_benchmark,dimensionless,2,None
 n_benchmark,dimensionless,10,None
 k_1_benchmark,dimensionless,1,None
-k_2_benchmark,dimensionless,1,None
-k_3_benchmark,dimensionless,1,None
+k_2_benchmark,dimensionless,2,None
+k_3_benchmark,dimensionless,3,None

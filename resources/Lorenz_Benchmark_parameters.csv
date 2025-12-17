@@ -2,6 +2,6 @@ variable_name,units,value,data_reference
 x_init_benchmark,dimensionless,1,None
 y_init_benchmark,dimensionless,1,None
 z_init_benchmark,dimensionless,1,None
-sigma_benchmark,dimensionless,10,None
-beta_benchmark,dimensionless,2.6667,None
-rho_benchmark,dimensionless,28,None
+sigma_benchmark,dimensionless,4,None
+beta_benchmark,dimensionless,4,None
+rho_benchmark,dimensionless,21,None
