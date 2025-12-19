@@ -142,7 +142,7 @@ if __name__ == '__main__':
         inp_data_dict['solver_info'] = {}
         inp_data_dict['solver_info']['MaximumStep'] = 0.001
         inp_data_dict['solver_info']['MaximumNumberOfSteps'] = 5000
-        inp_data_dict['dt'] = 0.0001
+        inp_data_dict['dt'] = 0.01
         inp_data_dict['DEBUG'] = False
         inp_data_dict['param_id_obs_path'] = os.path.join(root_dir_path,'resources/SIR_Epidemic_Benchmark_obs_data.json')
         inp_data_dict["ga_options"] = {

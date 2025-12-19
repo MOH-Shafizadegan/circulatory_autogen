@@ -322,6 +322,54 @@ def plot_mcmc_and_laplace(param_id, id_analysis):
 
     print(f"✅ Analytic Laplace overlay saved: {save_path}")
 
+def plot_cost_vs_params(self, num_points=5, param_range_factor=0.2):
+        """
+        Plots the cost function with respect to each parameter, holding others at best-fit values.
+        Each subplot shows cost vs. one parameter.
+        Args:
+            num_points (int): Number of points to evaluate per parameter.
+            param_range_factor (float): Fraction of parameter range to explore around best-fit.
+        """
+        if self.best_param_vals is None:
+            print("Best parameter values not set. Run parameter identification first.")
+            return
+
+        n_params = len(self.best_param_vals)
+        fig, axs = plt.subplots(int(np.ceil(n_params/3)), 3, figsize=(15, 4 * int(np.ceil(n_params/3))))
+        axs = axs.flatten()
+
+        for i in range(n_params):
+            best_vals = self.best_param_vals.copy()
+            param_min = self.param_id_info["param_mins"][i]
+            param_max = self.param_id_info["param_maxs"][i]
+            best_val = best_vals[i]
+            # Explore a window around the best value
+            window = param_range_factor * (param_max - param_min)
+            scan_min = max(param_min, best_val - window)
+            scan_max = min(param_max, best_val + window)
+            param_values = np.linspace(scan_min, scan_max, num_points)
+            costs = []
+            for val in param_values:
+                print(f"Evaluating cost for {self.param_id_info['param_names_for_plotting'][i]} = {val}")
+                test_vals = best_vals.copy()
+                test_vals[i] = val
+                cost = self.get_cost_from_params(test_vals)
+                costs.append(cost)
+            axs[i].plot(param_values, costs, marker='o')
+            axs[i].set_xlabel(self.param_id_info["param_names_for_plotting"][i])
+            axs[i].set_ylabel("Cost")
+            axs[i].set_title(f"Cost vs {self.param_id_info['param_names_for_plotting'][i]}")
+            axs[i].grid(True)
+
+        # Hide unused subplots
+        for j in range(n_params, len(axs)):
+            fig.delaxes(axs[j])
+
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.output_dir, "cost_vs_params.png"))
+        plt.close(fig)
+        print(f"Saved cost vs parameter plots to {self.output_dir}/cost_vs_params.png")    
+
 if __name__ == '__main__':
     comm = MPI.COMM_WORLD
     # get argument of whether to run the autogeneration, defaults to True
