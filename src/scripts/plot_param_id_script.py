@@ -269,6 +269,15 @@ def plot_mcmc_and_laplace(param_id, id_analysis):
                 ax.axvline(ci_low,  color="black", linestyle="--", linewidth=1.2)
                 ax.axvline(ci_high, color="black", linestyle="--", linewidth=1.2)
 
+                std_str = f"$\sigma$ = {s:.2g}"
+                # Place the text in the top-left corner of the subplot
+                ax.text(0.05, 0.95, std_str, 
+                        transform=ax.transAxes, 
+                        fontsize=10, 
+                        verticalalignment='top', 
+                        horizontalalignment='left',
+                        bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.7, ec="none"))
+
             # -------------------------------------
             # 2D off–diagonal: analytic contours
             # -------------------------------------

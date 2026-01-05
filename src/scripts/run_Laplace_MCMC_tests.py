@@ -57,6 +57,8 @@ if __name__ == '__main__':
             "cost_convergence": 0.001,
             "cost_type": "gaussian_MLE"
         }
+        inp_data_dict["do_convex_opt"] = False
+        inp_data_dict["convex_opt_method"] = "nestrov"
         inp_data_dict['do_mcmc'] = False
         inp_data_dict["mcmc_options"] = {
             "num_steps": 100,
@@ -69,7 +71,7 @@ if __name__ == '__main__':
             }
         if rank == 0:
             print('running Simple ODE Benchmark param id')
-        # run_param_id(inp_data_dict)
+        run_param_id(inp_data_dict)
 
         if rank == 0:
             # also test running autogeneration with the fit parameters
@@ -79,7 +81,7 @@ if __name__ == '__main__':
             print('running plotting for Simple ODE Benchmark model')
 
 
-        # plot_param_id(inp_data_dict, generate=False)
+        plot_param_id(inp_data_dict, generate=False)
         comm.Barrier()
 
         if rank == 0:
@@ -102,6 +104,8 @@ if __name__ == '__main__':
             "cost_convergence": 0.001,
             "cost_type": "gaussian_MLE"
         }
+        inp_data_dict["do_convex_opt"] = True
+        inp_data_dict["convex_opt_method"] = "nestrov"
         inp_data_dict['do_mcmc'] = False
         inp_data_dict["mcmc_options"] = {
             "num_steps": 100,
@@ -116,7 +120,7 @@ if __name__ == '__main__':
             print('running Lotka-Volterra Benchmark param id')
             generate_with_new_architecture(False, inp_data_dict)
 
-        run_param_id(inp_data_dict)
+        # run_param_id(inp_data_dict)
 
         if rank == 0:
             # also test running autogeneration with the fit parameters
@@ -126,7 +130,7 @@ if __name__ == '__main__':
             print('running plotting for Lotka-Volterra Benchmark model')
 
 
-        plot_param_id(inp_data_dict, generate=False)
+        # plot_param_id(inp_data_dict, generate=False)
         comm.Barrier()
 
         if rank == 0:
@@ -149,6 +153,8 @@ if __name__ == '__main__':
             "cost_convergence": 0.001,
             "cost_type": "gaussian_MLE"
         }
+        inp_data_dict["do_convex_opt"] = True
+        inp_data_dict["convex_opt_method"] = "nestrov"
         inp_data_dict['do_mcmc'] = False
         inp_data_dict["mcmc_options"] = {
             "num_steps": 100,
@@ -196,6 +202,8 @@ if __name__ == '__main__':
             "cost_convergence": 0.001,
             "cost_type": "gaussian_MLE"
         }
+        inp_data_dict["do_convex_opt"] = True
+        inp_data_dict["convex_opt_method"] = "nestrov"
         inp_data_dict['do_mcmc'] = False
         inp_data_dict["mcmc_options"] = {
             "num_steps": 100,
@@ -243,6 +251,8 @@ if __name__ == '__main__':
             "cost_convergence": 0.001,
             "cost_type": "gaussian_MLE"
         }
+        inp_data_dict["do_convex_opt"] = True
+        inp_data_dict["convex_opt_method"] = "nestrov"
         inp_data_dict['do_mcmc'] = False
         inp_data_dict["mcmc_options"] = {
             "num_steps": 100,

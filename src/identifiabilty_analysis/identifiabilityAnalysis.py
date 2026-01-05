@@ -262,6 +262,13 @@ class IdentifiabilityAnalysis():
             for j in range(num_params):
                 ax = axes[i, j]
 
+                if j == 0:
+                    ax.set_ylabel(rf"{parameter_names[i]}", fontsize=12)
+
+                # Set X-labels on the last row
+                if i == num_params - 1:
+                    ax.set_xlabel(rf"{parameter_names[j]}", fontsize=12)
+
                 # -------------------------------------
                 # 1D diagonal: analytic Gaussian PDF
                 # -------------------------------------
