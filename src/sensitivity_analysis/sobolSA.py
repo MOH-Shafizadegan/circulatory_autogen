@@ -389,13 +389,18 @@ class sobol_SA():
                         # If function returns (value, warning)
                         if isinstance(feature, tuple):
                             val, flag = feature
+                            
+                            for i, x in enumerate(val):
+                                if x is None or (isinstance(x, (float, int)) and np.isnan(x)):
+                                    val[i] = np.nanmean(features[i]) if not np.all(np.isnan(features[i])) else 0.0
+
                             features.append(val)
                             sim_flag = f"warning_{flag}"
                         else:
                             features.append(feature)
 
                         if hasattr(self, "feature_lookup_ranges"):
-                            for i, f in enumerate(features):
+                            for i, f in enumerate(feature):
                                 f_min, f_max = self.feature_lookup_ranges[f"{i}"]
                                 # print(f"Feature {i}: {features[i]} - ({f_min}, {f_max})")
                                 if f_max != None or f_min != None:
