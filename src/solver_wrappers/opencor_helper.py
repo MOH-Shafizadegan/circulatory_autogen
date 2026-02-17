@@ -2,8 +2,9 @@ import opencor as oc
 import numpy as np
 import os
 import sys
-from importlib import import_module # Only used for debugging
+from importlib import import_module  # Only used for debugging
 # from func_timeout import func_timeout, FunctionTimedOut
+
 
 class SimulationHelper():
     def __init__(self, cellml_path, dt,
@@ -14,7 +15,7 @@ class SimulationHelper():
         # self.resource_module = import_module('psutil')
 
         self.cellml_path = cellml_path  # path to cellml file
-        self.dt = dt # time step
+        self.dt = dt  # time step
         self.stop_time = pre_time + sim_time  # full time of simulation
         self.pre_steps = int(pre_time/dt)  # number of steps to do before storing data (used to reach steady state)
         self.n_steps = int(sim_time/dt)  # number of steps for storing data
@@ -26,18 +27,68 @@ class SimulationHelper():
         if solver_info is None:
             solver_info = {'MaximumNumberOfSteps': 5000, 'MaximumStep': 0.0001}
         for key, value in solver_info.items():
+            # ignore high-level/legacy keys that aren't part of OpenCOR solver properties
+            if key.lower() == "method":
+                continue
+            if key.lower() == "solver":
+                continue
             if key not in self.data.odeSolverProperties():
-                print(f'{key} is not a valid key for the solver properties in CVODE., valid keys are')
-                print([key for key in self.data.odeSolverProperties()])
-                print('Set these correctly in the user_inputs.yaml file')
-                exit()
+                print(f'{key} is not a valid key for CVODE solver properties; valid keys are '
+                      f'{list(self.data.odeSolverProperties())}. Skipping.')
+                continue
             self.data.set_ode_solver_property(key, value)
         self.data.set_point_interval(self.dt)  # time interval for data storage
         self.data.set_starting_point(0)
         self.data.set_ending_point(self.stop_time)
-        self.tSim = np.linspace(pre_time, self.stop_time, self.n_steps + 1) # time values for stored part of simulation
+        self.tSim = np.linspace(pre_time, self.stop_time, self.n_steps + 1)  # time values for stored part of simulation
+        
+    def get_time(self, include_pre_time=False):
+        if include_pre_time:
+            return self.tSim
+        else:
+            return self.tSim - self.tSim[0]
 
-    # inner psutil function # TODO only needed for memory checking 
+    def _resolve_name(self, name):
+        """
+        Resolve parameter names that may include prefixes or separators.
+        Returns ("state"|"const", resolved_name) or (None, None).
+        """
+        name = str(name).strip()
+
+        def _match(candidate):
+            if candidate in self.data.states():
+                return ("state", candidate)
+            if candidate in self.data.constants():
+                return ("const", candidate)
+            return (None, None)
+
+        candidates = [name]
+        if "/" in name:
+            parts = name.split("/")
+            last = parts[-1]
+            first = parts[0]
+            candidates.append(last)
+            candidates.append(name.replace("/", "_"))
+            candidates.append(f"{first}_{last}")
+            candidates.append(f"{last}_{first}")
+            candidates.append(f"{first}{last}")
+            candidates.append(name.replace("/", ""))
+
+        # Strip common global prefixes
+        candidates += [c.replace("global_", "") for c in list(candidates)]
+        candidates += [c.replace("global/", "") for c in list(candidates)]
+
+        # Also try adding a global prefix if needed
+        candidates += [f"global/{c}" for c in list(candidates)]
+        candidates += [f"global_{c}" for c in list(candidates)]
+
+        for candidate in candidates:
+            kind, resolved = _match(candidate)
+            if kind is not None:
+                return (kind, resolved)
+        return (None, None)
+
+    # inner psutil function # TODO only needed for memory checking
     def process_memory(self):
         process = self.resource_module.Process(os.getpid())
         mem_info = process.memory_info()
@@ -45,73 +96,36 @@ class SimulationHelper():
 
     def run(self):
         try:
-            # mem = self.process_memory()
-            # print(f'memory_pre_reset={mem}')
             self.simulation.run()
-            # mem = self.process_memory()
-            # print(f'memory_post={mem}')
-        # except FunctionTimedOut:
-        #     print("openCOR timed out")
-        #     print('restarting simulation object')
-        #     self.simulation.reset()
-        #     self.simulation.clear_results()
-        #     return False
         except RuntimeError:
             print("Failed to converge")
             print('restarting simulation object')
-            self.simulation.reset()
-            self.simulation.release_all_values()
-            self.simulation.clear_results()
+            self.reset_and_clear()
             return False
 
         return True
 
     def reset_and_clear(self, only_one_exp=-1):
-        # mem = self.process_memory()
-        # print(f'memory_pre_clear={mem}')
         self.simulation.reset(True)
         self.simulation.release_all_values()
         self.simulation.clear_results()
-        # mem = self.process_memory()
-        # print(f'memory_post_clear={mem}')
-    
+
     def reset_states(self):
-        self.simulation.reset(False) # True resets everything, False resets only the states
+        self.simulation.reset(False)  # True resets everything, False resets only the states
 
     def get_all_variable_names(self):
         # get all states, algebraics and constants
         variable_names = list(self.simulation.results().states().keys()) + \
-                                list(self.simulation.results().algebraic().keys()) + \
-                                     list(self.data.constants().keys())
+            list(self.simulation.results().algebraic().keys()) + \
+            list(self.data.constants().keys())
         return variable_names
 
     def get_all_results(self, flatten=False):
-        """
-        gets all results after a simulation
-        inputs:
-        flatten: bool, if True then returns a flat list of results, otherwise returns a list of lists
-        outputs:
-        results: list of lists where the first index is the observable index
-        and the second is the operand index for that observable. The same shape as 
-        the input (except list inputs get turned into list of lists). 
-        Each entry can be float or numpy array 
-        """
         variable_names = self.get_all_variable_names()
         results = self.get_results(variable_names, flatten=flatten)
         return results
 
     def get_results(self, variables_list_of_lists, flatten=False):
-        """
-        gets results after a simulation
-        inputs:
-        obs_names: list of list of strings, stores the names of state, algebraic, and constant variables you wish to access
-        outputs:
-        results: list of lists where the first index is the observable index
-        and the second is the operand index for that observable. The same shape as 
-        the input (except list inputs get turned into list of lists). 
-        Each entry can be float or numpy array 
-        """
-
         # if the input is a list of variables, turn it into a list of lists
         if type(variables_list_of_lists[0]) is not list:
             variables_list_of_lists = [[entry] for entry in variables_list_of_lists]
@@ -133,7 +147,6 @@ class SimulationHelper():
                     print([name for name in self.simulation.results().states()])
                     print([name for name in self.simulation.results().algebraic()])
                     print([name for name in self.data.constants()])
-                    # TODO(Finbar) does this work for computed constants?
                     print('exiting')
                     exit()
 
@@ -146,20 +159,18 @@ class SimulationHelper():
         for JJ, param_name_or_list in enumerate(param_names):
             if not isinstance(param_name_or_list, list):
                 param_name_or_list = [param_name_or_list]
-                
+
             param_init.append([])
             for param_name in param_name_or_list:
-                if param_name in self.data.states():
-                    param_init[JJ].append(self.data.states()[param_name])
-                elif param_name in self.data.constants():
-                    param_init[JJ].append(self.data.constants()[param_name])
+                kind, resolved = self._resolve_name(param_name)
+                if kind == "state":
+                    param_init[JJ].append(self.data.states()[resolved])
+                elif kind == "const":
+                    param_init[JJ].append(self.data.constants()[resolved])
                 else:
-                    print(f'parameter name of {param_name} doesn\'t exist in either constants or states'
-                            f'The states are:')
-                    print([name for name in self.data.states()])
-                    print('the constants are:')
-                    print([name for name in self.data.constants()])
-                    exit()
+                    raise ValueError(
+                        f"parameter name {param_name} not found in OpenCOR states/constants"
+                    )
 
         return param_init
 
@@ -170,22 +181,20 @@ class SimulationHelper():
                 param_name_or_list = [param_name_or_list]
 
             for param_name in param_name_or_list:
-                if param_name in self.data.states():
-                    self.data.states()[param_name] = param_vals[JJ]
-                elif param_name in self.data.constants():
-                    self.data.constants()[param_name] = param_vals[JJ]
+                kind, resolved = self._resolve_name(param_name)
+                if kind == "state":
+                    self.data.states()[resolved] = param_vals[JJ]
+                elif kind == "const":
+                    self.data.constants()[resolved] = param_vals[JJ]
                 else:
-                    print(f'parameter name of {param_name} doesn\'t exist in either constants or states'
-                            f'The states are:')
-                    print([name for name in self.data.states()])
-                    print('the constants are:')
-                    print([name for name in self.data.constants()])
-                    exit()
+                    raise ValueError(
+                        f"parameter name {param_name} not found in OpenCOR states/constants"
+                    )
 
     def modify_params_and_run_and_get_results(self, param_names, mod_factors, obs_names, absolute=False):
 
         if absolute:
-            new_param_vals= mod_factors
+            new_param_vals = mod_factors
         else:
             init_param_vals = self.get_init_param_vals(param_names)
             new_param_vals = [a*b for a, b in zip(init_param_vals, mod_factors)]
@@ -201,7 +210,6 @@ class SimulationHelper():
             self.reset_and_clear()
 
         else:
-            # simulation set cost to large,
             print('simulation failed ')
             exit()
 
@@ -209,7 +217,7 @@ class SimulationHelper():
 
     def update_times(self, dt, start_time, sim_time, pre_time):
         self.dt = dt
-        self.stop_time= start_time + pre_time + sim_time # full time of simulation
+        self.stop_time = start_time + pre_time + sim_time  # full time of simulation
         self.pre_steps = int(pre_time/self.dt)  # number of steps to do before storing data (used to reach steady state)
         self.n_steps = int(sim_time/self.dt)  # number of steps for storing data
         self.data.set_starting_point(start_time)
@@ -218,5 +226,4 @@ class SimulationHelper():
 
     def close_simulation(self):
         oc.close_simulation(self.simulation)
-
 

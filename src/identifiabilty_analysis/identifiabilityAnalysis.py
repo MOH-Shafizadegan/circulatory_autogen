@@ -10,21 +10,22 @@ from matplotlib.ticker import FuncFormatter
 import corner
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(os.path.join(os.path.dirname(__file__), '../utilities'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '../solver_wrappers'))
 import math as math
-import opencor as oc
+try:
+    import opencor as oc
+    opencor_available = True
+except:
+    opencor_available = False
+    pass
 import time
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.ticker as tick
 import paperPlotSetup
-import diagnostics
-import utility_funcs
 from utility_funcs import calculate_hessian
-import traceback
-from utility_funcs import Normalise_class
 paperPlotSetup.Setup_Plot(3)
-from opencor_helper import SimulationHelper
 from parsers.PrimitiveParsers import scriptFunctionParser
 from mpi4py import MPI
 import re
@@ -92,7 +93,23 @@ class IdentifiabilityAnalysis():
 
         # TODO fix hessian calculation now that it uses lnlikelihood + lnprior
         Hessian = calculate_hessian(self.param_id)
-        covariance_matrix = np.linalg.inv(Hessian)
+        
+        # Handle singular or near-singular matrices by using pseudo-inverse
+        # and adding small regularization if needed
+        try:
+            covariance_matrix = np.linalg.inv(Hessian)
+        except np.linalg.LinAlgError:
+            # If matrix is singular, try pseudo-inverse with regularization
+            print("Warning: Hessian is singular or near-singular. Using pseudo-inverse with regularization.")
+            # Add small regularization term to diagonal
+            regularization = 1e-10 * np.eye(Hessian.shape[0])
+            try:
+                covariance_matrix = np.linalg.inv(Hessian + regularization)
+            except np.linalg.LinAlgError:
+                # If still singular, use pseudo-inverse
+                print("Warning: Regularized Hessian still singular. Using pseudo-inverse.")
+                covariance_matrix = np.linalg.pinv(Hessian)
+        
         mean = self.best_param_vals
         print("Laplace Approximation Results:")
         print("Mean (Best Parameter Values):", mean)

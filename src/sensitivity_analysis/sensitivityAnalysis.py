@@ -8,20 +8,21 @@ import sys
 from sys import exit
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(os.path.join(os.path.dirname(__file__), '../utilities'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '../solver_wrappers'))
 import math as math
-import opencor as oc
+try:
+    import opencor as oc
+    opencor_available = True
+except:
+    opencor_available = False
+    pass
 import time
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.ticker as tick
 import paperPlotSetup
-import diagnostics
-import utility_funcs
-import traceback
-from utility_funcs import Normalise_class
 paperPlotSetup.Setup_Plot(3)
-from opencor_helper import SimulationHelper
 from parsers.PrimitiveParsers import scriptFunctionParser
 from mpi4py import MPI
 import re
@@ -50,9 +51,13 @@ class SensitivityAnalysis():
     """
     Class for doing sensitivity analysis on a 0D model
     """
-    def __init__(self, model_path, model_type, file_name_prefix, DEBUG=False,
+    def __init__(self, model_path, model_type, file_name_prefix, sa_options, DEBUG=False,
                  param_id_output_dir=None, resources_dir=None, model_out_names=[], 
+<<<<<<< HEAD
                  solver_info={}, dt=0.01, ga_options={}, param_id_obs_path=None, params_for_id_path=None, param_id=None):
+=======
+                 solver_info={}, dt=0.01, optimiser_options={}, param_id_obs_path=None, params_for_id_path=None):
+>>>>>>> a726c270fc1f0c1c2a4788e5cd74d57054fd716f
 
         self.model_path = model_path
         self.model_type = model_type
@@ -63,12 +68,64 @@ class SensitivityAnalysis():
         self.model_out_names = model_out_names
         self.solver_info = solver_info
         self.dt = dt
-        self.ga_options = ga_options
+        self.optimiser_options = optimiser_options
         self.param_id_obs_path = param_id_obs_path
         self.params_for_id_path = params_for_id_path
+<<<<<<< HEAD
         self.param_id = param_id
+=======
+        self.sa_options = sa_options
+        sa_output_dir = sa_options['output_dir']
+        
+        self.SA_manager = sobol_SA(self.model_path, self.model_out_names, self.solver_info, sa_options, self.dt, 
+                            sa_output_dir, param_id_path=self.param_id_obs_path, params_for_id_path=self.params_for_id_path,
+                            verbose=False, use_MPI=True)
 
-    def run_sensitivity_analysis(self, sa_options):
+    @classmethod
+    def from_dict(cls, inp_data_dict):
+        # Only pass kwargs that exist in inp_data_dict
+        arg_options = [
+            'model_path', 'model_type', 'file_name_prefix', 'sa_options', 'DEBUG', 'param_id_output_dir',
+            'resources_dir', 'model_out_names', 'solver_info',
+            'dt', 'optimiser_options', 'param_id_obs_path', 'params_for_id_path'
+        ]
+        kwargs = {key: inp_data_dict[key] for key in arg_options if key in inp_data_dict}
+
+        # Support common naming used elsewhere
+        if 'file_name_prefix' not in kwargs and 'file_prefix' in inp_data_dict:
+            kwargs['file_name_prefix'] = inp_data_dict['file_prefix']
+
+        return cls(**kwargs)
+
+    def add_user_operation_func(self, func):
+        self.SA_manager.add_user_operation_func(func)
+
+    def set_sa_options(self, sa_options):
+        self.SA_manager.set_sa_options(sa_options)
+
+    def set_ground_truth_data(self, obs_data_dict):
+        self.SA_manager.set_ground_truth_data(obs_data_dict)
+        
+    def set_params_for_id(self, params_for_id_dict):
+        self.SA_manager.set_params_for_id(params_for_id_dict)
+    
+    def set_model_out_names(self, obs_data_dict):
+        # TODO fix for arbitrary number of operands
+        # mohammad must have done this already.
+        self.model_out_names = []
+        for item in obs_data_dict["data_items"]:
+            if len(item["operands"]) > 1:
+                print(f'{RED}ERROR: more than one operand for {item["name_for_plotting"]}, not supported{RESET}')
+                exit()
+            self.model_out_names.append(item["operands"][0])
+
+    def run_sensitivity_analysis(self, sa_options=None):
+        if sa_options is None:
+            sa_options = self.sa_options
+        else:
+            self.set_sa_options(sa_options)
+>>>>>>> a726c270fc1f0c1c2a4788e5cd74d57054fd716f
+
         if sa_options['method'] == 'naive':
             self.run_naive_sensitivity()
         elif sa_options['method'] == 'sobol':
@@ -77,34 +134,31 @@ class SensitivityAnalysis():
             print('ERROR: sensitivity analysis method not recognised')
             exit()
 
-    def run_sobol_sensitivity(self, sa_options):
-        # TODO create param_id object so we can use the cost functions?
-        # TODO
+    def run_sobol_sensitivity(self, sa_options=None):
 
         comm = MPI.COMM_WORLD
         rank = comm.Get_rank()
+        output_dir = self.SA_manager.output_dir
 
-        num_samples = sa_options['num_samples']
-        sample_type = sa_options['sample_type']
-        output_dir = sa_options['output_dir']
+        self.SA_manager.set_sa_options(sa_options)
 
-        SA_cfg = {
-            "sample_type" : sample_type,
-            "num_samples": num_samples,
-        }
-
-        if self.param_id_obs_path is None or self.params_for_id_path is None:
-            print(f'{RED}ERROR: need to provide param_id_obs_path and params_for_id_path for sobol sensitivity analysis{RESET}')
+        if self.SA_manager.gt_df is None or self.SA_manager.param_id_info is None:
+            print(f'{RED}ERROR: need to set ground truth data and params for id before running sobol sensitivity analysis{RESET}')
             exit()
 
+<<<<<<< HEAD
         SA_manager = sobol_SA(self.model_path, self.model_out_names, self.solver_info, SA_cfg, self.dt, 
                             output_dir, param_id_path=self.param_id_obs_path, params_for_id_path=self.params_for_id_path,
                             verbose=False, use_MPI=True, ga_options=self.ga_options, param_id=self.param_id)
         S1_all, ST_all, S2_all = SA_manager.run()
+=======
+        S1_all, ST_all, S2_all = self.SA_manager.run()
+>>>>>>> a726c270fc1f0c1c2a4788e5cd74d57054fd716f
 
         if rank == 0:
             print(f"{GREEN}Sensitivity analysis completed successfully :){RESET}")
             print(f'{CYAN}saving results in {output_dir}{RESET}')
+<<<<<<< HEAD
             SA_manager.save_sobol_indices(S1_all, ST_all, S2_all)
             SA_manager.plot_sobol_first_order_idx(S1_all, ST_all)
             SA_manager.plot_sobol_S2_idx(S2_all)
@@ -344,3 +398,9 @@ class SensitivityAnalysis():
 
         self.sensitivity_calculated = True
         print('sensitivity analysis complete')
+=======
+            self.SA_manager.save_sobol_indices(S1_all, ST_all, S2_all)
+            self.SA_manager.plot_sobol_first_order_idx(S1_all, ST_all)
+            self.SA_manager.plot_sobol_S2_idx(S2_all)
+            self.SA_manager.plot_sobol_heatmap(S1_all, ST_all)
+>>>>>>> a726c270fc1f0c1c2a4788e5cd74d57054fd716f

@@ -14,10 +14,14 @@ def run_SA(inp_data_dict=None):
 
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
+    num_procs = comm.Get_size()
+    if rank == 0:
+        print(f'Running sensitivity analysis with {num_procs} MPI rank(s)')
 
     yaml_parser = YamlFileParser()
     inp_data_dict = yaml_parser.parse_user_inputs_file(inp_data_dict, obs_path_needed=True, do_generation_with_fit_parameters=False)
 
+<<<<<<< HEAD
     DEBUG = inp_data_dict['DEBUG']
     model_path = inp_data_dict['model_path']
     model_type = inp_data_dict['model_type']
@@ -55,11 +59,21 @@ def run_SA(inp_data_dict=None):
     SA_agent.run_sensitivity_analysis(sa_options=sa_options)
 
     MPI.Finalize()
+=======
+
+    # SA_agent = SensitivityAnalysis(model_path=model_path, model_type=model_type, file_name_prefix=file_name_prefix,
+    #                                DEBUG=DEBUG, model_out_names=model_out_names, solver_info=solver_info, dt=dt, 
+    #                                ga_options=optimiser_options, param_id_obs_path=param_id_obs_path, params_for_id_path=params_for_id_path)
+    SA_agent = SensitivityAnalysis.from_dict(inp_data_dict)
+    SA_agent.run_sensitivity_analysis()
+>>>>>>> a726c270fc1f0c1c2a4788e5cd74d57054fd716f
 
 if __name__ == '__main__':
     comm = MPI.COMM_WORLD
     try:
         run_SA()
+        MPI.Finalize()
     except:
         print(traceback.format_exc())
         comm.Abort()
+        MPI.Finalize()

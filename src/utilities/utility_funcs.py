@@ -4,6 +4,7 @@ import os,sys
 import libcellml
 import utilities.libcellml_helper_funcs as cellml
 import utilities.libcellml_utilities as libcellml_utils
+from parsers.PrimitiveParsers import YamlFileParser
 
 class Normalise_class:
     def __init__(self, param_mins, param_maxs, mod_first_variables=0, modVal = 1.0):
@@ -249,6 +250,16 @@ def hessian_gauss_newton(residual, theta, eps=1e-6):
     
     H_gn = J.T @ J
     return H_gn
+
+def get_default_inp_data_dict(file_prefix, input_param_file, resources_dir):
+    inp_data_dict = {}
+    inp_data_dict['file_prefix'] = file_prefix
+    inp_data_dict['input_param_file'] = input_param_file
+    inp_data_dict['resources_dir'] = str(resources_dir)
+    
+    yaml_parser = YamlFileParser()
+    inp_data_dict = yaml_parser.parse_user_inputs_file(inp_data_dict, obs_path_needed=False, do_generation_with_fit_parameters=False)
+    return inp_data_dict
 
 
 

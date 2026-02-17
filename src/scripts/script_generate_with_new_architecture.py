@@ -17,10 +17,11 @@ user_inputs_dir= os.path.join(root_dir, 'user_run_files')
 from parsers.ModelParsers import CSV0DModelParser
 from generators.CVSCellMLGenerator import CVS0DCellMLGenerator
 from generators.CVSCppGenerator import CVS0DCppGenerator
+from generators.PythonGenerator import PythonGenerator
 from parsers.PrimitiveParsers import YamlFileParser
 
 
-def generate_with_new_architecture(do_generation_with_fit_parameters,
+def generate_with_new_architecture(do_generation_with_fit_parameters=False,
                                    inp_data_dict=None):
 
     yaml_parser = YamlFileParser()
@@ -35,6 +36,9 @@ def generate_with_new_architecture(do_generation_with_fit_parameters,
     generated_models_subdir = inp_data_dict['generated_models_subdir']
     vessels_csv_abs_path = inp_data_dict['vessels_csv_abs_path']
     parameters_csv_abs_path = inp_data_dict['parameters_csv_abs_path']
+    solver_info = inp_data_dict['solver_info']
+    # Get solver from solver_info (check both 'solver' and 'method' for backward compatibility)
+    solver = solver_info.get('solver') or solver_info.get('method')
 
 
     if do_generation_with_fit_parameters:
@@ -49,16 +53,25 @@ def generate_with_new_architecture(do_generation_with_fit_parameters,
     if inp_data_dict['model_type'] == 'cellml_only':
         code_generator = CVS0DCellMLGenerator(model, inp_data_dict)
         success = code_generator.generate_files()
+    elif inp_data_dict['model_type'] == 'python':
+        # First generate the CellML model, then emit a Python module in the same directory.
+        cellml_generator = CVS0DCellMLGenerator(model, inp_data_dict)
+        success = cellml_generator.generate_files()
+        if success:
+            cellml_path = os.path.join(generated_models_subdir, f'{file_prefix}.cellml')
+            py_gen = PythonGenerator(cellml_path, output_dir=generated_models_subdir, module_name=file_prefix)
+            py_gen.generate()
+            success = True
     elif inp_data_dict['model_type'] == 'cpp':
         if inp_data_dict['couple_to_1d']:
             code_generator = CVS0DCppGenerator(model, generated_models_subdir, file_prefix,
-                                            resources_dir=resources_dir, solver=inp_data_dict['solver'], 
+                                            resources_dir=resources_dir, solver=solver, 
                                             couple_to_1d=inp_data_dict['couple_to_1d'],
                                             cpp_generated_models_dir=inp_data_dict['cpp_generated_models_dir'],
                                             cpp_1d_model_config_path=inp_data_dict['cpp_1d_model_config_path'])
         else:
             code_generator = CVS0DCppGenerator(model, generated_models_subdir, file_prefix,
-                                            resources_dir=resources_dir, solver=inp_data_dict['solver'])
+                                            resources_dir=resources_dir, solver=solver)
 
         code_generator.generate_cellml()
         code_generator.annotate_cellml()

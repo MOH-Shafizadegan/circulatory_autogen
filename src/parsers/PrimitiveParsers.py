@@ -13,6 +13,14 @@ import json
 import copy
 import yaml
 import re
+try: 
+    from mpi4py import MPI
+except:
+    mpi_available = False
+    rank=0
+else:
+    mpi_available = True
+    rank = MPI.COMM_WORLD.Get_rank()
 
 root_dir = os.path.join(os.path.dirname(__file__), '../..')
 sys.path.append(os.path.join(root_dir, 'src'))
@@ -41,13 +49,25 @@ class scriptFunctionParser(object):
         funcs = [item for item in dir(operation_funcs) if callable(getattr(operation_funcs, item))]
         funcs_user = [item for item in dir(operation_funcs_user) if callable(getattr(operation_funcs_user, item))]
 
+
         # create dict with keys of string of function names
         for func in funcs:
             operation_funcs_dict[func] = getattr(operation_funcs, func)
         for func in funcs_user:
             operation_funcs_dict[func] = getattr(operation_funcs_user, func)
+
+        # add a do nothing function to the dict
+        operation_funcs_dict[None] = lambda x: x
         
         return operation_funcs_dict
+    
+    def add_user_operation_func(self, operation_funcs_dict, func):
+        operation_funcs_dict[func.__name__] = func
+        return operation_funcs_dict
+    
+    def add_user_cost_func(self, cost_funcs_dict, func):
+        cost_funcs_dict[func.__name__] = func
+        return cost_funcs_dict
 
     def get_cost_funcs_dict(self):
         # import cost_funcs # currently all costs are in cost_funcs_user
@@ -92,8 +112,16 @@ class YamlFileParser(object):
                 user_files_dir = ''
         else:
             user_files_dir = ''
-    
-        file_prefix = inp_data_dict['file_prefix']
+
+        if inp_data_dict is None:
+            print('no inp_data_dict provided and user_inputs.yaml not found, exiting')
+            exit()
+            
+        if 'file_prefix' not in inp_data_dict.keys():
+            print('file_prefix not found in inp_data_dict, exiting')
+            exit()
+        else:
+            file_prefix = inp_data_dict['file_prefix']
 
         # overwrite dir paths if set in user_inputs.yaml
         if "resources_dir" in inp_data_dict.keys():
@@ -116,17 +144,18 @@ class YamlFileParser(object):
                     print(f'param_id_obs_path={inp_data_dict["param_id_obs_path"]} does not exist')
                     exit()
             else:
-                print(f'param_id_obs_path needs to be defined in user_inputs.yaml')
-                exit()
+                print(f'param_id_obs_path not defined in user_inputs.yaml')
+                print(f'Must run param_id.create_param_id_obs to create the param_id_observables')
+                inp_data_dict['param_id_obs_path'] = None
 
             if 'params_for_id_file' in inp_data_dict.keys():
                 inp_data_dict['params_for_id_path'] = os.path.join(inp_data_dict['resources_dir'], inp_data_dict['params_for_id_file'])
             else:
                 inp_data_dict['params_for_id_path'] = os.path.join(inp_data_dict['resources_dir'], f'{file_prefix}_params_for_id.csv')
-
-            if not os.path.exists(inp_data_dict['params_for_id_path']):
-                print(f'params_for_id path of {inp_data_dict["params_for_id_path"]} doesn\'t exist, user must create this file')
-                exit()
+                if not os.path.exists(inp_data_dict['params_for_id_path']):
+                    print(f'params_for_id_path={inp_data_dict["params_for_id_path"]} does not exist')
+                    print(f'Therefore, you must run param_id.create_params_for_id to define the parameters for identification')
+                    inp_data_dict['params_for_id_path'] = None
 
         if do_generation_with_fit_parameters:
             data_str_addon = re.sub('.json', '', os.path.split(inp_data_dict['param_id_obs_path'])[1])
@@ -143,15 +172,35 @@ class YamlFileParser(object):
         if not os.path.exists(inp_data_dict['generated_models_subdir']):
             os.mkdir(inp_data_dict['generated_models_subdir'])
             
-        inp_data_dict['model_path'] = os.path.join(inp_data_dict['generated_models_subdir'], f'{file_prefix}.cellml')
+        if 'model_type' not in inp_data_dict.keys():
+            inp_data_dict['model_type'] = 'cellml_only'
+            
+        if inp_data_dict.get('model_type') == 'python':
+            model_ext = '.py'
+        elif inp_data_dict.get('model_type') == 'cellml_only':
+            model_ext = '.cellml'
+        elif inp_data_dict.get('model_type') == 'cpp':
+            model_ext = '.cpp'
+        else:
+            print(f'Invalid model type: {inp_data_dict.get("model_type")}')
+            exit()
+
+        inp_data_dict['model_path'] = os.path.join(inp_data_dict['generated_models_subdir'], f'{file_prefix}{model_ext}')
 
         if do_generation_with_fit_parameters:
-            inp_data_dict['uncalibrated_model_path'] = os.path.join(inp_data_dict["generated_models_dir"], file_prefix, 
-                                               file_prefix + '.cellml')
+            inp_data_dict['uncalibrated_model_path'] = os.path.join(inp_data_dict["generated_models_dir"], file_prefix,
+                                               file_prefix + model_ext)
         else:
             inp_data_dict['uncalibrated_model_path'] = inp_data_dict['model_path']
 
 
+        if 'dt' not in inp_data_dict.keys():
+            inp_data_dict['dt'] = 0.01
+        else:
+            if type(inp_data_dict['dt']) != float:
+                print(f'dt must be a float, but is {type(inp_data_dict["dt"])}')
+                exit()
+            
         if 'pre_time' in inp_data_dict.keys():
             inp_data_dict['pre_time'] = inp_data_dict['pre_time']
         else:
@@ -161,22 +210,104 @@ class YamlFileParser(object):
         else:
             inp_data_dict['sim_time'] = None
 
-        if inp_data_dict['solver_info'] is None:
-            print('solver_info must be defined in user_inputs.yaml',
-                'MaximumStep is now an entry of solver_info in the user_inputs.yaml file')
+        # Parse and validate the solver parameter
+        # Supported solvers: CVODE (OpenCOR), CVODE_myokit (Myokit), or solve_ivp methods (RK45, RK4, etc.)
+        solver_name = inp_data_dict.get('solver_info', {}).get('solver')
+        if solver_name is None:
+            solver_name = inp_data_dict.get('solver')
+
+        if solver_name is None:
+            if inp_data_dict.get('model_type') == 'cellml_only':
+                solver_name = 'CVODE'
+            elif inp_data_dict.get('model_type') == 'python':
+                solver_name = 'solve_ivp'
+            elif inp_data_dict.get('model_type') == 'cpp':
+                solver_name = 'CVODE'
+            else:
+                print(f'Invalid model type: {inp_data_dict.get("model_type")}')
+                exit()
+        else:
+            if solver_name not in ['CVODE', 'CVODE_myokit', 'solve_ivp']:
+                print(f'Invalid solver: {solver_name}')
+                exit()
+        
+
+        if 'solver_info' not in inp_data_dict.keys(): 
+            inp_data_dict['solver_info'] = get_solver_info_default(inp_data_dict['model_type'])
+        else:
+            if 'MaximumStep' not in inp_data_dict['solver_info'].keys():
+                inp_data_dict['solver_info']['MaximumStep'] = get_solver_info_default(inp_data_dict['model_type'])['MaximumStep']
+            if 'MaximumNumberOfSteps' not in inp_data_dict['solver_info'].keys():
+                inp_data_dict['solver_info']['MaximumNumberOfSteps'] = get_solver_info_default(inp_data_dict['model_type'])['MaximumNumberOfSteps']
+        if 'solver' not in inp_data_dict['solver_info'].keys():
+            inp_data_dict['solver_info']['solver'] = solver_name
+
+        if 'solver' in inp_data_dict:
+            del inp_data_dict['solver']
+
+        if 'method' in inp_data_dict.get('solver_info', {}):
+            solver_method = inp_data_dict['solver_info']['method']
+        else:
+            if solver_name.startswith('CVODE'):
+                solver_method = 'CVODE'
+                inp_data_dict['solver_info']['method'] = solver_method
+            else:
+                print('method not set in solver_options, which should be set for solver solve_ivp,'
+                      'using default method RK45')
+                solver_method = 'RK45'
+                inp_data_dict['solver_info']['method'] = solver_method
+
+        # Validate solver value
+        valid_cellml_solvers = ['CVODE', 'CVODE_myokit']
+        # Common solve_ivp methods (add more as needed)
+        valid_python_solvers = ['solve_ivp']
+        valid_solve_ivp_methods = ['RK45', 'RK23', 'DOP853', 'Radau', 'BDF', 'LSODA', 'forward_euler']
+
+        if solver_name not in valid_cellml_solvers and solver_name not in valid_python_solvers:
+            print(f'Invalid solver: {solver_name}')
+            print(f'Valid CellML solvers: {valid_cellml_solvers}')
+            print(f'Valid Python solvers: {valid_python_solvers}')
             exit()
+        
+        
+        # Validate solver-model compatibility
+        # CellML solvers cannot be used with Python models
+        if inp_data_dict.get('model_type') == 'python' and solver_name not in valid_python_solvers:
+                print(f'CellML solver {solver_method} cannot be used with Python models (model_type="python")')
+                print(f'Use {valid_python_solvers} for Python models')
+                exit()
+
+        # solve_ivp methods can only be used with Python models
+        if solver_method in valid_solve_ivp_methods:
+            if inp_data_dict.get('model_type') not in ['python', None]:
+                print(f'solve_ivp method {solver_method} requires model_type to be "python"')
+                print('Use CVODE or CVODE_myokit for CellML models')
+                exit()
 
         if 'DEBUG' in inp_data_dict.keys(): 
             if inp_data_dict['DEBUG']:
-                inp_data_dict['ga_options'] = inp_data_dict['debug_ga_options']
-                inp_data_dict['mcmc_options'] = inp_data_dict['debug_mcmc_options']
+                # For backwards compatibility, still set ga_options if debug_ga_options exists
+                if 'debug_ga_options' in inp_data_dict.keys():
+                    inp_data_dict['ga_options'] = inp_data_dict['debug_ga_options']
+                if 'debug_mcmc_options' in inp_data_dict.keys():
+                    inp_data_dict['mcmc_options'] = inp_data_dict['debug_mcmc_options']
             else:
                 pass
         else:
             inp_data_dict['DEBUG'] = False
 
-        if not 'external_modules_dir' in inp_data_dict.keys():
+        if 'external_modules_dir' not in inp_data_dict.keys() or inp_data_dict['external_modules_dir'] is None:
             inp_data_dict['external_modules_dir'] = None
+        else:
+            # check if it is an absolute path
+            if not os.path.isabs(inp_data_dict['external_modules_dir']):
+                inp_data_dict['external_modules_dir'] = os.path.join(user_files_dir, inp_data_dict['external_modules_dir'])
+            else:
+                inp_data_dict['external_modules_dir'] = inp_data_dict['external_modules_dir']
+            # check if external_modules_dir is a valid directory
+            if not os.path.exists(inp_data_dict['external_modules_dir']):
+                print(f'external_modules_dir={inp_data_dict["external_modules_dir"]} does not exist')
+                exit()
         
         # for sensitivity analysis and parameter identification
         if not 'sa_options' in inp_data_dict.keys():
@@ -220,6 +351,62 @@ class YamlFileParser(object):
             if 'method' not in inp_data_dict['ia_options'].keys():
                 print('No method specified for identifiability analysis, setting to Laplace by default')
                 inp_data_dict['ia_options']['method'] = 'Laplace'
+        
+        # Parse optimiser_options - this is the new unified way to specify options
+        # Handle backwards compatibility: if ga_options or debug_ga_options is specified, merge into optimiser_options
+        if 'optimiser_options' not in inp_data_dict.keys():
+            inp_data_dict['optimiser_options'] = {}
+        else:
+            # Ensure optimiser_options is a dictionary
+            if inp_data_dict['optimiser_options'] is None:
+                inp_data_dict['optimiser_options'] = {}
+            
+        # Merge ga_options into optimiser_options for backwards compatibility
+        
+        # Backwards compatibility: convert ga_options to optimiser_options
+        # Only copy entries that don't already exist in optimiser_options to avoid duplicates
+        # Note: If DEBUG is True, ga_options may have been set to debug_ga_options above,
+        # but we still want to merge the original ga_options first (if it exists and DEBUG is False)
+        # or merge debug_ga_options with higher precedence when DEBUG is True
+        if not inp_data_dict['DEBUG']:
+            # When DEBUG is False, merge ga_options normally
+            if 'ga_options' in inp_data_dict.keys() and inp_data_dict['ga_options'] is not None:
+                ga_opts = inp_data_dict['ga_options']
+                if isinstance(ga_opts, dict):
+                    for key, value in ga_opts.items():
+                        # Only add if not already in optimiser_options
+                        if key not in inp_data_dict['optimiser_options']:
+                            inp_data_dict['optimiser_options'][key] = value
+                        # Warn if there's a conflict (same key, different value)
+                        elif inp_data_dict['optimiser_options'][key] != value:
+                            print(f'Warning: ga_options["{key}"] conflicts with optimiser_options["{key}"]. '
+                                  f'Using optimiser_options value: {inp_data_dict["optimiser_options"][key]}')
+        
+        # Handle debug_ga_options for backwards compatibility
+        # When DEBUG is True, debug_ga_options should override optimiser_options
+        if inp_data_dict['DEBUG']:
+            if 'debug_ga_options' in inp_data_dict.keys() and inp_data_dict['debug_ga_options'] is not None:
+                debug_ga_opts = inp_data_dict['debug_ga_options']
+                if isinstance(debug_ga_opts, dict):
+                    for key, value in debug_ga_opts.items():
+                        # Debug options override optimiser_options (they take precedence)
+                        if key in inp_data_dict['optimiser_options']:
+                            if inp_data_dict['optimiser_options'][key] != value:
+                                print(f'Note: debug_ga_options["{key}"] overriding optimiser_options["{key}"] '
+                                      f'({inp_data_dict["optimiser_options"][key]} -> {value})')
+                        inp_data_dict['optimiser_options'][key] = value
+        
+        # Handle debug_optimiser_options (new preferred way)
+        # If provided, merge them into optimiser_options and allow overrides
+        if 'debug_optimiser_options' in inp_data_dict.keys() and inp_data_dict['debug_optimiser_options'] is not None:
+            debug_opts = inp_data_dict['debug_optimiser_options']
+            if isinstance(debug_opts, dict):
+                for key, value in debug_opts.items():
+                    if key in inp_data_dict['optimiser_options']:
+                        if inp_data_dict['optimiser_options'][key] != value:
+                            print(f'Note: debug_optimiser_options["{key}"] overriding optimiser_options["{key}"] '
+                                  f'({inp_data_dict["optimiser_options"][key]} -> {value})')
+                    inp_data_dict['optimiser_options'][key] = value
 
         # for generation only
     
@@ -227,6 +414,26 @@ class YamlFileParser(object):
         inp_data_dict['parameters_csv_abs_path'] = os.path.join(inp_data_dict['resources_dir'], inp_data_dict['input_param_file'])
 
         return inp_data_dict
+
+def get_solver_info_default(model_type):
+    if model_type == 'cellml_only':
+        return {
+            'solver': 'CVODE',
+            'MaximumStep': 0.001,
+            'MaximumNumberOfSteps': 5000
+        }
+    if model_type == 'python':
+        return {
+            'solver': 'solve_ivp',
+            'MaximumStep': 0.001,
+            'MaximumNumberOfSteps': 5000
+        }
+    if model_type == 'cpp':
+        return {
+            'solver': 'CVODE',
+            'MaximumStep': 0.001
+        }
+    raise ValueError(f'Invalid model type: {model_type}')
 
 class CSVFileParser(object):
     '''
@@ -251,9 +458,11 @@ class CSVFileParser(object):
             csv_dataframe = pd.read_csv(filename, dtype=str, header=None, na_filter=False)
 
         csv_dataframe = csv_dataframe.rename(columns=lambda x: x.strip())
+        # Ensure object dtype so list-like assignments are allowed (pandas >=2.0 uses StringArray)
+        csv_dataframe = csv_dataframe.astype(object)
         for II in range(csv_dataframe.shape[0]):
-            for column_name in csv_dataframe.columns:
-                entry = csv_dataframe[column_name][II]
+            for column_index, column_name in enumerate(csv_dataframe.columns):
+                entry = csv_dataframe.iat[II, column_index]
                 if type(entry) is not str:
                     sub_entries = []
                 else:
@@ -271,7 +480,8 @@ class CSVFileParser(object):
                     else:
                         new_entry = sub_entries[0].strip()
 
-                csv_dataframe.loc[II, column_name] = new_entry
+                # Use iat to avoid pandas trying to broadcast list-like values.
+                csv_dataframe.iat[II, column_index] = new_entry
 
         # for column_name in csv_dataframe.columns:
         #     if column_name == 'vessel_name':
@@ -351,95 +561,6 @@ class CSVFileParser(object):
 
         return param_name_and_val, date_id
 
-    def get_param_id_info(self, params_for_id_path, idxs_to_ignore= None):
-    
-        if not params_for_id_path:
-            print(f'params_for_id_path cannot be None, exiting')
-            return None
-
-        csv_parser = CSVFileParser()
-        input_params = csv_parser.get_data_as_dataframe_multistrings(params_for_id_path)
-
-        # --- 1. Filter the DataFrame first ---
-        # Create a mask for indices to KEEP (not ignore)
-        if idxs_to_ignore is not None:
-            all_indices = set(range(input_params.shape[0]))
-            valid_indices = sorted(list(all_indices - set(idxs_to_ignore)))
-            # Filter the DataFrame based on valid indices
-            # .copy() is used to avoid SettingWithCopyWarning, though reset_index usually handles this
-            filtered_params = input_params.iloc[valid_indices].reset_index(drop=True)
-        else:
-            filtered_params = input_params.copy()
-            
-        N_params = filtered_params.shape[0]
-
-        param_id_info = {}
-        param_names_for_gen = []
-        param_id_info["param_names"] = [] # The list of names to be stored
-
-        # --- 2. Iterate ONLY over the filtered data ---
-        for II in range(N_params):
-            # Current row data from the filtered DataFrame
-            row = filtered_params.iloc[II]
-
-            # A. Build the full, complex names (e.g., 'vessel_name/param_name')
-            param_full_names = [
-                row["vessel_name"][JJ] + '/' + row["param_name"] 
-                for JJ in range(len(row["vessel_name"]))
-            ]
-            param_id_info["param_names"].append(param_full_names)
-
-            # B. Build the simplified names for generator/code
-            if row["vessel_name"][0] == 'global':
-                param_names_for_gen.append([row["param_name"]])
-            else:
-                param_gen_names = [
-                    row["param_name"] + '_' + row["vessel_name"][JJ] 
-                    for JJ in range(len(row["vessel_name"]))
-                ]
-                param_names_for_gen.append(param_gen_names)
-        
-        # --- 3. Set Arrays using the filtered DataFrame (Simple Array Creation) ---
-
-        param_id_info["param_mins"] = filtered_params["min"].to_numpy(dtype=float)
-        param_id_info["param_maxs"] = filtered_params["max"].to_numpy(dtype=float)
-        
-        # Plotting Names
-        if "name_for_plotting" in filtered_params.columns:
-            param_id_info["param_names_for_plotting"] = filtered_params["name_for_plotting"].to_numpy()
-        else:
-            # Use the first element of the complex name list generated above
-            param_id_info["param_names_for_plotting"] = np.array([p_names[0] 
-                                                                    for p_names in param_id_info["param_names"]])
-        
-        # Priors
-        if "prior" in filtered_params.columns:
-            param_id_info["param_prior_types"] = filtered_params["prior"].to_numpy()
-        else:
-            param_id_info["param_prior_types"] = np.array(["uniform"] * N_params)
-
-        param_id_info["param_names_for_gen"] = param_names_for_gen
-        
-        return param_id_info
-
-    def save_param_names(self, param_id_info, output_dir, rank=0):
-        """
-        Saves the generated parameter names and generator names to CSV files.
-        Requires the dictionary returned by _process_param_info.
-        """
-        if rank == 0:
-            # 1. Save param_names (vessel_name/param_name format)
-            param_names_path = os.path.join(output_dir, 'param_names.csv')
-            with open(param_names_path, 'w', newline='') as f:
-                wr = csv.writer(f)
-                wr.writerows(param_id_info["param_names"])
-            
-            # 2. Save param_names_for_gen (simplified format)
-            param_gen_path = os.path.join(output_dir, 'param_names_for_gen.csv')
-            with open(param_gen_path, 'w', newline='') as f:
-                wr = csv.writer(f)
-                wr.writerows(param_id_info["param_names_for_gen"])
-        return
 
 class JSONFileParser(object):
     '''
@@ -482,6 +603,17 @@ class JSONFileParser(object):
         for external_module_df in external_module_dfs:
             df = pd.concat([df, external_module_df], ignore_index=True)
         return df
+    
+    def get_data_as_dataframe_multistrings(self, filename, has_header=True):
+        '''
+        Returns the data in the CSV file as a Pandas dataframe where entries in the data array that have two
+        entries are put in a list in the entry for the dataframe
+        :param filename: filename of CSV file
+        '''
+        with open(filename, 'r') as f:
+            json_obj = json.load(f)
+        df = pd.DataFrame(json_obj)
+        return df
 
     def append_module_config_info_to_vessel_df(self, vessel_df, module_df):
         # add columns to vessel_df
@@ -501,31 +633,43 @@ class JSONFileParser(object):
                 exit()
             for column in add_on_lists:
                 # deepcopy to make sure that the lists for different vessel same module are not linked
+                val = this_vessel_module_df[column]
+                is_na = False
                 try:
-                    if np.isnan(this_vessel_module_df[column]):
-                        add_on_lists[column].append("None")
+                    mask = pd.isna(val)
+                    if isinstance(mask, (np.bool_, bool)):
+                        is_na = bool(mask)
                     else:
-                        add_on_lists[column].append(copy.deepcopy(this_vessel_module_df[column]))
-                except:
-                    add_on_lists[column].append(copy.deepcopy(this_vessel_module_df[column]))
+                        # array-like: consider NaN only if all entries are NaN
+                        is_na = bool(np.all(mask))
+                except Exception:
+                    is_na = False
+
+                if is_na:
+                    add_on_lists[column].append("None")
+                else:
+                    add_on_lists[column].append(copy.deepcopy(val))
 
         for column in add_on_lists:
             vessel_df[column] = add_on_lists[column]
 
-    def _parse_json_data(self, param_id_obs_path, pre_time=None, sim_time=None):
+class ObsAndParamDataParser(object):
+    def __init__(self):
+        pass
+
+    def parse_obs_data_json(self, param_id_obs_path=None, obs_data_dict=None, pre_time=None, sim_time=None):
         """
         Loads the ground truth observation data from the JSON file and returns 
         the core data structures: gt_df, protocol_info, and prediction_info.
         """
         
-        try:
+        if param_id_obs_path is not None:
             with open(param_id_obs_path, encoding='utf-8-sig') as rf:
                 json_obj = json.load(rf)
-        except FileNotFoundError:
-            print(f"Error: File not found at {param_id_obs_path}")
-            return None
-        except json.JSONDecodeError:
-            print(f"Error: Invalid JSON format in file at {param_id_obs_path}")
+        elif obs_data_dict is not None:
+            json_obj = obs_data_dict
+        else:
+            print("No obs data path or obs data dict provided, exiting")
             return None
 
         gt_df, protocol_info, prediction_info = None, None, None
@@ -587,7 +731,7 @@ class JSONFileParser(object):
             "prediction_info": prediction_info
         }
 
-    def _process_obs_info(self, gt_df):
+    def process_obs_info(self, gt_df, output_dir, dt):
         """
         Generates the detailed obs_info dictionary, including names, units, 
         plotting defaults, operations, and kwargs from the ground truth dataframe.
@@ -686,10 +830,123 @@ class JSONFileParser(object):
         obs_info["weight_phase_vec"] = phase_weights[data_types == "frequency"].to_numpy()
 
         obs_info["cost_type"] = [gt_df.iloc[II].get("cost_type", "MSE") for II in range(N)]
+
+        obs_info = self.get_ground_truth_values(gt_df, obs_info, output_dir, dt)
         
         return obs_info
+    
+    def get_ground_truth_values(self, gt_df, obs_info, output_dir, dt):
 
-    def _process_protocol_and_weights(self, gt_df, protocol_info, dt):
+        # _______ First we access data for constant values
+
+        # TODO make all of the below lists instead of arrays? So we can have different sized entries.
+
+        ground_truth_const = np.array([gt_df.iloc[II]["value"] for II in range(gt_df.shape[0])
+                                        if gt_df.iloc[II]["data_type"] == "constant"])
+
+        # _______ Then for time series
+        ground_truth_series = [np.array(gt_df.iloc[II]["value"]) for II in range(gt_df.shape[0])
+                                        if gt_df.iloc[II]["data_type"] == "series"]
+
+        # _______ Then for frequency series
+        ground_truth_amp = np.array([gt_df.iloc[II]["value"] for II in range(gt_df.shape[0])
+                                        if gt_df.iloc[II]["data_type"] == "frequency"])
+
+        # then for ground truth probability distributions
+        ground_truth_prob_dist_params = np.array([gt_df.iloc[II]["prob_dist_params"] for II in range(gt_df.shape[0])
+                                            if gt_df.iloc[II]["data_type"] == "prob_dist"])
+
+
+        # _______ and the phase of the freq data
+        ground_truth_phase_list = []
+        for II in range(gt_df.shape[0]):
+            if gt_df.iloc[II]["data_type"] == "frequency":
+                if "phase" not in gt_df.iloc[II].keys():
+                    ground_truth_phase_list.append(None)
+                else:
+                    ground_truth_phase_list.append(gt_df.iloc[II]["phase"])
+        ground_truth_phase = np.array(ground_truth_phase_list)
+
+        # get the dt for the series data
+        dt_list = []
+        for II in range(gt_df.shape[0]):
+            if gt_df.iloc[II]["data_type"] == "series":
+                if "obs_dt" not in gt_df.iloc[II].keys():
+                    print("dt not found in obs_data.json for series data, exiting")
+                    exit()
+                dt_list.append(gt_df.iloc[II]["obs_dt"])
+        
+        obs_info["obs_dt"] = np.array(dt_list)
+        
+        if len(obs_info["obs_dt"]) > 0:
+            if min(obs_info["obs_dt"]) < dt:
+                print("one of the dt in obs_data.json is less than the dt in user_inputs.yaml, the output timestep"
+                    "defined in user_inputs.yaml must be less than the smallest dt for your data. Exiting")
+                exit()
+
+        # The std for the different observables
+        obs_info["std_const_vec"] = np.array([gt_df.iloc[II]["std"] for II in range(gt_df.shape[0])
+                                       if gt_df.iloc[II]["data_type"] == "constant"])
+
+        obs_info["std_series_vec"] = [np.array(gt_df.iloc[II]["std"]) for II in range(gt_df.shape[0])
+                                        if gt_df.iloc[II]["data_type"] == "series"]
+
+        obs_info["std_amp_vec"] = np.array([gt_df.iloc[II]["std"] for II in range(gt_df.shape[0])
+                                        if gt_df.iloc[II]["data_type"] == "frequency"])
+
+        # if len(ground_truth_series) > 0:
+            # TODO what if we have ground truths of different size or sample rate?
+            # ground_truth_series = np.stack(ground_truth_series)
+            # removed because we have data of different sizes
+
+        if len(ground_truth_amp) > 0:
+            ground_truth_amp = np.stack(ground_truth_amp)
+
+        if len(ground_truth_phase) > 0:
+            ground_truth_phase = np.stack(ground_truth_phase)
+
+        if rank == 0:
+            np.save(os.path.join(output_dir, 'ground_truth_const.npy'), ground_truth_const)
+            if len(ground_truth_series) > 0:
+                np.save(os.path.join(output_dir, 'ground_truth_series.npy'), 
+                        np.array(ground_truth_series, dtype=object), allow_pickle=True)
+            if len(ground_truth_amp) > 0:
+                np.save(os.path.join(output_dir, 'ground_truth_amp.npy'), ground_truth_amp)
+            if len(ground_truth_phase) > 0:
+                np.save(os.path.join(output_dir, 'ground_truth_phase.npy'), ground_truth_phase)
+
+        obs_info["ground_truth_const"] = ground_truth_const
+        obs_info["ground_truth_prob_dist_params"] = ground_truth_prob_dist_params
+        obs_info["ground_truth_series"] = ground_truth_series
+        obs_info["ground_truth_amp"] = ground_truth_amp
+        obs_info["ground_truth_phase"] = ground_truth_phase
+
+        # create a mapping between const_idx and the obs_idx
+        const_count = 0
+        series_count = 0
+        freq_count = 0
+        prob_dist_count = 0
+        obs_info["const_idx_to_obs_idx"] = []
+        obs_info["series_idx_to_obs_idx"] = []
+        obs_info["freq_idx_to_obs_idx"] = []
+        obs_info["prob_dist_idx_to_obs_idx"] = []
+        for obs_idx in range(obs_info["num_obs"]):
+            if obs_info["data_types"][obs_idx] == "constant":
+                obs_info["const_idx_to_obs_idx"].append(obs_idx)
+                const_count += 1
+            elif obs_info["data_types"][obs_idx] == "series":
+                obs_info["series_idx_to_obs_idx"].append(obs_idx)
+                series_count += 1
+            elif obs_info["data_types"][obs_idx] == "frequency":
+                obs_info["freq_idx_to_obs_idx"].append(obs_idx)
+                freq_count += 1
+            elif obs_info["data_types"][obs_idx] == "prob_dist":
+                obs_info["prob_dist_idx_to_obs_idx"].append(obs_idx)
+                prob_dist_count += 1
+
+        return obs_info
+
+    def process_protocol_and_weights(self, gt_df, protocol_info, dt):
         """
         Calculates time totals, validates protocol labels/colors, and generates 
         the scaled weight maps for experiment/subexperiment cost calculation.
@@ -775,6 +1032,139 @@ class JSONFileParser(object):
         protocol["scaled_weight_prob_dist_from_exp_sub"] = prob_dist_map
         
         return protocol
+    
+    def get_param_id_info(self, params_for_id_path, idxs_to_ignore= None):
+    
+        if not params_for_id_path:
+            print(f'params_for_id_path cannot be None, exiting')
+            return None
+
+        csv_parser = CSVFileParser()
+        input_params = csv_parser.get_data_as_dataframe_multistrings(params_for_id_path)
+        return self._build_param_id_info_from_df(input_params, idxs_to_ignore=idxs_to_ignore)
+
+    def get_param_id_info_from_entries(self, params_for_id_entries, idxs_to_ignore=None):
+        """
+        Build param_id_info from a list/dict of parameter entries.
+        Each entry should include: vessel_name, param_name, min, max.
+        """
+        if params_for_id_entries is None:
+            print('params_for_id_entries cannot be None, exiting')
+            return None
+
+        # Allow callers to pass a dict wrapper
+        if isinstance(params_for_id_entries, dict):
+            if "params_for_id_path" in params_for_id_entries:
+                return self.get_param_id_info(params_for_id_entries["params_for_id_path"],
+                                              idxs_to_ignore=idxs_to_ignore)
+            if "params" in params_for_id_entries:
+                params_for_id_entries = params_for_id_entries["params"]
+
+        if not isinstance(params_for_id_entries, list):
+            raise ValueError("params_for_id_entries must be a list of dicts or include params_for_id_path")
+
+        input_params = pd.DataFrame(params_for_id_entries)
+        return self._build_param_id_info_from_df(input_params, idxs_to_ignore=idxs_to_ignore)
+
+    def _build_param_id_info_from_df(self, input_params, idxs_to_ignore=None):
+        if input_params is None or input_params.empty:
+            raise ValueError("No parameter entries provided")
+
+        required_cols = {"vessel_name", "param_name", "min", "max"}
+        missing = required_cols - set(input_params.columns)
+        if missing:
+            raise ValueError(f"params_for_id is missing required columns: {sorted(list(missing))}")
+
+        input_params = input_params.copy()
+
+        def _to_list(val):
+            if isinstance(val, list):
+                return val
+            if val is None:
+                return []
+            if isinstance(val, float) and np.isnan(val):
+                return []
+            val_str = str(val).strip()
+            if val_str == "":
+                return []
+            return [entry.strip() for entry in val_str.split()]
+
+        input_params["vessel_name"] = input_params["vessel_name"].apply(_to_list)
+
+        # --- 1. Filter the DataFrame first ---
+        # Create a mask for indices to KEEP (not ignore)
+        if idxs_to_ignore is not None:
+            all_indices = set(range(input_params.shape[0]))
+            valid_indices = sorted(list(all_indices - set(idxs_to_ignore)))
+            filtered_params = input_params.iloc[valid_indices].reset_index(drop=True)
+        else:
+            filtered_params = input_params.reset_index(drop=True)
+
+        N_params = filtered_params.shape[0]
+
+        param_id_info = {}
+        param_names_for_gen = []
+        param_id_info["param_names"] = []
+
+        # --- 2. Iterate ONLY over the filtered data ---
+        for II in range(N_params):
+            # Current row data from the filtered DataFrame
+            row = filtered_params.iloc[II]
+
+            # A. Build the full, complex names (e.g., 'vessel_name/param_name')
+            param_full_names = [
+                row["vessel_name"][JJ] + '/' + row["param_name"]
+                for JJ in range(len(row["vessel_name"]))
+            ]
+            param_id_info["param_names"].append(param_full_names)
+
+            # B. Build the simplified names for generator/code
+            if row["vessel_name"][0] == 'global':
+                param_names_for_gen.append([row["param_name"]])
+            else:
+                param_gen_names = [
+                    row["param_name"] + '_' + row["vessel_name"][JJ]
+                    for JJ in range(len(row["vessel_name"]))
+                ]
+                param_names_for_gen.append(param_gen_names)
+
+        # --- 3. Set Arrays using the filtered DataFrame ---
+        param_id_info["param_mins"] = filtered_params["min"].to_numpy(dtype=float)
+        param_id_info["param_maxs"] = filtered_params["max"].to_numpy(dtype=float)
+
+        if "name_for_plotting" in filtered_params.columns:
+            param_id_info["param_names_for_plotting"] = filtered_params["name_for_plotting"].to_numpy()
+        else:
+            param_id_info["param_names_for_plotting"] = np.array([p_names[0]
+                                                                  for p_names in param_id_info["param_names"]])
+
+        if "prior" in filtered_params.columns:
+            param_id_info["param_prior_types"] = filtered_params["prior"].to_numpy()
+        else:
+            param_id_info["param_prior_types"] = np.array(["uniform"] * N_params)
+
+        param_id_info["param_names_for_gen"] = param_names_for_gen
+
+        return param_id_info
+
+    def save_param_names(self, param_id_info, output_dir):
+        """
+        Saves the generated parameter names and generator names to CSV files.
+        Requires the dictionary returned by _process_param_info.
+        """
+        if rank == 0:
+            # 1. Save param_names (vessel_name/param_name format)
+            param_names_path = os.path.join(output_dir, 'param_names.csv')
+            with open(param_names_path, 'w', newline='') as f:
+                wr = csv.writer(f)
+                wr.writerows(param_id_info["param_names"])
+            
+            # 2. Save param_names_for_gen (simplified format)
+            param_gen_path = os.path.join(output_dir, 'param_names_for_gen.csv')
+            with open(param_gen_path, 'w', newline='') as f:
+                wr = csv.writer(f)
+                wr.writerows(param_id_info["param_names_for_gen"])
+        return
 
 
 

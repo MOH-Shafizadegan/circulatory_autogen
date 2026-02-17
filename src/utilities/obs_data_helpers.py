@@ -3,6 +3,7 @@ import pandas as pd
 import yaml
 import json
 import os, sys
+import re
 root_dir = os.path.join(os.path.dirname(__file__), '../..')
 
 class ObsDataCreator:
@@ -73,9 +74,22 @@ class ObsDataCreator:
         Add a data item to the dictionary.
         entry: dictionary containing the data item
         """
-        required_keys = ['variable', 'name_for_plotting', 'data_type', 'operation', 'operands', 
-                         'unit', 'weight', 'value', 'std']
+        required_keys = ['variable', 'name_for_plotting', 'operands', 
+                         'unit', 'value', 'std']
+        required_series_keys = ['obs_dt']
+        optional_keys = ['name_for_plotting', 'operation', 'weight', 'std', 'experiment_idx', 'subexperiment_idx']
                          
+        if 'name_for_plotting' not in entry:
+            entry['name_for_plotting'] = entry['variable']
+        # check that name_for_plotting only has one _ in it and remove if not
+        if entry['name_for_plotting'].count('_') > 1:
+            print('Warning: name_for_plotting contains multiple underscores, replacing with \_')
+            entry['name_for_plotting'] = re.sub('_', r'\_', entry['name_for_plotting'])
+        if 'operation' not in entry:
+            entry['operation'] = None # default to None if not provided
+        if 'weight' not in entry:
+            entry['weight'] = 1.0 # default to 1.0 if not provided
+
         if 'subexperiment_idx' not in entry:
             entry['subexperiment_idx'] = 0  # default to 0 if not provided
         if 'experiment_idx' not in entry:
@@ -83,16 +97,22 @@ class ObsDataCreator:
         for key in required_keys:
             if key not in entry:
                 raise ValueError(f"Entry is missing required key: {key}")
-        if entry["data_type"] == 'series':
-            if 'obs_dt' in entry.keys():
-                pass
-            elif 'dt' in entry.keys():
-                print("Warning: 'dt' for the time step of series data items is deprecated, ",
-                      "please use 'obs_dt' instead. Setting 'obs_dt' to 'dt'.")
-                entry['obs_dt'] = entry['dt']
-                pass
+        # check if value is a list or array and asign data_type accordingly
+        if 'data_type' not in entry:
+            if type(entry['value']) is list or type(entry['value']) is np.ndarray:
+                entry['data_type'] = 'series'
+                if 'obs_dt' in entry.keys():
+                    pass
+                elif 'dt' in entry.keys():
+                    print("Warning: 'dt' for the time step of series data items is deprecated, ",
+                        "please use 'obs_dt' instead. Setting 'obs_dt' to 'dt'.")
+                    entry['obs_dt'] = entry['dt']
+                    pass
+                else:
+                    raise ValueError(f"obs_dt is required for series entries")
             else:
-                raise ValueError(f"obs_dt is required for series entries")
+                entry['data_type'] = 'constant'
+
 
         if self.obs_data_dict['protocol_info'] != {}:
             # check that experiment_idx and subexperiment_idx are valid if there is a protocol_info
@@ -100,6 +120,10 @@ class ObsDataCreator:
                 raise ValueError(f"experiment_idx {entry['experiment_idx']} is out of bounds for the number of experiments ({len(self.obs_data_dict['protocol_info']['sim_times'])}).")
             if entry['subexperiment_idx'] < 0 or entry['subexperiment_idx'] >= len(self.obs_data_dict['protocol_info']['sim_times'][entry['experiment_idx']]):
                 raise ValueError(f"subexperiment_idx {entry['subexperiment_idx']} is out of bounds for the number of subexperiments in experiment {entry['experiment_idx']} ({len(self.obs_data_dict['protocol_info']['sim_times'][entry['experiment_idx']])}).")
+
+        for key in entry.keys():
+            if isinstance(entry[key], np.ndarray):
+                entry[key] = entry[key].tolist()
 
         self.obs_data_dict['data_items'].append(entry)
     
