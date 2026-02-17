@@ -53,11 +53,7 @@ class SensitivityAnalysis():
     """
     def __init__(self, model_path, model_type, file_name_prefix, sa_options, DEBUG=False,
                  param_id_output_dir=None, resources_dir=None, model_out_names=[], 
-<<<<<<< HEAD
-                 solver_info={}, dt=0.01, ga_options={}, param_id_obs_path=None, params_for_id_path=None, param_id=None):
-=======
                  solver_info={}, dt=0.01, optimiser_options={}, param_id_obs_path=None, params_for_id_path=None):
->>>>>>> a726c270fc1f0c1c2a4788e5cd74d57054fd716f
 
         self.model_path = model_path
         self.model_type = model_type
@@ -71,9 +67,6 @@ class SensitivityAnalysis():
         self.optimiser_options = optimiser_options
         self.param_id_obs_path = param_id_obs_path
         self.params_for_id_path = params_for_id_path
-<<<<<<< HEAD
-        self.param_id = param_id
-=======
         self.sa_options = sa_options
         sa_output_dir = sa_options['output_dir']
         
@@ -124,7 +117,6 @@ class SensitivityAnalysis():
             sa_options = self.sa_options
         else:
             self.set_sa_options(sa_options)
->>>>>>> a726c270fc1f0c1c2a4788e5cd74d57054fd716f
 
         if sa_options['method'] == 'naive':
             self.run_naive_sensitivity()
@@ -146,261 +138,12 @@ class SensitivityAnalysis():
             print(f'{RED}ERROR: need to set ground truth data and params for id before running sobol sensitivity analysis{RESET}')
             exit()
 
-<<<<<<< HEAD
-        SA_manager = sobol_SA(self.model_path, self.model_out_names, self.solver_info, SA_cfg, self.dt, 
-                            output_dir, param_id_path=self.param_id_obs_path, params_for_id_path=self.params_for_id_path,
-                            verbose=False, use_MPI=True, ga_options=self.ga_options, param_id=self.param_id)
-        S1_all, ST_all, S2_all = SA_manager.run()
-=======
         S1_all, ST_all, S2_all = self.SA_manager.run()
->>>>>>> a726c270fc1f0c1c2a4788e5cd74d57054fd716f
 
         if rank == 0:
             print(f"{GREEN}Sensitivity analysis completed successfully :){RESET}")
             print(f'{CYAN}saving results in {output_dir}{RESET}')
-<<<<<<< HEAD
-            SA_manager.save_sobol_indices(S1_all, ST_all, S2_all)
-            SA_manager.plot_sobol_first_order_idx(S1_all, ST_all)
-            SA_manager.plot_sobol_S2_idx(S2_all)
-            SA_manager.plot_sobol_heatmap(S1_all, ST_all)
-            SA_manager.plot_sobol_bubble_plot(S1_all, ST_all, index_type='Total_Order')
-            SA_manager.plot_sobol_bubble_plot(S1_all, ST_all, index_type='First_Order')
-            df_all = SA_manager.load_category_data()
-            SA_manager.plot_corner_overlay(df_all)
-
-    
-    def run_naive_sensitivity(self, param_id_output_paths):
-        # TODO this was the original method, which should be made obsolete.
-        # TODO haven't tested this yet.
-        # TODO change this function to plot_sensitivity
-        if self.rank !=0:
-            return
-
-        print('running sensitivity analysis')
-        if param_id_output_paths == None:
-            sample_path_list = [self.output_dir]
-        else:
-            sample_path_list = []
-            sample_paths = pd.read_csv(param_id_output_paths)
-            for i in range(len(sample_paths)):
-                sample_path_list.append(sample_paths.iat[i,0])
-            if len(sample_path_list) < 1:
-                sample_path_list = [self.output_dir]
-
-        do_triples_and_quads = False
-
-        for i in range(len(sample_path_list)):
-            self.param_id.run_single_sensitivity(sample_path_list[i], do_triples_and_quads)
-
-
-        # FA: Eventually we will automate the multiple runs of param_id and store the outputs in idxed
-        # FA: directories that can all be accessed automatically by this function without defining input paths.
-        m3_to_cm3 = 1e6
-        Pa_to_kPa = 1e-3
-        number_samples = len(sample_path_list)
-        x_values = []
-        for i in range(len(self.param_id_info["param_names"])):
-            x_values.append(self.param_id_info["param_names"][i][0])
-
-        for i in range(number_samples):
-            sample_path = sample_path_list[i]
-            normalised_jacobian = np.load(os.path.join(sample_path, 'normalised_jacobian_matrix.npy'))
-            parameter_importance = np.load(os.path.join(sample_path, 'parameter_importance.npy'))
-            collinearity_idx_i = np.load(os.path.join(sample_path, 'collinearity_idx.npy'))
-            if i == 0:
-                normalised_jacobian_average = np.zeros(normalised_jacobian.shape)
-                parameter_importance_average = np.zeros(parameter_importance.shape)
-                collinearity_idx_average = np.zeros(collinearity_idx_i.shape)
-            normalised_jacobian_average = normalised_jacobian_average + normalised_jacobian/number_samples
-            parameter_importance_average = parameter_importance_average + parameter_importance/number_samples
-            collinearity_idx_average = collinearity_idx_average + collinearity_idx_i/number_samples
-            self.collinearity_idx = collinearity_idx_average
-
-        collinearity_max = collinearity_idx_average.max()
-
-        if do_triples_and_quads:
-            #find maximum average value of collinearity triples
-            for i in range(len(x_values)):
-                for j in range(number_samples):
-                    sample_path = sample_path_list[j]
-                    collinearity_idx_triple = np.load(os.path.join(sample_path, 'collinearity_triples' + str(i) + '.npy'))
-                    if j==0:
-                        collinearity_idx_triple_average = np.zeros(collinearity_idx_triple.shape)
-                    collinearity_idx_triple_average = collinearity_idx_triple_average + collinearity_idx_triple/number_samples
-                if collinearity_idx_triple_average.max() > collinearity_max:
-                    collinearity_max = collinearity_idx_triple_average.max()
-
-            #find maximum value of collinearity quads
-            for i in range(len(x_values)):
-                for j in range(len(x_values)):
-                    for k in range(number_samples):
-                        sample_path = sample_path_list[k]
-                        collinearity_idx_quad = np.load(
-                            os.path.join(sample_path, 'collinearity_quads' + str(i) + '_' + str(j) + '.npy'))
-                        if k==0:
-                            collinearity_idx_quad_average = np.zeros(collinearity_idx_quad.shape)
-                        collinearity_idx_quad_average = collinearity_idx_quad_average + collinearity_idx_quad / number_samples
-                    if collinearity_idx_quad_average.max() > collinearity_max:
-                        collinearity_max = collinearity_idx_quad_average.max()
-
-        #find maximum average value and average values for collinearity idx
-        for i in range(number_samples):
-            sample_path = sample_path_list[i]
-            collinearity_idx_pairs_i = np.load(
-                os.path.join(sample_path, 'collinearity_pairs.npy'))
-            if i==0:
-                collinearity_idx_pairs_average = np.zeros(collinearity_idx_pairs_i.shape)
-            collinearity_idx_pairs_average = collinearity_idx_pairs_average + collinearity_idx_pairs_i/number_samples
-            self.collinearity_idx_pairs = collinearity_idx_pairs_average
-
-        if collinearity_idx_pairs_average.max() > collinearity_max:
-            collinearity_max = collinearity_idx_pairs_average.max()
-
-        number_Params = len(normalised_jacobian_average)
-        #plot jacobian
-        subplot_height = 1
-        subplot_width = 1
-        plt.rc('xtick', labelsize=3)
-        fig, axs = plt.subplots(subplot_height, subplot_width)
-
-        x_labels = []
-        subset = []
-        x_idx = 0
-        for obs_idx in range(len(self.obs_info["obs_names"])):
-            # if self.obs_info["data_types"][obs_idx] != "series":
-            x_labels.append(self.obs_info["obs_names"][obs_idx] + " " + self.obs_info["operations"][obs_idx])
-            subset.append(x_idx)
-            x_idx = x_idx + 1
-
-        for param_idx in range(len(self.param_id_info["param_names"])):
-            y_values = []
-            for obs_idx in range(len(x_labels)):
-                y_values.append(abs((normalised_jacobian_average[param_idx][subset[obs_idx]])))
-            axs.plot(x_labels, y_values, label=f'${self.param_id_info["param_names_for_plotting"][param_idx][0]}$')
-        axs.set_yscale('log')
-        axs.legend(loc='lower left', fontsize=6)
-        plt.savefig(os.path.join(self.plot_dir,
-                                     f'reconstruct_{self.file_name_prefix}_'
-                                     f'{self.param_id_obs_file_prefix}_sensitivity_average.eps'))
-        plt.savefig(os.path.join(self.plot_dir,
-                                     f'reconstruct_{self.file_name_prefix}_'
-                                     f'{self.param_id_obs_file_prefix}_sensitivity_average.pdf'))
-        plt.close()
-        #plot parameter importance
-        plt.rc('xtick', labelsize=6)
-        plt.rc('ytick', labelsize=12)
-        figB, axsB = plt.subplots(1, 1)
-
-
-        axsB.bar(x_values, parameter_importance_average)
-        axsB.set_ylabel("Parameter Importance", fontsize=12)
-        plt.savefig(os.path.join(self.plot_dir,
-                                     f'reconstruct_{self.file_name_prefix}_'
-                                     f'{self.param_id_obs_file_prefix}_parameter_importance_average.eps'))
-        plt.savefig(os.path.join(self.plot_dir,
-                                     f'reconstruct_{self.file_name_prefix}_'
-                                     f'{self.param_id_obs_file_prefix}_parameter_importance_average.pdf'))
-        plt.close()
-        #plot collinearity idx average
-        plt.rc('xtick', labelsize=12)
-        plt.rc('ytick', labelsize=4)
-        figC, axsC = plt.subplots(1, 1)
-        x_values_cumulative = []
-        x_values_temp = x_values[0]
-        for i in range(len(x_values)):
-            x_values_cumulative.append(x_values_temp)
-            if (i + 1) < len(x_values):
-                x_values_temp = x_values[i + 1] + "\n" + x_values_temp
-        axsC.barh(x_values_cumulative, collinearity_idx_average)
-        plt.savefig(os.path.join(self.plot_dir,
-                                     f'reconstruct_{self.file_name_prefix}_'
-                                     f'{self.param_id_obs_file_prefix}_collinearity_index_average.eps'))
-        plt.savefig(os.path.join(self.plot_dir,
-                                     f'reconstruct_{self.file_name_prefix}_'
-                                     f'{self.param_id_obs_file_prefix}_collinearity_index_average.pdf'))
-        plt.close()
-
-        plt.rc('xtick', labelsize=4)
-        plt.rc('ytick', labelsize=4)
-        figD, axsD = plt.subplots(1, 1)
-
-        X, Y = np.meshgrid(range(len(x_values)), range(len(x_values)))
-        if do_triples_and_quads:
-            collinearity_levels = np.linspace(0, collinearity_max, 20)
-            co = axsD.contourf(X, Y, collinearity_idx_pairs_average, levels=collinearity_levels)
-        else:
-            co = axsD.contourf(X, Y, collinearity_idx_pairs_average)
-        co = fig.colorbar(co, ax=axsD)
-        axsD.set_xticks(range(len(x_values)))
-        axsD.set_yticks(range(len(x_values)))
-        axsD.set_xticklabels(x_values)
-        axsD.set_yticklabels(x_values)
-
-        plt.savefig(os.path.join(self.plot_dir,
-                                     f'reconstruct_{self.file_name_prefix}_'
-                                     f'{self.param_id_obs_file_prefix}_collinearity_pairs_average.eps'))
-        plt.savefig(os.path.join(self.plot_dir,
-                                     f'reconstruct_{self.file_name_prefix}_'
-                                     f'{self.param_id_obs_file_prefix}_collinearity_pairs_average.pdf'))
-
-        if do_triples_and_quads:
-            #plot collinearity triples average
-            for i in range(len(x_values)):
-                for j in range(number_samples):
-                    sample_path = sample_path_list[j]
-                    collinearity_idx_triple = np.load(os.path.join(sample_path, 'collinearity_triples' + str(i) + '.npy'))
-                    if j == 0:
-                        collinearity_idx_triple_average = np.zeros(collinearity_idx_triple.shape)
-                    collinearity_idx_triple_average = collinearity_idx_triple_average + collinearity_idx_triple/number_samples
-
-                figE, axsE = plt.subplots(1, 1)
-                co = axsE.contourf(X, Y, collinearity_idx_triple_average, levels=collinearity_levels)
-                co = fig.colorbar(co, ax=axsE)
-                axsE.set_xticks(range(len(x_values)))
-                axsE.set_yticks(range(len(x_values)))
-                axsE.set_xticklabels(x_values)
-                axsE.set_yticklabels(x_values)
-
-                plt.savefig(os.path.join(self.plot_dir,
-                                             f'reconstruct_{self.file_name_prefix}_'
-                                             f'{self.param_id_obs_file_prefix}_collinearity_triples_average' + str(i) + '.eps'))
-                plt.savefig(os.path.join(self.plot_dir,
-                                             f'reconstruct_{self.file_name_prefix}_'
-                                             f'{self.param_id_obs_file_prefix}_collinearity_triples_average' + str(i) + '.pdf'))
-                plt.close()
-            #plot collinearity quads average
-            for i in range(len(x_values)):
-                for j in range(len(x_values)):
-                    for k in range(number_samples):
-                        sample_path = sample_path_list[k]
-                        collinearity_idx_quad = np.load(
-                            os.path.join(sample_path, 'collinearity_quads' + str(i) + '_' + str(j) + '.npy'))
-                        if k==0:
-                            collinearity_idx_quad_average = np.zeros(collinearity_idx_quad.shape)
-                        collinearity_idx_quad_average = collinearity_idx_quad_average + collinearity_idx_quad / number_samples
-                    figE, axsE = plt.subplots(1, 1)
-                    co = axsE.contourf(X, Y, collinearity_idx_quad_average, levels=collinearity_levels)
-                    co = fig.colorbar(co, ax=axsE)
-                    axsE.set_xticks(range(len(x_values)))
-                    axsE.set_yticks(range(len(x_values)))
-                    axsE.set_xticklabels(x_values)
-                    axsE.set_yticklabels(x_values)
-
-                    plt.savefig(os.path.join(self.plot_dir,
-                                                 f'reconstruct_{self.file_name_prefix}_'
-                                                 f'{self.param_id_obs_file_prefix}collinearity_quads_average' + str(i) + '_' + str(
-                                                     j) + '.eps'))
-                    plt.savefig(os.path.join(self.plot_dir,
-                                                 f'reconstruct_{self.file_name_prefix}_'
-                                                 f'{self.param_id_obs_file_prefix}collinearity_quads_average' + str(i) + '_' + str(
-                                                     j) + '.pdf'))
-                    plt.close()
-
-        self.sensitivity_calculated = True
-        print('sensitivity analysis complete')
-=======
             self.SA_manager.save_sobol_indices(S1_all, ST_all, S2_all)
             self.SA_manager.plot_sobol_first_order_idx(S1_all, ST_all)
             self.SA_manager.plot_sobol_S2_idx(S2_all)
             self.SA_manager.plot_sobol_heatmap(S1_all, ST_all)
->>>>>>> a726c270fc1f0c1c2a4788e5cd74d57054fd716f

@@ -21,52 +21,12 @@ def run_SA(inp_data_dict=None):
     yaml_parser = YamlFileParser()
     inp_data_dict = yaml_parser.parse_user_inputs_file(inp_data_dict, obs_path_needed=True, do_generation_with_fit_parameters=False)
 
-<<<<<<< HEAD
-    DEBUG = inp_data_dict['DEBUG']
-    model_path = inp_data_dict['model_path']
-    model_type = inp_data_dict['model_type']
-    file_name_prefix = inp_data_dict['file_prefix']
-    # SA_method = inp_data_dict['SA_method']
-    params_for_id_path = inp_data_dict['params_for_id_path']
-    param_id_obs_path = inp_data_dict['param_id_obs_path']
-    solver_info = inp_data_dict['solver_info']
-    dt = inp_data_dict['dt']
-    ga_options = inp_data_dict['ga_options']
-    sa_options = inp_data_dict['sa_options']
-
-    param_id_method = inp_data_dict['param_id_method']
-    file_prefix = inp_data_dict['file_prefix']
-    sim_time = inp_data_dict['sim_time']
-    pre_time = inp_data_dict['pre_time']
-    resources_dir = inp_data_dict['resources_dir']
-    # param_orig_vals = inp_data_dict['param_orig_vals']
-    # num_samples = inp_data_dict['num_samples']
-    # lower_bound_factor = inp_data_dict['lower_bound_factor']
-    # upper_bound_factor = inp_data_dict['upper_bound_factor']
-
-    model_out_names = inp_data_dict.get('model_out_names', [])
-
-    param_id = CVS0DParamID(model_path, model_type, param_id_method, False, file_prefix,
-                            params_for_id_path=params_for_id_path,
-                            param_id_obs_path=param_id_obs_path,
-                            sim_time=sim_time, pre_time=pre_time,
-                            solver_info=solver_info, dt=dt, ga_options=ga_options, DEBUG=DEBUG,
-                            resources_dir=resources_dir)
-    SA_agent = SensitivityAnalysis(model_path=model_path, model_type=model_type, file_name_prefix=file_name_prefix,
-                                   DEBUG=DEBUG, model_out_names=model_out_names, solver_info=solver_info, dt=dt, 
-                                   ga_options=ga_options, param_id_obs_path=param_id_obs_path, params_for_id_path=params_for_id_path,
-                                   param_id=param_id)
-    SA_agent.run_sensitivity_analysis(sa_options=sa_options)
-
-    MPI.Finalize()
-=======
 
     # SA_agent = SensitivityAnalysis(model_path=model_path, model_type=model_type, file_name_prefix=file_name_prefix,
     #                                DEBUG=DEBUG, model_out_names=model_out_names, solver_info=solver_info, dt=dt, 
     #                                ga_options=optimiser_options, param_id_obs_path=param_id_obs_path, params_for_id_path=params_for_id_path)
     SA_agent = SensitivityAnalysis.from_dict(inp_data_dict)
     SA_agent.run_sensitivity_analysis()
->>>>>>> a726c270fc1f0c1c2a4788e5cd74d57054fd716f
 
 if __name__ == '__main__':
     comm = MPI.COMM_WORLD
