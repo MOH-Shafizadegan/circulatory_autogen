@@ -120,6 +120,8 @@ class sobol_SA():
             self.__set_and_save_param_names()
         self.SA_cfg = self.create_SA_cfg(self.sample_type, SA_cfg["num_samples"])
 
+        self.series_indices = None  # Initialize tracking structure
+
     def create_SA_cfg(self, sample_type, num_samples):
         
         # Use param_id_info to build SA_cfg dynamically
@@ -316,6 +318,24 @@ class sobol_SA():
                                         self.gt_df.iloc[II].keys() else possible_colors[II%len(possible_colors)] 
                                         for II in range(self.gt_df.shape[0])]
         self.obs_info["plot_type"] = []
+
+        dt_list = []  
+        for II in range(self.gt_df.shape[0]):  
+            if self.gt_df.iloc[II]["data_type"] == "series":  
+                if "obs_dt" not in self.gt_df.iloc[II].keys():  
+                    self._rank0_print("dt not found in obs_data.json for series data, exiting")  
+                    exit()  
+                dt_list.append(self.gt_df.iloc[II]["obs_dt"])  
+        
+        self.obs_info["obs_dt"] = np.array(dt_list)  
+        
+        # Validate obs_dt against simulation dt  
+        if len(self.obs_info["obs_dt"]) > 0:  
+            if min(self.obs_info["obs_dt"]) < self.dt:  
+                self._rank0_print("one of the dt in obs_data.json is less than the dt in user_inputs.yaml, "  
+                                "the output timestep defined in user_inputs.yaml must be less than the "  
+                                "smallest dt for your data. Exiting")  
+                exit()
 
         # get plotting type
         # TODO make the plot_types operation_funcs so the user can defined how they are plotted.
@@ -757,22 +777,38 @@ class sobol_SA():
                                     self.sim_helper.reset_and_clear()
 
                 features = []
+                series_indices = []
                 for j in range(len(self.obs_info["operations"])):
-                    func = self.operation_funcs_dict[self.obs_info["operations"][j]]
-                    exp_idx = self.obs_info["experiment_idxs"][j]
-                    subexp_idx = self.obs_info["subexperiment_idxs"][j]
-                    operands_outputs = operands_outputs_dict.get((exp_idx, subexp_idx), None)
-                    if operands_outputs is not None and not (isinstance(operands_outputs, dict) and operands_outputs == {"failed": True}):
-                        feature = func(*operands_outputs[j], **self.obs_info["operation_kwargs"][j])
-                        if feature is None or (isinstance(feature, (float, int)) and np.isnan(feature)):
-                            feature = np.nanmean(features) if not np.all(np.isnan(features)) else 0.0
+                    
+                    exp_idx = self.obs_info["experiment_idxs"][j]  
+                    subexp_idx = self.obs_info["subexperiment_idxs"][j]  
+                    operands_outputs = operands_outputs_dict.get((exp_idx, subexp_idx), None)  
+                    
+                    if operands_outputs is not None and not (isinstance(operands_outputs, dict) and operands_outputs == {"failed": True}):  
+                        if self.obs_info["data_types"][j] == "series" and self.obs_info["operations"][j] is None:  
+                            # Expand series into individual time points  
+                            series_data = operands_outputs[j][0]  
+                            for t_idx in range(len(series_data)):  
+                                features.append(series_data[t_idx])  
+                                series_indices.append((j, t_idx))  # Track original obs index and time index  
+                        else:  
+                            # Handle regular operations  
+                            if self.obs_info["operations"][j] is None:  
+                                feature = operands_outputs[j][0]  
+                            else:  
+                                func = self.operation_funcs_dict[self.obs_info["operations"][j]]  
+                                feature = func(*operands_outputs[j], **self.obs_info["operation_kwargs"][j])  
+    
+                                if feature is None or (isinstance(feature, (list, np.ndarray)) and 
+                                                       np.any([f is None or (isinstance(f, (float, int)) and 
+                                                                             np.isnan(f)) for f in feature])):
+                                    feature = np.nanmean(features) if not np.all(np.isnan(features)) else 0.0
 
-                        features.append(feature)
-                    else:
-                        # WARNING: using mean biases variance estimates (shrinks variance), underestimates sensitivity
-                        # TODO: come up with a better way to impute missing features
-                        # Append the mean of the current features (ignoring None) -> reduces variance and bias induces toward zero
-                        features.append(np.mean(features))
+                            features.append(feature)  
+                            series_indices.append((j, None))  # Not a series point  
+                    else:  
+                        features.append(np.mean(features) if features else 0)  
+                        series_indices.append((j, None)) 
 
                 local_outputs.append(features)
                 pbar.update(1)
@@ -786,6 +822,7 @@ class sobol_SA():
             outputs = [item for sublist in all_outputs for item in sublist]
             outputs = np.array(outputs)
             self._rank0_print(f"[MPI Rank 0] Gathered and flattened all outputs. Total outputs: {outputs.shape}")
+            self.series_indices = series_indices
             return outputs
         else:
             return None
@@ -801,19 +838,40 @@ class sobol_SA():
             outputs = outputs[:, np.newaxis]  # convert to (n_samples, 1)
 
         n_outputs = outputs.shape[1]
-        S1_all = np.zeros((n_outputs, self.num_params))
-        ST_all = np.zeros((n_outputs, self.num_params))
-        S2_all = np.zeros((n_outputs, self.num_params, self.num_params))
 
-        for i in range(n_outputs):
-            Si = sobol.analyze(self.problem, outputs[:,i], print_to_console=self.verbose)
-            S1_all[i, :] = Si['S1']
-            ST_all[i, :] = Si['ST']
-            S2_all[i, :] = np.array(Si['S2'])
+        # Group features by original observable  
+        obs_groups = {}  
+        for idx, (obs_idx, t_idx) in enumerate(self.series_indices):  
+            if obs_idx not in obs_groups:  
+                obs_groups[obs_idx] = []  
+            obs_groups[obs_idx].append(idx) 
 
-        return S1_all, ST_all, S2_all
+        # Calculate Sobol indices for each observable  
+        S1_all_dict = {}  
+        ST_all_dict = {}  
+        S2_all_dict = {}
+        
+        for obs_idx, feature_indices in obs_groups.items():  
+            obs_outputs = outputs[:, feature_indices]  
+            n_obs_outputs = obs_outputs.shape[1]  
+            
+            S1_obs = np.zeros((n_obs_outputs, self.num_params))  
+            ST_obs = np.zeros((n_obs_outputs, self.num_params))  
+            S2_obs = np.zeros((n_obs_outputs, self.num_params, self.num_params))  
+            
+            for i in range(n_obs_outputs):  
+                Si = sobol.analyze(self.problem, obs_outputs[:, i], print_to_console=self.verbose)  
+                S1_obs[i, :] = Si['S1']  
+                ST_obs[i, :] = Si['ST']  
+                S2_obs[i, :] = np.array(Si['S2'])  
+            
+            S1_all_dict[obs_idx] = S1_obs  
+            ST_all_dict[obs_idx] = ST_obs  
+            S2_all_dict[obs_idx] = S2_obs 
 
-    def plot_sobol_first_order_idx(self, S1_all, ST_all):
+        return S1_all_dict, ST_all_dict, S2_all_dict
+
+    def plot_sobol_first_order_idx_old(self, S1_all, ST_all):
 
         if self.rank !=0:
             return
@@ -851,7 +909,95 @@ class sobol_SA():
             plt.clf()
             plt.close()
 
-    def plot_sobol_S2_idx(self, S2_all):
+    def plot_sobol_first_order_idx(self, S1_all_dict, ST_all_dict):  
+        """  
+        Plot first-order and total-order Sobol indices for multiple outputs.  
+        Handles both regular observables and time-series data with overlaid parameters.  
+    
+        Parameters:  
+            S1_all_dict (dict): Dictionary mapping obs_idx to first-order Sobol indices  
+            ST_all_dict (dict): Dictionary mapping obs_idx to total-order Sobol indices  
+        """  
+        if self.rank != 0:  
+            return  
+        
+        for obs_idx, S1_obs in S1_all_dict.items():  
+            obs_name = self.obs_info['names_for_plotting'][obs_idx]  
+            
+            # Check if this is a series with null operation  
+            if self.obs_info["data_types"][obs_idx] == "series" and self.obs_info["operations"][obs_idx] is None:  
+                # Time-series plotting with overlaid parameters  
+                n_time_points = S1_obs.shape[0]  
+                obs_dt = self.obs_info["obs_dt"][obs_idx] if "obs_dt" in self.obs_info else 0.01  
+                time_array = np.arange(n_time_points) * obs_dt  
+                
+                # Create single figure with all parameters overlaid  
+                fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8))  
+                
+                # Plot first-order indices  
+                for param_idx in range(self.num_params):  
+                    ax1.plot(time_array, S1_obs[:, param_idx],   
+                            label=f'{self.SA_cfg["param_names"][param_idx]} (S1)',   
+                            linewidth=2, alpha=0.8)  
+                ax1.set_ylabel('First-Order Sensitivity')  
+                ax1.legend(bbox_to_anchor=(1.05, 1), loc='upper left')  
+                ax1.grid(True, alpha=0.3)  
+                
+                max_S1 = np.nanmax(S1_obs)
+                if np.isfinite(max_S1) and max_S1 > 0:
+                    ax1.set_ylim([-0.5, max_S1 * 1.1])
+                else:
+                    ax1.set_ylim([-0.5, 1])  # or another default range
+
+                # Plot total-order indices  
+                for param_idx in range(self.num_params):  
+                    ax2.plot(time_array, ST_all_dict[obs_idx][:, param_idx],   
+                            label=f'{self.SA_cfg["param_names"][param_idx]} (ST)',   
+                            linewidth=2, alpha=0.8)  
+                ax2.set_ylabel('Total-Order Sensitivity')  
+                ax2.set_xlabel('Time (s)')  
+                ax2.legend(bbox_to_anchor=(1.05, 1), loc='upper left')  
+                ax2.grid(True, alpha=0.3)  
+                
+                max_ST = np.nanmax(ST_all_dict[obs_idx])
+                if np.isfinite(max_ST) and max_ST > 0:
+                    ax2.set_ylim([-0.5, max_ST * 1.1])
+                else:
+                    ax2.set_ylim([-0.5, 1])  # or another default range
+                
+                plt.suptitle(f'Time-Series Sobol Sensitivity - {obs_name}', fontsize=14, fontweight='bold')  
+                plt.tight_layout()  
+                
+                filename = f"{obs_name}_time_series_sensitivity_n{self.num_samples}.png"  
+                plt.savefig(os.path.join(self.save_path, filename), dpi=150, bbox_inches='tight')  
+                plt.clf()  
+                plt.close()  
+                
+            else:  
+                # Regular bar plot for non-series observables  
+                S1 = S1_obs[0] if S1_obs.ndim > 1 else S1_obs  
+                ST = ST_all_dict[obs_idx][0] if ST_all_dict[obs_idx].ndim > 1 else ST_all_dict[obs_idx]  
+                
+                x = np.arange(self.num_params)  
+                fig_width = max(12, 1.0 * len(self.SA_cfg["param_names"]))  
+                plt.figure(figsize=(fig_width, 6))  
+                
+                plt.bar(x - 0.2, S1, width=0.4, label='First-order', color='blue', alpha=0.7)  
+                plt.bar(x + 0.2, ST, width=0.4, label='Total-order', color='red', alpha=0.7)  
+                
+                plt.xticks(x, self.SA_cfg["param_names"], rotation=45, fontsize=10)  
+                plt.ylabel('Sensitivity Index')  
+                plt.title(f'Sobol Sensitivity - {obs_name}')  
+                plt.legend()  
+                plt.grid(True, alpha=0.3)  
+                plt.tight_layout()  
+                
+                filename = f"{obs_name}_n{self.num_samples}_First_order_idx.png"  
+                plt.savefig(os.path.join(self.save_path, filename), dpi=150, bbox_inches='tight')  
+                plt.clf()  
+                plt.close()
+    
+    def plot_sobol_S2_idx_old(self, S2_all):
         """
         Plot second-order Sobol interaction indices for multiple outputs.
 
@@ -878,49 +1024,75 @@ class sobol_SA():
             plt.savefig(os.path.join(self.save_path, filename))
             plt.clf()
             plt.close()
-
-    def get_sobol_output_labels(self, num_labels):
-        """
-        Generates a list of output labels for Sobol sensitivity analysis plots.
-
-        Labels are generated based on whether plotting information exists in self.obs_info
-        
-        Args:
-            self (object): The instance containing the obs_info dictionary.
-            sobol_indices (np.ndarray): Array used for determining the number of labels.
-            S1_all (np.ndarray): Array used for determining the number of labels (often has same shape as sobol_indices).
-
-        Returns:
-            list: A list of formatted label strings.
-        """
-        
-        end_range = num_labels
-
-        has_plotting_info = (
-            hasattr(self, "obs_info") and 
-            self.obs_info and 
-            "names_for_plotting" in self.obs_info
-        )
-        
-        if has_plotting_info:
-            # Use a rich label format with experimental details
-            def generate_label(i):
-                name = self.obs_info['names_for_plotting'][i]
-                # Use .get() with a default for slightly more robustness
-                exp_idx = self.obs_info.get('experiment_idxs', ['?'])[i]
-                sub_idx = self.obs_info.get('subexperiment_idxs', ['?'])[i]
-                # The rf"..." is used to render text as LaTeX/Math Text
-                return rf"{name} (Exp{exp_idx}, Sub{sub_idx})"
-        else:
-            # Use a generic label format
-            def generate_label(i):
-                return f"feature_{i}"
-
-        output_labels = [generate_label(i) for i in range(end_range)]
-            
-        return output_labels
     
-    def plot_sobol_heatmap(self, S1_all, ST_all):
+    def plot_sobol_S2_idx(self, S2_all_dict):  
+        """  
+        Plot second-order Sobol interaction indices for multiple outputs.  
+        Handles both regular observables and time-series data.  
+    
+        Parameters:  
+            S2_all_dict (dict): Dictionary mapping obs_idx to second-order Sobol indices  
+        """  
+        if self.rank != 0:  
+            return  
+        
+        for obs_idx, S2_obs in S2_all_dict.items():  
+            obs_name = self.obs_info['names_for_plotting'][obs_idx]  
+            
+            # Check if this is a series with null operation  
+            if self.obs_info["data_types"][obs_idx] == "series" and self.obs_info["operations"][obs_idx] is None:  
+                # Time-series second-order plotting  
+                n_time_points = S2_obs.shape[0]  
+                obs_dt = self.obs_info["obs_dt"][obs_idx] if "obs_dt" in self.obs_info else 0.01  
+                time_array = np.arange(n_time_points) * obs_dt  
+                
+                # Create heatmap animation or multiple subplots for key time points  
+                # Option 1: Plot at selected time points  
+                n_plots = min(4, n_time_points)  # Plot up to 4 time points  
+                time_indices = np.linspace(0, n_time_points-1, n_plots, dtype=int)  
+                
+                fig, axes = plt.subplots(1, n_plots, figsize=(5*n_plots, 4))  
+                if n_plots == 1:  
+                    axes = [axes]  
+                
+                for plot_idx, t_idx in enumerate(time_indices):  
+                    S2_at_t = S2_obs[t_idx]  
+                    sns.heatmap(S2_at_t, annot=True, fmt=".2f",   
+                            xticklabels=self.SA_cfg["param_names"],   
+                            yticklabels=self.SA_cfg["param_names"],   
+                            cmap="coolwarm", center=0,  
+                            ax=axes[plot_idx], vmin=-0.1, vmax=0.5)  
+                    axes[plot_idx].set_title(f't = {time_array[t_idx]:.2f}s')  
+                
+                plt.suptitle(f'Time-Series 2nd Order Sobol Indices - {obs_name}', fontsize=14, fontweight='bold')  
+                plt.tight_layout()  
+                
+                filename = f"{obs_name}_time_series_2nd_order_n{self.num_samples}.png"  
+                plt.savefig(os.path.join(self.save_path, filename), dpi=150, bbox_inches='tight')  
+                plt.clf()  
+                plt.close()  
+                
+            else:  
+                # Regular heatmap for non-series observables  
+                S2 = S2_obs[0] if S2_obs.ndim > 2 else S2_obs  
+                
+                fig_width = max(8, 1.0 * len(self.SA_cfg["param_names"]))  
+                plt.figure(figsize=(fig_width, fig_width))  
+                
+                sns.heatmap(S2, annot=True, fmt=".2f",   
+                        xticklabels=self.SA_cfg["param_names"],   
+                        yticklabels=self.SA_cfg["param_names"],   
+                        cmap="coolwarm", center=0, vmin=-0.1, vmax=0.5)  
+                
+                plt.title(f"2nd Order Sobol Indices - {obs_name}")  
+                plt.tight_layout()  
+                
+                filename = f"{obs_name}_n{self.num_samples}_2nd_order_idx.png"  
+                plt.savefig(os.path.join(self.save_path, filename), dpi=150, bbox_inches='tight')  
+                plt.clf()  
+                plt.close()
+
+    def plot_sobol_heatmap_old(self, S1_all, ST_all):
         
         if self.rank != 0:
             return
@@ -941,7 +1113,7 @@ class sobol_SA():
         print("\nGenerating Sobol Index Heatmaps...")
         
         # 1. Define Axis Labels
-        output_labels = self.get_sobol_output_labels(S1_all.shape[0])
+        output_labels = self.generate_output_labels()
 
         param_labels = [rf"${name}$" for name in self.param_id_info["param_names_for_plotting"]]
 
@@ -990,7 +1162,196 @@ class sobol_SA():
         create_heatmap(S1_heatmap_data, 'First-Order ($S_1$)')
         create_heatmap(ST_heatmap_data, 'Total-Order ($S_T$)')
 
-    def save_sobol_indices(self, S1_all, ST_all, S2_all):
+    def plot_sobol_heatmap(self, S1_all_dict, ST_all_dict):  
+        """  
+        Generates 2D heatmaps for first-order (S1) and total-order (ST) Sobol indices  
+        for NON-SERIES outputs only, using dictionary inputs.  
+        
+        The heatmaps show:  
+        Y-axis: Input Parameters (self.SA_cfg["param_names"])  
+        X-axis: Model Outputs (all non-series features concatenated)  
+        Color: Sobol Index Value  
+        
+        Parameters:  
+            S1_all_dict (dict): Dictionary mapping obs_idx to first-order Sobol indices  
+            ST_all_dict (dict): Dictionary mapping obs_idx to total-order Sobol indices  
+        """  
+        
+        if self.rank != 0:  
+            return  
+        
+        print("\nGenerating Sobol Index Heatmaps for Non-Series Outputs...")  
+        
+        # Filter out series data items and collect non-series features  
+        non_series_indices = []  
+        non_series_output_labels = []  
+        non_series_S1_list = []  
+        non_series_ST_list = []  
+        
+        for obs_idx in S1_all_dict.keys():  
+            # Skip series data with null operation  
+            if not (self.obs_info["data_types"][obs_idx] == "series" and   
+                    self.obs_info["operations"][obs_idx] is None):  
+                
+                # Get the Sobol indices for this observable  
+                S1_obs = S1_all_dict[obs_idx]  
+                ST_obs = ST_all_dict[obs_idx]  
+                
+                # For non-series data, we expect single values (not time series)  
+                if S1_obs.ndim > 1:  
+                    # If it's multi-dimensional, take the first (or mean) value  
+                    S1_values = S1_obs[0] if S1_obs.shape[0] == 1 else np.mean(S1_obs, axis=0)  
+                    ST_values = ST_obs[0] if ST_obs.shape[0] == 1 else np.mean(ST_obs, axis=0)  
+                else:  
+                    S1_values = S1_obs  
+                    ST_values = ST_obs  
+                
+                non_series_indices.append(obs_idx)  
+                non_series_S1_list.append(S1_values)  
+                non_series_ST_list.append(ST_values)  
+                
+                # Create output label with operation info  
+                obs_name = self.obs_info['names_for_plotting'][obs_idx]  
+                exp_idx = self.obs_info["experiment_idxs"][obs_idx]  
+                subexp_idx = self.obs_info["subexperiment_idxs"][obs_idx]  
+                
+                operation = self.obs_info["operations"][obs_idx]  
+                if operation is None:  
+                    feature_label = f"{obs_name}_exp{exp_idx}_sub{subexp_idx}"  
+                else:  
+                    feature_label = f"{obs_name}({operation})_exp{exp_idx}_sub{subexp_idx}"  
+                
+                non_series_output_labels.append(feature_label)  
+        
+        if len(non_series_indices) == 0:  
+            print("No non-series outputs found for heatmap generation.")  
+            return  
+        
+        # Concatenate all non-series features  
+        S1_non_series = np.vstack(non_series_S1_list)  
+        ST_non_series = np.vstack(non_series_ST_list)  
+        
+        # Define axis labels  
+        param_labels = [rf"${name}$" for name in self.param_id_info["param_names_for_plotting"]]  
+        
+        # Current shape: (n_outputs, n_params) -> Desired shape: (n_params, n_outputs)  
+        S1_heatmap_data = S1_non_series.T  
+        ST_heatmap_data = ST_non_series.T  
+        
+        # Define the title prefix  
+        title_prefix = f"Sobol Indices (N={self.num_samples*(self.num_params+2)})"  
+        
+        def create_heatmap(data, index_type, output_labels):  
+            df_data = pd.DataFrame(data, index=param_labels, columns=output_labels)  
+            
+            fig_width = max(10, len(output_labels) * 0.5)   
+            fig_height = max(6, len(param_labels) * 0.5)  
+            
+            plt.figure(figsize=(fig_width, fig_height))  
+            
+            sns.heatmap(  
+                df_data,  
+                annot=True,  
+                fmt=".2f",  
+                cmap="viridis",  
+                linewidths=0.5,  
+                linecolor='lightgray',  
+                cbar_kws={'label': f'{index_type} Index Value'}  
+            )  
+            
+            plt.title(f'{title_prefix} - {index_type} (Non-Series Only)', fontsize=14)  
+            plt.xlabel('Model Output Features', fontsize=12)  
+            plt.ylabel('Input Parameters', fontsize=12)  
+            
+            plt.xticks(rotation=45, ha='right', fontsize=8)   
+            plt.yticks(rotation=0, fontsize=8)   
+            
+            plt.tight_layout()  
+            
+            file_name = f"{index_type.replace('-', '_')}_Non_Series_Sobol_Heatmap.png"  
+            save_path = os.path.join(self.save_path, file_name)  
+            plt.savefig(save_path, bbox_inches='tight', dpi=300)  
+            plt.close()  
+            print(f"Saved {index_type} non-series heatmap to {save_path}")  
+        
+        create_heatmap(S1_heatmap_data, 'First-Order ($S_1$)', non_series_output_labels)  
+        create_heatmap(ST_heatmap_data, 'Total-Order ($S_T$)', non_series_output_labels)
+        
+    def plot_time_series_summary(self, S1_all_dict, ST_all_dict):  
+        """  
+        Create summary plots showing sensitivity over time for all series observables  
+        with all parameters overlaid in single figures.  
+        
+        Parameters:  
+            S1_all_dict (dict): Dictionary mapping obs_idx to first-order Sobol indices  
+            ST_all_dict (dict): Dictionary mapping obs_idx to total-order Sobol indices  
+        """  
+        if self.rank != 0:  
+            return  
+        
+        # Find all series observables  
+        series_obs = [idx for idx in S1_all_dict.keys()   
+                    if self.obs_info["data_types"][idx] == "series"   
+                    and self.obs_info["operations"][idx] is None]  
+        
+        if not series_obs:  
+            return  
+        
+        # Create summary plots - one for first-order, one for total-order  
+        fig1, ax1 = plt.subplots(figsize=(14, 8))  
+        fig2, ax2 = plt.subplots(figsize=(14, 8))  
+        
+        # Plot first-order sensitivities  
+        for obs_idx in series_obs:  
+            obs_name = self.obs_info['names_for_plotting'][obs_idx]  
+            S1_obs = S1_all_dict[obs_idx]  
+            
+            obs_dt = self.obs_info["obs_dt"][obs_idx] if "obs_dt" in self.obs_info else 0.01  
+            time_array = np.arange(S1_obs.shape[0]) * obs_dt  
+            
+            # Plot average sensitivity across all parameters for this observable  
+            avg_sensitivity = np.mean(S1_obs, axis=1)  
+            ax1.plot(time_array, avg_sensitivity,   
+                    label=f'{obs_name} (avg)', linewidth=2, alpha=0.8)  
+        
+        ax1.set_xlabel('Time (s)')  
+        ax1.set_ylabel('Average First-Order Sensitivity')  
+        ax1.set_title('Time-Series First-Order Sensitivity Summary (All Observables)')  
+        ax1.legend(bbox_to_anchor=(1.05, 1), loc='upper left')  
+        ax1.grid(True, alpha=0.3)  
+        plt.tight_layout()  
+        
+        filename = f"time_series_first_order_summary_n{self.num_samples}.png"  
+        plt.savefig(os.path.join(self.save_path, filename), dpi=150, bbox_inches='tight')  
+        plt.clf()  
+        plt.close()  
+        
+        # Plot total-order sensitivities  
+        for obs_idx in series_obs:  
+            obs_name = self.obs_info['names_for_plotting'][obs_idx]  
+            ST_obs = ST_all_dict[obs_idx]  
+            
+            obs_dt = self.obs_info["obs_dt"][obs_idx] if "obs_dt" in self.obs_info else 0.01  
+            time_array = np.arange(ST_obs.shape[0]) * obs_dt  
+            
+            # Plot average sensitivity across all parameters for this observable  
+            avg_sensitivity = np.mean(ST_obs, axis=1)  
+            ax2.plot(time_array, avg_sensitivity,   
+                    label=f'{obs_name} (avg)', linewidth=2, alpha=0.8)  
+        
+        ax2.set_xlabel('Time (s)')  
+        ax2.set_ylabel('Average Total-Order Sensitivity')  
+        ax2.set_title('Time-Series Total-Order Sensitivity Summary (All Observables)')  
+        ax2.legend(bbox_to_anchor=(1.05, 1), loc='upper left')  
+        ax2.grid(True, alpha=0.3)  
+        plt.tight_layout()  
+        
+        filename = f"time_series_total_order_summary_n{self.num_samples}.png"  
+        plt.savefig(os.path.join(self.save_path, filename), dpi=150, bbox_inches='tight')  
+        plt.clf()  
+        plt.close()
+            
+    def save_sobol_indices_old(self, S1_all, ST_all, S2_all):
         if self.rank != 0:
             return
 
@@ -1045,7 +1406,283 @@ class sobol_SA():
         df_S2.index.name = "Parameter"
         file_name_S2 = f"all_outputs_n{self.num_samples}_Sobol_2nd_order_indices.csv"
         df_S2.to_csv(os.path.join(self.save_path, file_name_S2))
+
+    def save_sobol_indices(self, S1_all_dict, ST_all_dict, S2_all_dict):  
+        """  
+        Save all Sobol indices to single CSV files (one for S1/ST, one for S2).  
+        Filters out series data and concatenates non-series features.  
         
+        Parameters:  
+            S1_all_dict (dict): Dictionary mapping obs_idx to first-order Sobol indices  
+            ST_all_dict (dict): Dictionary mapping obs_idx to total-order Sobol indices  
+            S2_all_dict (dict): Dictionary mapping obs_idx to second-order Sobol indices  
+        """  
+        
+        if self.rank != 0:  
+            return  
+        
+        print("\nSaving Sobol Indices for Non-Series Outputs...")  
+        
+        # Filter out series data items and collect non-series features  
+        non_series_indices = []  
+        non_series_output_labels = []  
+        non_series_S1_list = []  
+        non_series_ST_list = []  
+        non_series_S2_list = []  
+        
+        for obs_idx in S1_all_dict.keys():  
+            # Skip series data with null operation  
+            if not (self.obs_info["data_types"][obs_idx] == "series" and   
+                    self.obs_info["operations"][obs_idx] is None):  
+                
+                # Get the Sobol indices for this observable  
+                S1_obs = S1_all_dict[obs_idx]  
+                ST_obs = ST_all_dict[obs_idx]  
+                S2_obs = S2_all_dict[obs_idx]  
+                
+                # For non-series data, we expect single values (not time series)  
+                if S1_obs.ndim > 1:  
+                    # If it's multi-dimensional, take the first (or mean) value  
+                    S1_values = S1_obs[0] if S1_obs.shape[0] == 1 else np.mean(S1_obs, axis=0)  
+                    ST_values = ST_obs[0] if ST_obs.shape[0] == 1 else np.mean(ST_obs, axis=0)  
+                    S2_values = S2_obs[0] if S2_obs.shape[0] == 1 else np.mean(S2_obs, axis=0)  
+                else:  
+                    S1_values = S1_obs  
+                    ST_values = ST_obs  
+                    S2_values = S2_obs  
+                
+                non_series_indices.append(obs_idx)  
+                non_series_S1_list.append(S1_values)  
+                non_series_ST_list.append(ST_values)  
+                non_series_S2_list.append(S2_values)  
+                
+                # Create output label with operation info  
+                obs_name = self.obs_info['names_for_plotting'][obs_idx]  
+                exp_idx = self.obs_info["experiment_idxs"][obs_idx]  
+                subexp_idx = self.obs_info["subexperiment_idxs"][obs_idx]  
+                
+                operation = self.obs_info["operations"][obs_idx]  
+                if operation is None:  
+                    feature_label = f"{obs_name}_exp{exp_idx}_sub{subexp_idx}"  
+                else:  
+                    feature_label = f"{obs_name}({operation})_exp{exp_idx}_sub{subexp_idx}"  
+                
+                non_series_output_labels.append(feature_label)  
+        
+        if len(non_series_indices) == 0:  
+            print("No non-series outputs found for saving Sobol indices.")  
+            return  
+        
+        # Concatenate all non-series features  
+        S1_non_series = np.vstack(non_series_S1_list)  
+        ST_non_series = np.vstack(non_series_ST_list)  
+        S2_non_series = np.stack(non_series_S2_list, axis=0)  
+        
+        n_outputs = len(non_series_output_labels)  
+        param_names = self.SA_cfg["param_names"]  
+        
+        # --- Save S1/ST indices ---  
+        df_Sobol = pd.DataFrame({'Parameter': param_names})  
+        for i, out_name in enumerate(non_series_output_labels):  
+            df_Sobol[f"S1_{out_name}"] = S1_non_series[i]  
+            df_Sobol[f"ST_{out_name}"] = ST_non_series[i]  
+        
+        file_name = f"non_series_outputs_n{self.num_samples}_Sobol_indices.csv"  
+        save_path = os.path.join(self.save_path, file_name)  
+        df_Sobol.to_csv(save_path, index=False)  
+        print(f"Saved S1/ST indices to {save_path}")  
+        
+        # --- Save S2 indices ---  
+        # For each output, flatten S2 into a DataFrame with MultiIndex columns  
+        s2_dict = {}  
+        for i, out_name in enumerate(non_series_output_labels):  
+            # S2_non_series[i]: (n_params, n_params)  
+            s2_flat = pd.DataFrame(  
+                S2_non_series[i],  
+                index=param_names,  
+                columns=param_names  
+            )  
+            # Rename columns to include output name  
+            s2_flat.columns = [f"{out_name}__{col}" for col in s2_flat.columns]  
+            s2_dict[out_name] = s2_flat  
+        
+        # Concatenate all S2 DataFrames horizontally  
+        df_S2 = pd.concat([s2_dict[out_name] for out_name in non_series_output_labels], axis=1)  
+        df_S2.index.name = "Parameter"  
+        
+        file_name_S2 = f"non_series_outputs_n{self.num_samples}_Sobol_2nd_order_indices.csv"  
+        save_path_S2 = os.path.join(self.save_path, file_name_S2)  
+        df_S2.to_csv(save_path_S2)  
+        print(f"Saved S2 indices to {save_path_S2}")
+
+    def save_sobol_indices_series(self, S1_all_dict, ST_all_dict, S2_all_dict):  
+        """  
+        Save Sobol indices for series outputs to separate files.  
+        Each series observable gets its own set of files with time evolution.  
+        
+        Parameters:  
+            S1_all_dict (dict): Dictionary mapping obs_idx to first-order Sobol indices  
+            ST_all_dict (dict): Dictionary mapping obs_idx to total-order Sobol indices    
+            S2_all_dict (dict): Dictionary mapping obs_idx to second-order Sobol indices  
+        """  
+        
+        if self.rank != 0:  
+            return  
+        
+        print("\nSaving Sobol Indices for Series Outputs...")  
+        
+        # Filter series data items (data_type == "series" and operation is None)  
+        series_indices = []  
+        series_output_labels = []  
+        
+        for obs_idx in S1_all_dict.keys():  
+            if self.obs_info["data_types"][obs_idx] == "series" and \
+            self.obs_info["operations"][obs_idx] is None:  
+                
+                series_indices.append(obs_idx)  
+                
+                # Create output label  
+                obs_name = self.obs_info['names_for_plotting'][obs_idx]  
+                exp_idx = self.obs_info["experiment_idxs"][obs_idx]  
+                subexp_idx = self.obs_info["subexperiment_idxs"][obs_idx]  
+                label = f"{obs_name}_exp{exp_idx}_sub{subexp_idx}"  
+                series_output_labels.append(label)  
+        
+        if len(series_indices) == 0:  
+            print("No series outputs found for saving Sobol indices.")  
+            return  
+        
+        # Save each series observable separately  
+        for i, obs_idx in enumerate(series_indices):  
+            obs_label = series_output_labels[i]  
+            
+            # Get indices for this observable  
+            S1_obs = S1_all_dict[obs_idx]  
+            ST_obs = ST_all_dict[obs_idx]  
+            S2_obs = S2_all_dict[obs_idx]  
+            
+            # Create time array  
+            obs_dt = self.obs_info["obs_dt"][obs_idx] if "obs_dt" in self.obs_info else 0.01  
+            n_time_points = S1_obs.shape[0]  
+            time_array = np.arange(n_time_points) * obs_dt  
+            
+            # --- Save S1/ST indices with time ---  
+            df_s1_st = pd.DataFrame({  
+                'Time_s': time_array,  
+            })  
+            
+            # Add S1 and ST columns for each parameter  
+            param_names = self.SA_cfg["param_names"]  
+            for j, param_name in enumerate(param_names):  
+                df_s1_st[f'S1_{param_name}'] = S1_obs[:, j]  
+                df_s1_st[f'ST_{param_name}'] = ST_obs[:, j]  
+            
+            file_name_s1_st = f"{obs_label}_series_n{self.num_samples}_Sobol_indices.csv"  
+            save_path = os.path.join(self.save_path, file_name_s1_st)  
+            df_s1_st.to_csv(save_path, index=False)  
+            print(f"Saved S1/ST indices for {obs_label} to {save_path}")  
+            
+            # --- Save S2 indices (save as separate files for each time point or summary) ---  
+            # Option 1: Save S2 at key time points  
+            n_save_points = min(5, n_time_points)  # Save up to 5 time points  
+            time_indices = np.linspace(0, n_time_points-1, n_save_points, dtype=int)  
+            
+            for t_idx in time_indices:  
+                S2_at_t = S2_obs[t_idx]  
+                df_s2 = pd.DataFrame(S2_at_t, index=param_names, columns=param_names)  
+                df_s2.index.name = "Parameter"  
+                
+                time_str = f"t{time_array[t_idx]:.2f}s"  
+                file_name_s2 = f"{obs_label}_series_{time_str}_n{self.num_samples}_Sobol_2nd_order.csv"  
+                save_path_s2 = os.path.join(self.save_path, file_name_s2)  
+                df_s2.to_csv(save_path_s2)  
+            
+            print(f"Saved S2 indices for {obs_label} at {n_save_points} time points")  
+            
+            # Option 2: Save summary statistics across time  
+            S2_mean = np.mean(S2_obs, axis=0)  
+            S2_std = np.std(S2_obs, axis=0)  
+            
+            df_s2_summary = pd.DataFrame({  
+                'Parameter_1': [p1 for p1 in param_names for p2 in param_names],  
+                'Parameter_2': [p2 for p1 in param_names for p2 in param_names],  
+                'S2_Mean': S2_mean.flatten(),  
+                'S2_Std': S2_std.flatten()  
+            })  
+            
+            file_name_s2_summary = f"{obs_label}_series_summary_n{self.num_samples}_Sobol_2nd_order.csv"  
+            save_path_s2_summary = os.path.join(self.save_path, file_name_s2_summary)  
+            df_s2_summary.to_csv(save_path_s2_summary, index=False)  
+            print(f"Saved S2 summary for {obs_label} to {save_path_s2_summary}")
+
+    def generate_output_labels(self, num_outputs=None):
+            """
+            Generate output labels for plots, handling cases where the number of outputs
+            exceeds the number of names_for_plotting in obs_info.
+
+            Args:
+                num_outputs (int, optional): Number of outputs to generate labels for.
+                                            If None, uses length of names_for_plotting.
+
+            Returns:
+                list: List of output labels.
+            """
+            # Determine how many labels to generate
+            if num_outputs is None:
+                if hasattr(self, "obs_info") and "names_for_plotting" in self.obs_info:
+                    num_outputs = len(self.obs_info["names_for_plotting"])
+                else:
+                    num_outputs = 0
+
+            labels = []
+            for i in range(num_outputs):
+                if hasattr(self, "obs_info") and "names_for_plotting" in self.obs_info:
+                    # Use available names, else fallback to generic
+                    if i < len(self.obs_info["names_for_plotting"]):
+                        name = self.obs_info["names_for_plotting"][i]
+                        exp_idx = self.obs_info.get("experiment_idxs", [None]*num_outputs)[i] if "experiment_idxs" in self.obs_info else None
+                        sub_idx = self.obs_info.get("subexperiment_idxs", [None]*num_outputs)[i] if "subexperiment_idxs" in self.obs_info else None
+                        label = f"{name} (Exp{exp_idx}, Sub{sub_idx})"
+                    else:
+                        label = f"Output_{i}"
+                else:
+                    label = f"Output_{i}"
+                labels.append(label)
+            return labels    
+
+    def plot_sobol_param_trends(self, S1_all):
+        """
+        Plot line trends: x-axis = outputs, each line = parameter (showing S1 index vs. output).
+        Downsamples outputs to a maximum of 300 for clarity.
+        """
+        if self.rank != 0:
+            return
+
+        n_outputs, n_params = S1_all.shape
+        output_labels = self.generate_output_labels(n_outputs)
+        param_names = self.SA_cfg["param_names"]
+
+        # Downsample if too many outputs
+        max_outputs = 50
+        if n_outputs > max_outputs:
+            idxs = np.linspace(0, n_outputs - 1, max_outputs, dtype=int)
+            S1_all = S1_all[idxs, :]
+            output_labels = [output_labels[i] for i in idxs]
+            n_outputs = max_outputs
+
+        plt.figure(figsize=(min(64, max(16, n_outputs * 0.5)), 8))
+        for j in range(n_params):
+            plt.plot(output_labels, S1_all[:, j], marker='o', label=param_names[j], alpha=0.8)
+
+        plt.xlabel("Model Output")
+        plt.ylabel("First-order Sobol Index")
+        plt.title("Parameter Sensitivity Trends Across Outputs")
+        plt.xticks(rotation=45, ha='right', fontsize=8)
+        plt.legend(fontsize=8, ncol=2, bbox_to_anchor=(1.05, 1), loc='upper left')
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.save_path, "Sobol_ParamTrends_vs_Outputs.png"), dpi=300)
+        plt.close()
+
     def run(self):
         samples = self.generate_samples()
         if self.use_mpi:
