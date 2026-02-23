@@ -5,6 +5,7 @@
 
 import json
 import os
+from sklearn.utils import shuffle
 import sys
 from sys import exit
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
@@ -245,13 +246,6 @@ class sobol_SA():
             samples = saltelli.sample(problem, self.num_samples, calc_second_order=True)  # Enable second-order interactions
         elif self.SA_info["sample_type"] == "sobol":
             samples = sobol.sample(problem, self.num_samples, calc_second_order=True)  # Enable second-order interactions
-        elif self.SA_info["sample_type"] == "random":
-            # USE THIS FOR CMI HEATMAPS
-            samples = np.random.uniform(
-                low=self.SA_info["param_mins"], 
-                high=self.SA_info["param_maxs"], 
-                size=(self.num_samples, self.num_params)
-            )
         else:
             raise ValueError(f"Unsupported sample type: {self.SA_info['sample_type']}")
         
@@ -428,6 +422,7 @@ class sobol_SA():
                         # Append the mean of the current features (ignoring None) -> reduces variance and bias induces toward zero
                         features.append(np.mean(features))
 
+                # print(f"[MPI Rank {self.rank}] sample {param_vals}, features: {features}")
                 local_outputs.append(features)
                 pbar.update(1)
 
@@ -438,8 +433,18 @@ class sobol_SA():
 
         if self.rank == 0:
             outputs = [item for sublist in all_outputs for item in sublist]
-            print(outputs)
             outputs = np.array(outputs)
+
+            # # Flatten the list of lists
+            # flattened = [item for sublist in all_outputs for item in sublist]
+            
+            # # Sort by the global index to restore original order
+            # flattened.sort(key=lambda x: x[0])
+            
+            # # Extract just the features
+            # # outputs = np.array([features for idx, features in flattened])
+            # outputs = np.array(flattened)
+
             self._rank0_print(f"[MPI Rank 0] Gathered and flattened all outputs. Total outputs: {outputs.shape}")
             return outputs
         else:
@@ -726,146 +731,19 @@ class sobol_SA():
         file_name_S2 = f"all_outputs_n{self.num_samples}_Sobol_2nd_order_indices.csv"
         df_S2.to_csv(os.path.join(self.output_dir, file_name_S2))
         
-    def calculate_cmi_matrices_per_feature(self, p_samples, outputs):
-        """
-        Generates a list of matrices. 
-        Each matrix corresponds to an output feature y_k.
-        Cell (i, j) in the matrix is I(p_i; y_k | p_j).
-        """
-        n_samples, n_params = p_samples.shape
-        
-        # 1. Generate Y samples (n_samples, n_features)
-        y_raw = np.array(outputs)
-        if y_raw.ndim == 1: y_raw = y_raw.reshape(-1, 1)
-        n_features = y_raw.shape[1]
-
-        # Storage for the matrices: shape (n_features, n_params, n_params)
-        all_matrices = np.zeros((n_features, n_params, n_params))
-
-        print(f"Processing {n_features} features...")
-
-        for k in range(n_features):
-            yk = y_raw[:, k].reshape(-1, 1)
-            
-            for i in range(n_params):
-                pi = p_samples[:, i].reshape(-1, 1)
-                
-                for j in range(n_params):
-                    if i == j:
-                        # Diagonal: I(p_i; y_k) - standard Mutual Information
-                        all_matrices[k, i, j] = npeet.mi(pi, yk) * np.log(2)
-                    else:
-                        # Off-diagonal: I(p_i; y_k | p_j)
-                        pj = p_samples[:, j].reshape(-1, 1)
-                        all_matrices[k, i, j] = npeet.mi(pi, yk, z=pj) * np.log(2)
-            
-            print(f"Feature {k+1}/{n_features} complete.")
-
-        return all_matrices
-
-    # def calculate_cmi_matrices_per_feature(self, p_samples, y_raw):
-    #     n_samples, n_params = p_samples.shape
-    #     n_features = y_raw.shape[1] if y_raw.ndim > 1 else 1
-    #     if y_raw.ndim == 1: y_raw = y_raw.reshape(-1, 1)
-
-    #     all_matrices = np.zeros((n_features, n_params, n_params))
-
-    #     for k in range(n_features):
-    #         yk = y_raw[:, k].reshape(-1, 1)
-            
-    #         for i in range(n_params):
-    #             pi = p_samples[:, i].reshape(-1, 1)
-                
-    #             for j in range(i, n_params):  # Only calculate upper triangle
-    #                 if i == j:
-    #                     # Diagonal: Total sensitivity I(pi; yk)
-    #                     val = npeet.mi(pi, yk, k=10) * np.log(2)
-    #                 else:
-    #                     # Off-diagonal: CMI I(pi; yk | pj)
-    #                     pj = p_samples[:, j].reshape(-1, 1)
-    #                     val = npeet.mi(pi, yk, z=pj, k=10) * np.log(2)
-                    
-    #                 # Enforce Symmetry
-    #                 all_matrices[k, i, j] = val
-    #                 all_matrices[k, j, i] = val
-                    
-    #     return all_matrices
-    
-    def plot_cmi_feature_matrices(self, cmi_matrices):
-        """
-        Saves a 2D heatmap for each model output feature.
-        
-        Parameters:
-            cmi_matrices (np.ndarray): Shape (n_features, n_params, n_params)
-                                    where [k, i, j] is I(pi; yk | pj)
-        """
-        if self.rank != 0:
-            return
-
-        print("\nGenerating CMI Feature Heatmaps...")
-
-        # 1. Define Axis Labels
-        # Use your existing logic for output/param labels
-        output_labels = self.get_sobol_output_labels(cmi_matrices.shape[0])
-        param_labels = [rf"{name}" for name in self.param_id_info["param_names_for_plotting"]]
-
-        # Total samples used for NPEET estimation
-        title_prefix = f"CMI Dependency (N={self.num_samples})"
-
-        # 2. Iterate through each feature k
-        for k in range(cmi_matrices.shape[0]):
-            feature_data = cmi_matrices[k]
-            feature_name = output_labels[k]
-            
-            # Convert to DataFrame for easier plotting
-            df_data = pd.DataFrame(feature_data, index=param_labels, columns=param_labels)
-            
-            # Scaling figure size based on parameter count
-            fig_dim = max(8, len(param_labels) * 0.8)
-            plt.figure(figsize=(fig_dim, fig_dim * 0.8))
-            
-            sns.heatmap(
-                df_data,
-                annot=True,               
-                fmt=".3f",                # 3 decimals for MI is usually better
-                cmap="rocket",            # Different colormap to distinguish from Sobol
-                linewidths=0.5,           
-                linecolor='lightgray',
-                cbar_kws={'label': 'CMI (Nats)'}
-            )
-
-            plt.title(f'{title_prefix}\nFeature: {feature_name}', fontsize=14)
-            plt.xlabel('Conditioning Parameter ($p_j$)', fontsize=12)
-            plt.ylabel('Target Parameter ($p_i$)', fontsize=12)
-            
-            plt.xticks(rotation=45, ha='right', fontsize=9) 
-            plt.yticks(rotation=0, fontsize=9) 
-            
-            plt.tight_layout()
-            
-            # 3. Save following your specific naming convention
-            clean_feature_name = str(feature_name).replace(' ', '_').replace('/', '_')
-            file_name = f"CMI_Matrix_{clean_feature_name}.png"
-            save_path = os.path.join(self.output_dir, file_name)
-            
-            plt.savefig(save_path, bbox_inches='tight', dpi=300)
-            plt.close()
-            print(f"Saved CMI matrix for {feature_name} to {save_path}")
-
     def run(self):
-        samples = self.generate_samples()
+        if self.rank == 0:
+            samples = self.generate_samples()
+        else:
+            samples = None
+
+        samples = self.comm.bcast(samples, root=0)
+
         if self.use_mpi:
-            outputs = self.generate_outputs_mpi(samples)
+
+            outputs = self.generate_outputs_mpi(samples)            
             if self.rank == 0:
-                # S1_all, ST_all, S2_all = self.sobol_index(outputs)
-
-                # --- New CMI Analysis ---
-                # Call the calculation function we defined earlier
-                cmi_matrices = self.calculate_cmi_matrices_per_feature(samples, outputs)
-                
-                # Call the plotting function to save the results
-                self.plot_cmi_feature_matrices(cmi_matrices)
-
+                S1_all, ST_all, S2_all = self.sobol_index(outputs)
                 return S1_all, ST_all, S2_all
             else:
                 return None, None, None
