@@ -1,0 +1,1712 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<model xmlns="http://www.cellml.org/cellml/1.0#" xmlns:math="http://www.w3.org/1998/Math/MathML" name="beta_AR_signaling" xmlns:cellml="http://www.cellml.org/cellml/1.0#">
+    <component name="MG_demo_full_model_main_type">
+        <variable name="t" units="minute" public_interface="in" />
+        <variable name="RT" units="J_per_umolar" public_interface="in" />
+        
+        <variable name="q_R_init" units="umolar" public_interface="in" />
+        <variable name="R_syn" units="umolar_per_minute" public_interface="in" />
+        <variable name="v_Re1" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re1</ci>
+                <ci>R_syn</ci>
+            </apply>
+        </math>
+        
+        <variable name="k_dR" units="per_minute" public_interface="in" />
+        <variable name="k_eR" units="per_minute" public_interface="in" />
+        <variable name="v_Re2" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re2</ci>
+                <apply>
+                    <times />
+                    <apply>
+                        <plus />
+                        <ci>k_dR</ci>
+                        <ci>k_eR</ci>
+                    </apply>
+                    <ci>q_R</ci>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="q_L" units="umolar" public_interface="in" />
+        <variable name="q_RL_init" units="umolar" public_interface="in" />
+        <variable name="v_Re3" units="umolar_per_minute" public_interface="out" />
+        <variable name="k_RL" units="per_minute_umolar" public_interface="in" />
+        <variable name="k_RLf" units="per_minute" public_interface="in" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re3</ci>
+                <apply>
+                    <minus />
+                    <apply>
+                        <times />
+                        <ci>k_RL</ci>
+                        <ci>q_R</ci>
+                        <ci>q_L</ci>
+                    </apply>
+                    <apply>
+                        <times />
+                        <ci>k_RLf</ci>
+                        <ci>q_RL</ci>
+                    </apply>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="k_dRL" units="per_minute" public_interface="in" />
+        <variable name="v_Re4" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re4</ci>
+                <apply>
+                    <times />
+                    <apply>
+                        <plus />
+                        <ci>k_dRL</ci>
+                        <ci>k_eR</ci>
+                    </apply>
+                    <ci>q_RL</ci>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="q_Gai_GDP_Gby_init" units="umolar" public_interface="in" />
+        <variable name="q_R_Gai_GDP_Gby_init" units="umolar" public_interface="in" />
+        <variable name="k_RGi" units="per_minute_umolar" public_interface="in" />
+        <variable name="k_RGif" units="per_minute" public_interface="in" />
+        <variable name="v_Re5" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re5</ci>
+                <apply>
+                    <minus />
+                    <apply>
+                        <times />
+                        <ci>k_RGi</ci>
+                        <ci>q_R</ci>
+                        <ci>q_Gai_GDP_Gby</ci>
+                    </apply>
+                    <apply>
+                        <times />
+                        <ci>k_RGif</ci>
+                        <ci>q_R_Gai_GDP_Gby</ci>
+                    </apply>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="q_RL_Gai_GDP_Gby_init" units="umolar" public_interface="in" />
+        <variable name="k_RLGi" units="per_minute_umolar" public_interface="in" />
+        <variable name="k_RLGif" units="per_minute" public_interface="in" />
+        <variable name="v_Re6" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re6</ci>
+                <apply>
+                    <minus />
+                    <apply>
+                        <times />
+                        <ci>k_RLGi</ci>
+                        <ci>q_RL</ci>
+                        <ci>q_Gai_GDP_Gby</ci>
+                    </apply>
+                    <apply>
+                        <times />
+                        <ci>k_RLGif</ci>
+                        <ci>q_RL_Gai_GDP_Gby</ci>
+                    </apply>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="v_Re7" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re7</ci>
+                <apply>
+                    <minus />
+                    <apply>
+                        <times />
+                        <ci>k_RL</ci>
+                        <ci>q_R_Gai_GDP_Gby</ci>
+                        <ci>q_L</ci>
+                    </apply>
+                    <apply>
+                        <times />
+                        <ci>k_RLf</ci>
+                        <ci>q_RL_Gai_GDP_Gby</ci>
+                    </apply>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="q_Gas_GDP_Gby_init" units="umolar" public_interface="in" />
+        <variable name="q_R_Gas_GDP_Gby_init" units="umolar" public_interface="in" />
+        <variable name="k_RGs" units="per_minute_umolar" public_interface="in" />
+        <variable name="k_RGsf" units="per_minute" public_interface="in" />
+        <variable name="v_Re8" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re8</ci>
+                <apply>
+                    <minus />
+                    <apply>
+                        <times />
+                        <ci>k_RGs</ci>
+                        <ci>q_R</ci>
+                        <ci>q_Gas_GDP_Gby</ci>
+                    </apply>
+                    <apply>
+                        <times />
+                        <ci>k_RGsf</ci>
+                        <ci>q_R_Gas_GDP_Gby</ci>
+                    </apply>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="q_RL_Gas_GDP_Gby_init" units="umolar" public_interface="in" />
+        <variable name="k_RLGs" units="per_minute_umolar" public_interface="in" />
+        <variable name="k_RLGsf" units="per_minute" public_interface="in" />
+        <variable name="v_Re9" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re9</ci>
+                <apply>
+                    <minus />
+                    <apply>
+                        <times />
+                        <ci>k_RLGs</ci>
+                        <ci>q_RL</ci>
+                        <ci>q_Gas_GDP_Gby</ci>
+                    </apply>
+                    <apply>
+                        <times />
+                        <ci>k_RLGsf</ci>
+                        <ci>q_RL_Gas_GDP_Gby</ci>
+                    </apply>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="v_Re10" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re10</ci>
+                <apply>
+                    <minus />
+                    <apply>
+                        <times />
+                        <ci>k_RL</ci>
+                        <ci>q_R_Gas_GDP_Gby</ci>
+                        <ci>q_L</ci>
+                    </apply>
+                    <apply>
+                        <times />
+                        <ci>k_RLf</ci>
+                        <ci>q_RL_Gas_GDP_Gby</ci>
+                    </apply>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="v_Re11" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re11</ci>
+                <apply>
+                    <times />
+                    <ci>k_eR</ci>
+                    <ci>q_R_Gai_GDP_Gby</ci>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="v_Re12" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re12</ci>
+                <apply>
+                    <times />
+                    <ci>k_eR</ci>
+                    <ci>q_R_Gas_GDP_Gby</ci>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="v_Re13" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re13</ci>
+                <apply>
+                    <times />
+                    <ci>k_eR</ci>
+                    <ci>q_RL_Gai_GDP_Gby</ci>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="v_Re14" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re14</ci>
+                <apply>
+                    <times />
+                    <ci>k_eR</ci>
+                    <ci>q_RL_Gas_GDP_Gby</ci>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="q_Gby_init" units="umolar" public_interface="in" />
+        <variable name="q_Gai_GTP_init" units="umolar" public_interface="in" />
+        <variable name="k_RGia" units="per_minute" public_interface="in" />
+        <variable name="v_Re15" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re15</ci>
+                <apply>
+                    <times />
+                    <ci>k_RGia</ci>
+                    <ci>q_R_Gai_GDP_Gby</ci>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="k_RLGia" units="per_minute" public_interface="in" />
+        <variable name="v_Re16" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re16</ci>
+                <apply>
+                    <times />
+                    <ci>k_RLGia</ci>
+                    <ci>q_RL_Gai_GDP_Gby</ci>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="q_Gas_GTP_init" units="umolar" public_interface="in" />
+        <variable name="k_RGsa" units="per_minute" public_interface="in" />
+        <variable name="v_Re17" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re17</ci>
+                <apply>
+                    <times />
+                    <ci>k_RGsa</ci>
+                    <ci>q_R_Gas_GDP_Gby</ci>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="k_RLGsa" units="per_minute" public_interface="in" />
+        <variable name="v_Re18" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re18</ci>
+                <apply>
+                    <times />
+                    <ci>k_RLGsa</ci>
+                    <ci>q_RL_Gas_GDP_Gby</ci>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="q_Gai_GDP_init" units="umolar" public_interface="in" />
+        <variable name="k_Gd" units="per_minute" public_interface="in" />
+        <variable name="v_Re19" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re19</ci>
+                <apply>
+                    <times />
+                    <ci>k_Gd</ci>
+                    <ci>q_Gai_GTP</ci>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="q_Gas_GDP_init" units="umolar" public_interface="in" />
+        <variable name="v_Re20" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re20</ci>
+                <apply>
+                    <times />
+                    <ci>k_Gd</ci>
+                    <ci>q_Gas_GTP</ci>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="k_Gic" units="per_minute_umolar" public_interface="in" />
+        <variable name="k_Gicf" units="per_minute" public_interface="in" />
+        <variable name="v_Re21" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re21</ci>
+                <apply>
+                    <minus />
+                    <apply>
+                        <times />
+                        <ci>k_Gic</ci>
+                        <ci>q_Gby</ci>
+                        <ci>q_Gai_GDP</ci>
+                    </apply>
+                    <apply>
+                        <times />
+                        <ci>k_Gicf</ci>
+                        <ci>q_Gai_GDP_Gby</ci>
+                    </apply>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="k_Gsc" units="per_minute_umolar" public_interface="in" />
+        <variable name="k_Gscf" units="per_minute" public_interface="in" />
+        <variable name="v_Re22" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re22</ci>
+                <apply>
+                    <minus />
+                    <apply>
+                        <times />
+                        <ci>k_Gsc</ci>
+                        <ci>q_Gby</ci>
+                        <ci>q_Gas_GDP</ci>
+                    </apply>
+                    <apply>
+                        <times />
+                        <ci>k_Gscf</ci>
+                        <ci>q_Gas_GDP_Gby</ci>
+                    </apply>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="q_FSK" units="umolar" public_interface="in" />
+        <variable name="q_AC_FSK_init" units="umolar" public_interface="in" />
+        <variable name="k_AF" units="per_minute_umolar" public_interface="in" />
+        <variable name="k_AFf" units="per_minute" public_interface="in" />
+        <variable name="v_Re23" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re23</ci>
+                <apply>
+                    <minus />
+                    <apply>
+                        <times />
+                        <ci>k_AF</ci>
+                        <ci>q_AC</ci>
+                        <ci>q_FSK</ci>
+                    </apply>
+                    <apply>
+                        <times />
+                        <ci>k_AFf</ci>
+                        <ci>q_AC_FSK</ci>
+                    </apply>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="q_AC_init" units="umolar" public_interface="in" />
+        <variable name="q_AC_Gai_GTP_init" units="umolar" public_interface="in" />
+        <variable name="k_ACGi" units="per_minute_umolar" public_interface="in" />
+        <variable name="k_ACGif" units="per_minute" public_interface="in" />
+        <variable name="v_Re24" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re24</ci>
+                <apply>
+                    <minus />
+                    <apply>
+                        <times />
+                        <ci>k_ACGi</ci>
+                        <ci>q_Gai_GTP</ci>
+                        <ci>q_AC</ci>
+                    </apply>
+                    <apply>
+                        <times />
+                        <ci>k_ACGif</ci>
+                        <ci>q_AC_Gai_GTP</ci>
+                    </apply>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="q_AC_Gas_GTP_init" units="umolar" public_interface="in" />
+        <variable name="k_ACGs" units="per_minute_umolar" public_interface="in" />
+        <variable name="k_ACGsf" units="per_minute" public_interface="in" />
+        <variable name="v_Re25" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re25</ci>
+                <apply>
+                    <minus />
+                    <apply>
+                        <times />
+                        <ci>k_ACGs</ci>
+                        <ci>q_Gas_GTP</ci>
+                        <ci>q_AC</ci>
+                    </apply>
+                    <apply>
+                        <times />
+                        <ci>k_ACGsf</ci>
+                        <ci>q_AC_Gas_GTP</ci>
+                    </apply>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="q_AC_FSK_Gai_GTP_init" units="umolar" public_interface="in" />
+        <variable name="v_Re26" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re26</ci>
+                <apply>
+                    <minus />
+                    <apply>
+                        <times />
+                        <ci>k_ACGi</ci>
+                        <ci>q_AC_FSK</ci>
+                        <ci>q_Gai_GTP</ci>
+                    </apply>
+                    <apply>
+                        <times />
+                        <ci>k_ACGif</ci>
+                        <ci>q_AC_FSK_Gai_GTP</ci>
+                    </apply>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="q_AC_FSK_Gas_GTP_init" units="umolar" public_interface="in" />
+        <variable name="v_Re27" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re27</ci>
+                <apply>
+                    <minus />
+                    <apply>
+                        <times />
+                        <ci>k_ACGs</ci>
+                        <ci>q_AC_FSK</ci>
+                        <ci>q_Gas_GTP</ci>
+                    </apply>
+                    <apply>
+                        <times />
+                        <ci>k_ACGsf</ci>
+                        <ci>q_AC_FSK_Gas_GTP</ci>
+                    </apply>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="v_Re28" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re28</ci>
+                <apply>
+                    <minus />
+                    <apply>
+                        <times />
+                        <ci>k_AF</ci>
+                        <ci>q_AC_Gai_GTP</ci>
+                        <ci>q_FSK</ci>
+                    </apply>
+                    <apply>
+                        <times />
+                        <ci>k_AFf</ci>
+                        <ci>q_AC_FSK_Gai_GTP</ci>
+                    </apply>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="k_AGsF" units="per_minute_umolar" public_interface="in" />
+        <variable name="k_AGsFf" units="per_minute" public_interface="in" />
+        <variable name="v_Re29" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re29</ci>
+                <apply>
+                    <minus />
+                    <apply>
+                        <times />
+                        <ci>k_AGsF</ci>
+                        <ci>q_AC_Gas_GTP</ci>
+                        <ci>q_FSK</ci>
+                    </apply>
+                    <apply>
+                        <times />
+                        <ci>k_AGsFf</ci>
+                        <ci>q_AC_FSK_Gas_GTP</ci>
+                    </apply>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="q_AC_Gai_GTP_Gas_GTP_init" units="umolar" public_interface="in" />
+        <variable name="k_ACGiGs" units="per_minute_umolar" public_interface="in" />
+        <variable name="k_ACGiGsf" units="per_minute" public_interface="in" />
+        <variable name="v_Re30" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re30</ci>
+                <apply>
+                    <minus />
+                    <apply>
+                        <times />
+                        <ci>k_ACGiGs</ci>
+                        <ci>q_Gas_GTP</ci>
+                        <ci>q_AC_Gai_GTP</ci>
+                    </apply>
+                    <apply>
+                        <times />
+                        <ci>k_ACGiGsf</ci>
+                        <ci>q_AC_Gai_GTP_Gas_GTP</ci>
+                    </apply>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="q_AC_FSK_Gai_GTP_Gas_GTP_init" units="umolar" public_interface="in" />
+        <variable name="v_Re31" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re31</ci>
+                <apply>
+                    <minus />
+                    <apply>
+                        <times />
+                        <ci>k_ACGiGs</ci>
+                        <ci>q_AC_FSK_Gai_GTP</ci>
+                        <ci>q_Gas_GTP</ci>
+                    </apply>
+                    <apply>
+                        <times />
+                        <ci>k_ACGiGsf</ci>
+                        <ci>q_AC_FSK_Gai_GTP_Gas_GTP</ci>
+                    </apply>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="k_ACGsGi" units="per_minute_umolar" public_interface="in" />
+        <variable name="k_ACGsGif" units="per_minute" public_interface="in" />
+        <variable name="v_Re32" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re32</ci>
+                <apply>
+                    <minus />
+                    <apply>
+                        <times />
+                        <ci>k_ACGsGi</ci>
+                        <ci>q_Gai_GTP</ci>
+                        <ci>q_AC_Gas_GTP</ci>
+                    </apply>
+                    <apply>
+                        <times />
+                        <ci>k_ACGsGif</ci>
+                        <ci>q_AC_Gai_GTP_Gas_GTP</ci>
+                    </apply>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="v_Re33" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re33</ci>
+                <apply>
+                    <minus />
+                    <apply>
+                        <times />
+                        <ci>k_ACGsGi</ci>
+                        <ci>q_AC_FSK_Gas_GTP</ci>
+                        <ci>q_Gai_GTP</ci>
+                    </apply>
+                    <apply>
+                        <times />
+                        <ci>k_ACGsGif</ci>
+                        <ci>q_AC_FSK_Gai_GTP_Gas_GTP</ci>
+                    </apply>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="q_AC_FSK_Gai_GTP_Gs_GTP" units="umolar" public_interface="in" />
+        <variable name="v_Re34" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re34</ci>
+                <apply>
+                    <minus />
+                    <apply>
+                        <times />
+                        <ci>k_AGsF</ci>
+                        <ci>q_AC_Gai_GTP_Gas_GTP</ci>
+                        <ci>q_FSK</ci>
+                    </apply>
+                    <apply>
+                        <times />
+                        <ci>k_AGsFf</ci>
+                        <ci>q_AC_FSK_Gai_GTP_Gs_GTP</ci>
+                    </apply>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="q_ATP" units="umolar" public_interface="in" />
+        <variable name="q_cAMP_init" units="umolar" public_interface="in" />
+        <variable name="q_cAMP_inv" units="per_umolar" public_interface="out" />
+        <variable name="cAMP_sig" units="dim" public_interface="out" />
+        <variable name="cAMP_sig_inv" units="dim" public_interface="out" />
+        <variable name="k_cAMP" units="per_minute" public_interface="in" />
+        <variable name="r_AC" units="per_umolar" public_interface="in" />
+        <variable name="r_ACGi" units="per_umolar" public_interface="in" />
+        <variable name="r_ACGs" units="per_umolar" public_interface="in" />
+        <variable name="r_ACGiGs" units="per_umolar" public_interface="in" />
+        <variable name="r_ACFGiGs" units="per_umolar" public_interface="in" />
+        <variable name="r_ACFGs" units="per_umolar" public_interface="in" />
+        <variable name="r_ACFGi" units="per_umolar" public_interface="in" />
+        <variable name="r_ACF" units="per_umolar" public_interface="in" />
+        <variable name="v_Re35" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re35</ci>
+                <apply>
+                    <times />
+                    <ci>k_cAMP</ci>
+                    <apply>
+                        <plus />
+                        <apply>
+                            <times />
+                            <ci>r_AC</ci>
+                            <ci>q_AC</ci>
+                        </apply>
+                        <apply>
+                            <times />
+                            <ci>r_ACGi</ci>
+                            <ci>q_AC_Gai_GTP</ci>
+                        </apply>
+                        <apply>
+                            <times />
+                            <ci>r_ACGs</ci>
+                            <ci>q_AC_Gas_GTP</ci>
+                        </apply>
+                        <apply>
+                            <times />
+                            <ci>r_ACF</ci>
+                            <ci>q_AC_FSK</ci>
+                        </apply>
+                        <apply>
+                            <times />
+                            <ci>r_ACFGi</ci>
+                            <ci>q_AC_FSK_Gai_GTP</ci>
+                        </apply>
+                        <apply>
+                            <times />
+                            <ci>r_ACFGs</ci>
+                            <ci>q_AC_FSK_Gas_GTP</ci>
+                        </apply>
+                        <apply>
+                            <times />
+                            <ci>r_ACGiGs</ci>
+                            <ci>q_AC_Gai_GTP_Gas_GTP</ci>
+                        </apply>
+                        <apply>
+                            <times />
+                            <ci>r_ACFGiGs</ci>
+                            <ci>q_AC_FSK_Gai_GTP_Gas_GTP</ci>
+                        </apply>
+                    </apply>
+                    <ci>q_ATP</ci>
+                </apply>
+            </apply>
+        </math>
+        <variable name="Flur1" units="dim" public_interface="in" />
+        <variable name="BG1" units="dim" public_interface="in" />
+        <variable name="slope1" units="dim" public_interface="in" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>cAMP_sig</ci>
+                <apply>
+                    <plus />
+                    <apply>
+                        <times />
+                        <ci>q_cAMP</ci>
+                        <ci>Flur1</ci>
+                    </apply>
+                    <ci>BG1</ci>
+                    <apply>
+                        <times />
+                        <ci>slope1</ci>
+                        <ci>t</ci>
+                    </apply>
+                </apply>
+            </apply>
+            <apply>
+                <eq />
+                <ci>cAMP_sig_inv</ci>
+                <apply>
+                    <divide />
+                    <cn cellml:units="dim">1</cn>
+                    <ci>cAMP_sig</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq />
+                <ci>q_cAMP_inv</ci>
+                <apply>
+                    <divide />
+                    <cn cellml:units="dim">1</cn>
+                    <ci>q_cAMP</ci>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="k_ecAMP" units="per_minute" public_interface="in" />
+        <variable name="v_Re36" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re36</ci>
+                <apply>
+                    <times />
+                    <ci>k_ecAMP</ci>
+                    <ci>q_cAMP</ci>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="q_Gi_ribo_init" units="umolar" public_interface="in" />
+        <variable name="q_PTX" units="umolar" public_interface="in" />
+        <variable name="k_PTX" units="per_minute" public_interface="in" />
+        <variable name="v_Re37" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re37</ci>
+                <apply>
+                    <times />
+                    <ci>k_PTX</ci>
+                    <ci>q_PTX</ci>
+                    <ci>q_Gai_GDP</ci>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="v_Re38" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re38</ci>
+                <apply>
+                    <times />
+                    <ci>k_PTX</ci>
+                    <ci>q_PTX</ci>
+                    <ci>q_Gai_GDP_Gby</ci>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="v_Re39" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re39</ci>
+                <apply>
+                    <times />
+                    <ci>k_PTX</ci>
+                    <ci>q_PTX</ci>
+                    <ci>q_Gai_GTP</ci>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="D_syn" units="umolar_per_minute" public_interface="in" />
+        <variable name="v_Re40" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re40</ci>
+                <ci>D_syn</ci>
+            </apply>
+        </math>
+        
+        <variable name="k_dD" units="per_minute" public_interface="in" />
+        <variable name="k_eD" units="per_minute" public_interface="in" />
+        <variable name="q_D_init" units="umolar" public_interface="in" />
+        <variable name="v_Re41" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re41</ci>
+                <apply>
+                    <times />
+                    <apply>
+                        <plus />
+                        <ci>k_dD</ci>
+                        <ci>k_eD</ci>
+                    </apply>
+                    <ci>q_D</ci>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="q_Q" units="umolar" public_interface="in" />
+        <variable name="q_DQ_init" units="umolar" public_interface="in" />
+        <variable name="k_DQ" units="per_minute" public_interface="in" />
+        <variable name="k_DQf" units="per_minute" public_interface="in" />
+        <variable name="v_Re42" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re42</ci>
+                <apply>
+                    <minus />
+                    <apply>
+                        <times />
+                        <ci>k_DQ</ci>
+                        <ci>q_D</ci>
+                        <ci>q_Q</ci>
+                    </apply>
+                    <apply>
+                        <times />
+                        <ci>k_DQf</ci>
+                        <ci>q_DQ</ci>
+                    </apply>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="k_dDQ" units="per_minute" public_interface="in" />
+        <variable name="v_Re43" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re43</ci>
+                <apply>
+                    <times />
+                    <apply>
+                        <plus />
+                        <ci>k_dDQ</ci>
+                        <ci>k_eD</ci>
+                    </apply>
+                    <ci>q_DQ</ci>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="q_D_Gai_GDP_Gby_init" units="umolar" public_interface="in" />
+        <variable name="k_DGi" units="per_minute" public_interface="in" />
+        <variable name="k_DGif" units="per_minute" public_interface="in" />
+        <variable name="v_Re44" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re44</ci>
+                <apply>
+                    <minus />
+                    <apply>
+                        <times />
+                        <ci>k_DGi</ci>
+                        <ci>q_D</ci>
+                        <ci>q_Gai_GDP_Gby</ci>
+                    </apply>
+                    <apply>
+                        <times />
+                        <ci>k_DGif</ci>
+                        <ci>q_D_Gai_GDP_Gby</ci>
+                    </apply>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="q_DQ_Gai_GDP_Gby_init" units="umolar" public_interface="in" />
+        <variable name="k_DQGi" units="per_minute" public_interface="in" />
+        <variable name="k_DQGif" units="per_minute" public_interface="in" />
+        <variable name="v_Re45" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re45</ci>
+                <apply>
+                    <minus />
+                    <apply>
+                        <times />
+                        <ci>k_DQGi</ci>
+                        <ci>q_DQ</ci>
+                        <ci>q_Gai_GDP_Gby</ci>
+                    </apply>
+                    <apply>
+                        <times />
+                        <ci>k_DQGif</ci>
+                        <ci>q_DQ_Gai_GDP_Gby</ci>
+                    </apply>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="v_Re46" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re46</ci>
+                <apply>
+                    <minus />
+                    <apply>
+                        <times />
+                        <ci>k_DQ</ci>
+                        <ci>q_D_Gai_GDP_Gby</ci>
+                        <ci>q_D</ci>
+                    </apply>
+                    <apply>
+                        <times />
+                        <ci>k_DQf</ci>
+                        <ci>q_DQ_Gai_GDP_Gby</ci>
+                    </apply>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="v_Re47" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re47</ci>
+                <apply>
+                    <times />
+                    <ci>k_eD</ci>
+                    <ci>q_D_Gai_GDP_Gby</ci>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="v_Re48" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re48</ci>
+                <apply>
+                    <times />
+                    <ci>k_eD</ci>
+                    <ci>q_DQ_Gai_GDP_Gby</ci>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="k_DGia" units="per_minute" public_interface="in" />
+        <variable name="v_Re49" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re49</ci>
+                <apply>
+                    <times />
+                    <ci>k_DGia</ci>
+                    <ci>q_D_Gai_GDP_Gby</ci>
+                </apply>
+            </apply>
+        </math>
+        
+        <variable name="k_DQGia" units="per_minute" public_interface="in" />
+        <variable name="v_Re50" units="umolar_per_minute" public_interface="out" />
+        <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+                <eq />
+                <ci>v_Re50</ci>
+                <apply>
+                    <times />
+                    <ci>k_DQGia</ci>
+                    <ci>q_DQ_Gai_GDP_Gby</ci>
+                </apply>
+            </apply>
+            
+            <apply>
+                <eq />
+                <apply>
+                    <diff />
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>q_R</ci>
+                </apply>
+                <apply>
+                    <plus />
+                    <apply>
+                        <minus />
+                        <apply>
+                            <minus />
+                            <apply>
+                                <minus />
+                                <apply>
+                                    <minus />
+                                    <ci>v_Re1</ci>
+                                    <ci>v_Re2</ci>
+                                </apply>
+                                <ci>v_Re3</ci>
+                            </apply>
+                            <ci>v_Re5</ci>
+                        </apply>
+                        <ci>v_Re8</ci>
+                    </apply>
+                    <ci>v_Re15</ci>
+                    <ci>v_Re17</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq />
+                <apply>
+                    <diff />
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>q_RL</ci>
+                </apply>
+                <apply>
+                    <plus />
+                    <apply>
+                        <minus />
+                        <apply>
+                            <minus />
+                            <apply>
+                                <minus />
+                                <ci>v_Re3</ci>
+                                <ci>v_Re4</ci>
+                            </apply>
+                            <ci>v_Re6</ci>
+                        </apply>
+                        <ci>v_Re9</ci>
+                    </apply>
+                    <ci>v_Re16</ci>
+                    <ci>v_Re18</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq />
+                <apply>
+                    <diff />
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>q_Gai_GDP_Gby</ci>
+                </apply>
+                <apply>
+                    <plus />
+                    <apply>
+                        <minus />
+                        <apply>
+                            <minus />
+                            <apply>
+                                <minus />
+                                <apply>
+                                    <plus />
+                                    <apply>
+                                        <minus />
+                                        <apply>
+                                            <minus />
+                                            <ci>v_Re5</ci>
+                                        </apply>
+                                        <ci>v_Re6</ci>
+                                    </apply>
+                                    <ci>v_Re21</ci>
+                                </apply>
+                                <ci>v_Re38</ci>
+                            </apply>
+                            <ci>v_Re44</ci>
+                        </apply>
+                        <ci>v_Re45</ci>
+                    </apply>
+                    <ci>v_Re11</ci>
+                    <ci>v_Re13</ci>
+                    <ci>v_Re47</ci>
+                    <ci>v_Re48</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq />
+                <apply>
+                    <diff />
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>q_R_Gai_GDP_Gby</ci>
+                </apply>
+                <apply>
+                    <minus />
+                    <apply>
+                        <minus />
+                        <apply>
+                            <minus />
+                            <ci>v_Re5</ci>
+                            <ci>v_Re7</ci>
+                        </apply>
+                        <ci>v_Re11</ci>
+                    </apply>
+                    <ci>v_Re15</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq />
+                <apply>
+                    <diff />
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>q_RL_Gai_GDP_Gby</ci>
+                </apply>
+                <apply>
+                    <minus />
+                    <apply>
+                        <minus />
+                        <apply>
+                            <plus />
+                            <ci>v_Re6</ci>
+                            <ci>v_Re7</ci>
+                        </apply>
+                        <ci>v_Re13</ci>
+                    </apply>
+                    <ci>v_Re16</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq />
+                <apply>
+                    <diff />
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>q_Gai_GTP</ci>
+                </apply>
+                <apply>
+                    <minus />
+                    <apply>
+                        <minus />
+                        <apply>
+                            <minus />
+                            <apply>
+                                <plus />
+                                <apply>
+                                    <minus />
+                                    <apply>
+                                        <minus />
+                                        <apply>
+                                            <minus />
+                                            <apply>
+                                                <plus />
+                                                <ci>v_Re15</ci>
+                                                <ci>v_Re16</ci>
+                                            </apply>
+                                            <ci>v_Re19</ci>
+                                        </apply>
+                                        <ci>v_Re24</ci>
+                                    </apply>
+                                    <ci>v_Re26</ci>
+                                </apply>
+                                <ci>v_Re49</ci>
+                                <ci>v_Re50</ci>
+                            </apply>
+                            <ci>v_Re32</ci>
+                        </apply>
+                        <ci>v_Re33</ci>
+                    </apply>
+                    <ci>v_Re39</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq />
+                <apply>
+                    <diff />
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>q_Gby</ci>
+                </apply>
+                <apply>
+                    <plus />
+                    <apply>
+                        <minus />
+                        <apply>
+                            <minus />
+                            <apply>
+                                <plus />
+                                <ci>v_Re15</ci>
+                                <ci>v_Re16</ci>
+                                <ci>v_Re17</ci>
+                                <ci>v_Re18</ci>
+                            </apply>
+                            <ci>v_Re21</ci>
+                        </apply>
+                        <ci>v_Re22</ci>
+                    </apply>
+                    <ci>v_Re38</ci>
+                    <ci>v_Re49</ci>
+                    <ci>v_Re50</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq />
+                <apply>
+                    <diff />
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>q_Gai_GDP</ci>
+                </apply>
+                <apply>
+                    <minus />
+                    <apply>
+                        <minus />
+                        <ci>v_Re19</ci>
+                        <ci>v_Re21</ci>
+                    </apply>
+                    <ci>v_Re37</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq />
+                <apply>
+                    <diff />
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>q_Gas_GDP_Gby</ci>
+                </apply>
+                <apply>
+                    <plus />
+                    <apply>
+                        <minus />
+                        <apply>
+                            <minus />
+                            <ci>v_Re8</ci>
+                        </apply>
+                        <ci>v_Re9</ci>
+                    </apply>
+                    <ci>v_Re12</ci>
+                    <ci>v_Re14</ci>
+                    <ci>v_Re22</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq />
+                <apply>
+                    <diff />
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>q_R_Gas_GDP_Gby</ci>
+                </apply>
+                <apply>
+                    <minus />
+                    <apply>
+                        <minus />
+                        <apply>
+                            <minus />
+                            <ci>v_Re8</ci>
+                            <ci>v_Re10</ci>
+                        </apply>
+                        <ci>v_Re12</ci>
+                    </apply>
+                    <ci>v_Re17</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq />
+                <apply>
+                    <diff />
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>q_RL_Gas_GDP_Gby</ci>
+                </apply>
+                <apply>
+                    <minus />
+                    <apply>
+                        <minus />
+                        <apply>
+                            <plus />
+                            <ci>v_Re9</ci>
+                            <ci>v_Re10</ci>
+                        </apply>
+                        <ci>v_Re14</ci>
+                    </apply>
+                    <ci>v_Re18</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq />
+                <apply>
+                    <diff />
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>q_Gas_GTP</ci>
+                </apply>
+                <apply>
+                    <minus />
+                    <apply>
+                        <minus />
+                        <apply>
+                            <minus />
+                            <apply>
+                                <minus />
+                                <apply>
+                                    <minus />
+                                    <apply>
+                                        <plus />
+                                        <ci>v_Re17</ci>
+                                        <ci>v_Re18</ci>
+                                    </apply>
+                                    <ci>v_Re20</ci>
+                                </apply>
+                                <ci>v_Re25</ci>
+                            </apply>
+                            <ci>v_Re27</ci>
+                        </apply>
+                        <ci>v_Re30</ci>
+                    </apply>
+                    <ci>v_Re31</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq />
+                <apply>
+                    <diff />
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>q_Gas_GDP</ci>
+                </apply>
+                <apply>
+                    <minus />
+                    <ci>v_Re20</ci>
+                    <ci>v_Re22</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq />
+                <apply>
+                    <diff />
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>q_AC</ci>
+                </apply>
+                <apply>
+                    <minus />
+                    <apply>
+                        <minus />
+                        <apply>
+                            <minus />
+                            <ci>v_Re24</ci>
+                        </apply>
+                        <ci>v_Re25</ci>
+                    </apply>
+                    <ci>v_Re23</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq />
+                <apply>
+                    <diff />
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>q_AC_FSK</ci>
+                </apply>
+                <apply>
+                    <minus />
+                    <apply>
+                        <minus />
+                        <ci>v_Re23</ci>
+                        <ci>v_Re26</ci>
+                    </apply>
+                    <ci>v_Re27</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq />
+                <apply>
+                    <diff />
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>q_AC_Gai_GTP</ci>
+                </apply>
+                <apply>
+                    <minus />
+                    <apply>
+                        <minus />
+                        <ci>v_Re24</ci>
+                        <ci>v_Re28</ci>
+                    </apply>
+                    <ci>v_Re30</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq />
+                <apply>
+                    <diff />
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>q_AC_Gas_GTP</ci>
+                </apply>
+                <apply>
+                    <minus />
+                    <apply>
+                        <minus />
+                        <ci>v_Re25</ci>
+                        <ci>v_Re29</ci>
+                    </apply>
+                    <ci>v_Re32</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq />
+                <apply>
+                    <diff />
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>q_AC_Gai_GTP_Gas_GTP</ci>
+                </apply>
+                <apply>
+                    <minus />
+                    <apply>
+                        <plus />
+                        <ci>v_Re30</ci>
+                        <ci>v_Re32</ci>
+                    </apply>
+                    <ci>v_Re34</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq />
+                <apply>
+                    <diff />
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>q_AC_FSK_Gai_GTP</ci>
+                </apply>
+                <apply>
+                    <minus />
+                    <apply>
+                        <plus />
+                        <ci>v_Re26</ci>
+                        <ci>v_Re28</ci>
+                    </apply>
+                    <ci>v_Re31</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq />
+                <apply>
+                    <diff />
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>q_AC_FSK_Gas_GTP</ci>
+                </apply>
+                <apply>
+                    <minus />
+                    <apply>
+                        <plus />
+                        <ci>v_Re27</ci>
+                        <ci>v_Re29</ci>
+                    </apply>
+                    <ci>v_Re33</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq />
+                <apply>
+                    <diff />
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>q_AC_FSK_Gai_GTP_Gas_GTP</ci>
+                </apply>
+                <apply>
+                    <plus />
+                    <ci>v_Re31</ci>
+                    <ci>v_Re33</ci>
+                    <ci>v_Re34</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq />
+                <apply>
+                    <diff />
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>q_cAMP</ci>
+                </apply>
+                <apply>
+                    <minus />
+                    <ci>v_Re35</ci>
+                    <ci>v_Re36</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq />
+                <apply>
+                    <diff />
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>q_Gi_ribo</ci>
+                </apply>
+                <apply>
+                    <plus />
+                    <ci>v_Re37</ci>
+                    <ci>v_Re38</ci>
+                    <ci>v_Re39</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq />
+                <apply>
+                    <diff />
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>q_D</ci>
+                </apply>
+                <apply>
+                    <plus />
+                    <apply>
+                        <minus />
+                        <apply>
+                            <minus />
+                            <apply>
+                                <minus />
+                                <ci>v_Re40</ci>
+                                <ci>v_Re41</ci>
+                            </apply>
+                            <ci>v_Re42</ci>
+                        </apply>
+                        <ci>v_Re44</ci>
+                    </apply>
+                    <ci>v_Re49</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq />
+                <apply>
+                    <diff />
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>q_DQ</ci>
+                </apply>
+                <apply>
+                    <minus />
+                    <apply>
+                        <minus />
+                        <apply>
+                            <minus />
+                            <ci>v_Re42</ci>
+                            <ci>v_Re45</ci>
+                        </apply>
+                        <ci>v_Re50</ci>
+                    </apply>
+                    <ci>v_Re43</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq />
+                <apply>
+                    <diff />
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>q_D_Gai_GDP_Gby</ci>
+                </apply>
+                <apply>
+                    <minus />
+                    <apply>
+                        <minus />
+                        <apply>
+                            <minus />
+                            <ci>v_Re44</ci>
+                            <ci>v_Re46</ci>
+                        </apply>
+                        <ci>v_Re49</ci>
+                    </apply>
+                    <ci>v_Re47</ci>
+                </apply>
+            </apply>
+            <apply>
+                <eq />
+                <apply>
+                    <diff />
+                    <bvar>
+                        <ci>t</ci>
+                    </bvar>
+                    <ci>q_DQ_Gai_GDP_Gby</ci>
+                </apply>
+                <apply>
+                    <minus />
+                    <apply>
+                        <minus />
+                        <apply>
+                            <plus />
+                            <ci>v_Re45</ci>
+                            <ci>v_Re46</ci>
+                        </apply>
+                        <ci>v_Re50</ci>
+                    </apply>
+                    <ci>v_Re48</ci>
+                </apply>
+            </apply>
+        </math>
+    <variable name="q_R" units="umolar" public_interface="out" initial_value="q_R_init" /><variable name="q_RL" units="umolar" public_interface="out" initial_value="q_RL_init" /><variable name="q_Gai_GDP_Gby" units="umolar" public_interface="out" initial_value="q_Gai_GDP_Gby_init" /><variable name="q_R_Gai_GDP_Gby" units="umolar" public_interface="out" initial_value="q_R_Gai_GDP_Gby_init" /><variable name="q_RL_Gai_GDP_Gby" units="umolar" public_interface="out" initial_value="q_RL_Gai_GDP_Gby_init" /><variable name="q_Gas_GDP_Gby" units="umolar" public_interface="out" initial_value="q_Gas_GDP_Gby_init" /><variable name="q_R_Gas_GDP_Gby" units="umolar" public_interface="out" initial_value="q_R_Gas_GDP_Gby_init" /><variable name="q_RL_Gas_GDP_Gby" units="umolar" public_interface="out" initial_value="q_RL_Gas_GDP_Gby_init" /><variable name="q_Gby" units="umolar" public_interface="out" initial_value="q_Gby_init" /><variable name="q_Gai_GTP" units="umolar" public_interface="out" initial_value="q_Gai_GTP_init" /><variable name="q_Gas_GTP" units="umolar" public_interface="out" initial_value="q_Gas_GTP_init" /><variable name="q_Gai_GDP" units="umolar" public_interface="out" initial_value="q_Gai_GDP_init" /><variable name="q_Gas_GDP" units="umolar" public_interface="out" initial_value="q_Gas_GDP_init" /><variable name="q_AC_FSK" units="umolar" public_interface="out" initial_value="q_AC_FSK_init" /><variable name="q_AC" units="umolar" public_interface="out" initial_value="q_AC_init" /><variable name="q_AC_Gai_GTP" units="umolar" public_interface="out" initial_value="q_AC_Gai_GTP_init" /><variable name="q_AC_Gas_GTP" units="umolar" public_interface="out" initial_value="q_AC_Gas_GTP_init" /><variable name="q_AC_FSK_Gai_GTP" units="umolar" public_interface="out" initial_value="q_AC_FSK_Gai_GTP_init" /><variable name="q_AC_FSK_Gas_GTP" units="umolar" public_interface="out" initial_value="q_AC_FSK_Gas_GTP_init" /><variable name="q_AC_Gai_GTP_Gas_GTP" units="umolar" public_interface="out" initial_value="q_AC_Gai_GTP_Gas_GTP_init" /><variable name="q_AC_FSK_Gai_GTP_Gas_GTP" units="umolar" public_interface="out" initial_value="q_AC_FSK_Gai_GTP_Gas_GTP_init" /><variable name="q_cAMP" units="umolar" public_interface="out" initial_value="q_cAMP_init" /><variable name="q_Gi_ribo" units="umolar" public_interface="out" initial_value="q_Gi_ribo_init" /><variable name="q_D" units="umolar" public_interface="out" initial_value="q_D_init" /><variable name="q_DQ" units="umolar" public_interface="out" initial_value="q_DQ_init" /><variable name="q_D_Gai_GDP_Gby" units="umolar" public_interface="out" initial_value="q_D_Gai_GDP_Gby_init" /><variable name="q_DQ_Gai_GDP_Gby" units="umolar" public_interface="out" initial_value="q_DQ_Gai_GDP_Gby_init" /></component>
+</model>

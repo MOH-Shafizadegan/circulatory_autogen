@@ -267,4 +267,29 @@
         <!--unit litre {expo: -1};-->
         <unit exponent="-3" prefix="deci" units="meter"/>
     </units>
+    <units name="minute">
+        <unit multiplier="60.0" units="second"/>
+    </units>
+    <units name="umolar">
+        <unit prefix="micro" units="mole"/>
+        <unit exponent="-1" units="litre"/>
+    </units>
+    <units name="per_umolar">
+        <unit exponent="-1" units="umolar"/>
+    </units>
+    <units name="umolar_per_minute">
+        <unit units="umolar"/>
+        <unit exponent="-1" units="minute"/>
+    </units>
+    <units name="J_per_umolar">
+        <unit units="joule"/>
+        <unit exponent="-1" units="umolar"/>
+    </units>
+    <units name="per_minute">
+        <unit exponent="-1" units="minute"/>
+    </units>
+    <units name="per_minute_umolar">
+        <unit exponent="-1" units="minute"/>
+        <unit exponent="-1" units="umolar"/>
+    </units>
 </model>
