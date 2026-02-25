@@ -1,8 +1,5 @@
-import json
 import os
-from sklearn.utils import shuffle
 import sys
-from sys import exit
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(os.path.join(os.path.dirname(__file__), '../utilities'))
 import math as math
@@ -16,9 +13,7 @@ if opencor_available:
     from solver_wrappers.opencor_helper import SimulationHelper as OpenCORSimulationHelper
 else:
     from solver_wrappers.python_solver_helper import SimulationHelper as PythonSimulationHelper
-from SALib.sample import saltelli
 import pandas as pd
-from SALib.analyze import sobol
 import numpy as np
 import matplotlib  
 matplotlib.use('Agg')  
@@ -26,22 +21,23 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from parsers.PrimitiveParsers import scriptFunctionParser
 from mpi4py import MPI
-from parsers.PrimitiveParsers import CSVFileParser, ObsAndParamDataParser
-import csv
+from parsers.PrimitiveParsers import ObsAndParamDataParser
 from tqdm import tqdm  # make sure tqdm is installed
-import npeet_plus as npeet
-  
+from normi import NormalizedMI
+
 class mutualInfo: 
 
     def __init__(self, model_path, model_out_names, solver_info, SA_info, dt, sa_output_dir,     
                 param_id_path=None, params_for_id_path=None, use_MPI=False, verbose=False,    
-                sim_time=2.0, pre_time=20.0):  
+                sim_time=2.0, pre_time=20.0, n_neighbors=5):  
           
         self.model_path = model_path  
         self.output_dir = None  
         self.verbose = verbose  
         self.set_output_dir(sa_output_dir)  
-  
+
+        self.n_neighbors = n_neighbors
+    
         self.solver_info = solver_info  
         self.SA_info = SA_info  
         # Remove sample_type dependency - MI uses random sampling  
@@ -50,7 +46,6 @@ class mutualInfo:
         self.dt = dt  
           
         # set up observables functions  
-        from parsers.PrimitiveParsers import scriptFunctionParser  
         self.sfp = scriptFunctionParser()  
         self.operation_funcs_dict = self.sfp.get_operation_funcs_dict()  
           
@@ -60,7 +55,6 @@ class mutualInfo:
               
   
         if param_id_path is not None:  
-            from parsers.PrimitiveParsers import ObsAndParamDataParser  
             self.obs_and_param_parser = ObsAndParamDataParser()  
             parsed_data = self.obs_and_param_parser.parse_obs_data_json(  
                 param_id_obs_path=param_id_path,  
@@ -407,105 +401,6 @@ class mutualInfo:
         else:
             return None
 
-    def calculate_cmi_matrices_per_feature(self, p_samples, outputs):
-        """
-        Generates a list of matrices. 
-        Each matrix corresponds to an output feature y_k.
-        Cell (i, j) in the matrix is I(p_i; y_k | p_j).
-        """
-        n_samples, n_params = p_samples.shape
-        
-        # 1. Generate Y samples (n_samples, n_features)
-        y_raw = np.array(outputs)
-        if y_raw.ndim == 1: y_raw = y_raw.reshape(-1, 1)
-        n_features = y_raw.shape[1]
-
-        # Storage for the matrices: shape (n_features, n_params, n_params)
-        all_matrices = np.zeros((n_features, n_params, n_params))
-
-        for k in range(n_features):
-            yk = y_raw[:, k].reshape(-1, 1)
-            
-            for i in range(n_params):
-                pi = p_samples[:, i].reshape(-1, 1)
-                
-                for j in range(n_params):
-                    if i == j:
-                        # Diagonal: I(p_i; y_k) - standard Mutual Information
-                        all_matrices[k, i, j] = npeet.mi(pi, yk) * np.log(2)
-                    else:
-                        # Off-diagonal: I(p_i; y_k | p_j)
-                        pj = p_samples[:, j].reshape(-1, 1)
-                        all_matrices[k, i, j] = npeet.mi(pi, yk, z=pj) * np.log(2)
-
-        return all_matrices
-
-    def calculate_normalised_MI_CMI(self, p, y, z=None, n_permutations = 100):
-        """
-        Calculates Corrected Normalised Mutual Information using Permutation.
-        If z is provided, calculates CMI.
-        """
-
-        # 1. Calculate Raw MI/CMI and Entropy
-        h_p = npeet.entropy(p) * np.log(2)
-
-        if z is None:
-            raw_mi = npeet.mi(p, y) * np.log(2)
-        else:
-            raw_mi = npeet.mi(p, y, z=z) * np.log(2)
-
-        # 2. Permutation Loop (Null Hypothesis)
-        null_values = []
-        for _ in range(n_permutations):
-            y_shuffled = shuffle(y) # Destroy p -> y relationship
-            if z is None:
-                val = npeet.mi(p, y_shuffled) * np.log(2)
-            else:
-                # Note: We shuffle y but keep the (p, z) relationship intact
-                val = npeet.mi(p, y_shuffled, z=z) * np.log(2)
-            null_values.append(val)
-
-        # 3. Correct the Bias
-        null_mean = np.mean(null_values)
-        corrected_mi = max(0, raw_mi - null_mean)
-
-        # 4. Normalise
-        nmi_corrected = corrected_mi / h_p
-
-        # Calculate Z-score for significance (optional but helpful)
-        null_std = np.std(null_values) if np.std(null_values) > 0 else 1e-9
-        z_score = (raw_mi - null_mean) / null_std
-        
-        return nmi_corrected, z_score
-
-    def calculate_normalized_MI_matrices(self, p_samples, outputs, n_shuffles=100):
-        n_samples, n_params = p_samples.shape
-        y_raw = np.atleast_2d(outputs).T if np.ndim(outputs) == 1 else np.array(outputs)
-        y_raw = y_raw + np.random.normal(0, 1e-1, y_raw.shape)
-        n_features = y_raw.shape[1]
-
-        all_matrices = np.zeros((n_features, n_params, n_params))
-
-        for k in range(n_features):
-            yk = y_raw[:, k].reshape(-1, 1)
-
-            for i in range(n_params):
-                pi = p_samples[:, i].reshape(-1, 1)
-                
-                for j in range(n_params):
-                    pj = p_samples[:, j].reshape(-1, 1)
-                    
-                    if i == j:
-                        # Diagonal: Use the helper without a 'z' (Standard MI)
-                        val, _ = self.calculate_normalised_MI_CMI(pi, yk, n_permutations=n_shuffles)
-                    else:
-                        # Off-diagonal: Use the helper with pj as 'z' (Conditional MI)
-                        val, _ = self.calculate_normalised_MI_CMI(pi, yk, z=pj, n_permutations=n_shuffles)
-                    
-                    all_matrices[k, i, j] = val
-                        
-        return all_matrices
-
     def plot_cmi_feature_matrices(self, cmi_matrices):
         """
         Saves a 2D heatmap for each model output feature.
@@ -669,6 +564,72 @@ class mutualInfo:
             df_all.to_csv(output_path, index=False)  
             print(f"Per-feature interpretation report saved to: {output_path}")
             
+    def compute_mi(self, X, Y, n_neighbors=5):
+        """
+        Compute MI(X;Y) using NorMI
+        """
+        Z = np.column_stack([X, Y])
+        nmi = NormalizedMI(k = n_neighbors)
+        nmi.fit(Z)
+        
+        return nmi.mi_[0, 1]
+
+    def compute_nmi(self, X, Y, n_neighbors=5):
+        """
+        Compute NMI(X;Y) using NorMI
+        """
+        
+        Z = np.column_stack([X, Y])
+        nmi = NormalizedMI(k = n_neighbors)
+        nmi.fit(Z)
+        
+        return nmi.nmi_[0, 1]
+
+    def compute_dependency_matrices(self, samples, outputs, n_neighbors=5):
+                    
+        n_samples, n_params = samples.shape
+        _, n_outputs = outputs.shape
+
+        dependency_matrices = np.zeros((n_outputs, n_params, n_params))
+
+        for k in range(n_outputs):
+
+            Yk = outputs[:, [k]]  # single output
+            M = np.zeros((n_params, n_params))
+
+            for i in range(n_params):
+
+                Xi = samples[:, [i]]
+                Zi = np.delete(samples, i, axis=1)
+
+                # ---- Diagonal: NMI(P_i, Y_k) ----
+                M[i, i] = self.compute_nmi(Xi, Yk, n_neighbors)
+
+                for j in range(n_params):
+                    
+                    if i == j:
+                        continue
+
+                    # ---- Conditional MI ----
+                    I_X_YZ = self.compute_mi(Xi, np.column_stack([Yk, Zi]), n_neighbors)
+                    I_X_Z  = self.compute_mi(Xi, Zi, n_neighbors)
+
+                    I_cond = max(0.0, I_X_YZ - I_X_Z)
+
+                    # ---- MI-based normalization ----
+                    I_Y_XZ = self.compute_mi(Yk, np.column_stack([Xi, Zi]), n_neighbors)
+
+                    denom = np.sqrt(I_X_YZ * I_Y_XZ)
+
+                    if denom > 0:
+                        M[i, j] = I_cond / denom
+                    else:
+                        M[i, j] = 0.0
+
+                dependency_matrices[k, :, :] = M
+
+            return dependency_matrices
+    
     def run(self):  
         """Main execution method"""  
         
@@ -680,16 +641,17 @@ class mutualInfo:
         samples = self.comm.bcast(samples, root=0)
 
         if self.use_mpi:  
+
             outputs = self.generate_outputs_mpi(samples)  
-            if self.rank == 0:  
-                normalized_cmi_matrices = self.calculate_normalized_MI_matrices(samples, outputs)  
-                self.plot_cmi_feature_matrices(normalized_cmi_matrices) 
-                self.interpret_mi_results(normalized_cmi_matrices) 
-                return normalized_cmi_matrices  
+
+            if self.rank == 0:                  
+                
+                results = self.compute_dependency_matrices(samples, outputs, n_neighbors=self.n_neighbors)
+                self.plot_cmi_feature_matrices(results) 
+                self.interpret_mi_results(results) 
+                
+                return results  
             else:  
                 return None  
         else:  
-            outputs = self.generate_outputs(samples)  
-            normalized_cmi_matrices = self.calculate_normalized_MI_matrices(samples, outputs)  
-            self.plot_cmi_feature_matrices(normalized_cmi_matrices)  
-            return normalized_cmi_matrices
+            raise NotImplementedError("Non-MPI execution is not implemented for MI analysis yet.")
