@@ -34,5 +34,6 @@ if __name__ == '__main__':
         MPI.Finalize()
     except:
         print(traceback.format_exc())
+        print(f"error message is {MPI.Get_error_string(MPI.Get_error_code())}")
         comm.Abort()
         MPI.Finalize()

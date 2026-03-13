@@ -20,22 +20,22 @@ def example_format_obs_data_json_file():
 
     # Load the data that you want to use as ground truth
     # change this to the path of your data file
-    data_file = os.path.join(example_data_dir, 'example_data_for_conversion.csv')
+    data_file = os.path.join(example_data_dir, 'Fig3_Cai_cellML.csv')
 
     # output path for the JSON file
     # change this to the desired output path
-    output_path = os.path.join(root_dir, 'resources', 'NKE_pump_obs_data.json')
+    output_path = os.path.join(root_dir, 'resources', 'smc_Cai_data.json')
     data = pd.read_csv(data_file)
 
     # access the data in the way you want it
-    time = data['environment | t (second)'].values
+    time = data['environment | time (ms)'].values
 
     # create obs_data_creator instance
     obs_data_creator = ObsDataCreator()
 
     # first create protocol_info to define subexperiments and parameter changes for those subexperiments
     pre_times = [1]
-    sim_times = [[100, float(time[-1])]]
+    sim_times = [[100000, float(time[-1])]]
     params_to_change = {}
     params_to_change['NKE_pump/flag_0'] = [[0.0, 1.0]]  # example parameter change
     experiment_labels = ['exp_0']  # example labels

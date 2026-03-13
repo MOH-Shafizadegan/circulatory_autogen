@@ -156,8 +156,7 @@ class sobol_SA():
         self.operation_funcs_dict = self.sfp.add_user_operation_func(self.operation_funcs_dict, func)
         
     def set_ground_truth_data(self, obs_data_dict):
-        if self.rank == 0:
-            print(f'Setting ground truth data: {obs_data_dict}')
+        print(f'Setting ground truth data: {obs_data_dict}')
         if self.obs_and_param_parser is None:
             self.obs_and_param_parser = ObsAndParamDataParser()
         parsed_data = self.obs_and_param_parser.parse_obs_data_json(
@@ -175,19 +174,16 @@ class sobol_SA():
             protocol_info=self.protocol_info,
             dt=self.dt
         )
-        if self.rank == 0:
-            print(f'Ground truth data set: {self.obs_info}')
+        print(f'Ground truth data set: {self.obs_info}')
     
     def set_params_for_id(self, params_for_id_dict):
-        if self.rank == 0:
-            print(f'Setting params for id: {params_for_id_dict}')
+        print(f'Setting params for id: {params_for_id_dict}')
         if self.obs_and_param_parser is None:
             self.obs_and_param_parser = ObsAndParamDataParser()
         self.param_id_info = self.obs_and_param_parser.get_param_id_info_from_entries(params_for_id_dict)
         self.obs_and_param_parser.save_param_names(self.param_id_info, self.output_dir)
         self.create_SA_info(self.sample_type, self.SA_info["num_samples"])
-        if self.rank == 0:
-            print(f'Params for id set: {self.param_id_info["param_names"]}')
+        print(f'Params for id set: {self.param_id_info["param_names"]}')
 
     def set_sa_options(self, sa_options):
         self.SA_info = self._create_SA_info(sa_options['sample_type'], sa_options['num_samples'])
@@ -257,10 +253,7 @@ class sobol_SA():
     def run_model_and_get_results(self, param_vals):
         self.sim_helper.set_param_vals(self.SA_info["param_names"], param_vals)
         self.sim_helper.reset_states()
-        success = self.sim_helper.run()
-        if not success:
-            print(f"[MPI Rank {self.rank}] Failed to converge for params: {param_vals}")
-            return None
+        self.sim_helper.run()
 
         operands = self.sim_helper.get_results(self.obs_info["operands"])
 
@@ -272,6 +265,8 @@ class sobol_SA():
     def generate_outputs_mpi(self, samples):
         # Split samples across ranks
         n_samples = len(samples)
+        n_invalid_local = 0
+
         samples_per_rank = n_samples // self.num_procs
         remainder = n_samples % self.num_procs
 
@@ -289,79 +284,127 @@ class sobol_SA():
         local_outputs = []
 
         # Create a single progress bar for rank 0 only to avoid noisy output from all ranks
-        with tqdm(total=len(local_samples), desc=f"Rank {self.rank}", position=self.rank, leave=True, disable=self.rank != 0) as pbar:
+        with tqdm(total=len(local_samples), desc=f"Rank {self.rank}", position=self.rank, leave=True, ) as pbar:
             for param_vals in local_samples:
-              try:
-                # multiple subexperiments
-                current_time = 0
-                operands_outputs_dict = {}
-                for exp_idx in range(self.protocol_info["num_experiments"]):
+
+                # --- handle single vs multi subexperiment ---
+                if self.protocol_info["num_sub_total"] == 1:
+                    # simple case (one experiment only)
                     self.sim_helper.set_param_vals(self.param_id_info["param_names"], param_vals)
                     self.sim_helper.reset_states()
+                    success = self.sim_helper.run()
 
-                    for this_sub_idx in range(self.protocol_info["num_sub_per_exp"][exp_idx]):
-                        subexp_count = int(np.sum(
-                            [num_sub for num_sub in self.protocol_info["num_sub_per_exp"][:exp_idx]]
-                        ) + this_sub_idx)
+                    operands_outputs_dict = {}
 
-                        self.sim_time = self.protocol_info["sim_times"][exp_idx][this_sub_idx]
-                        self.pre_time = self.protocol_info["pre_times"][exp_idx]
+                    retry_count = 0
+                    max_retries = 1
+                    original_MaximumStep = self.solver_info.get("MaximumStep", None)
+                    original_MaximumNumberOfSteps = self.solver_info.get("MaximumNumberOfSteps", None)
 
-                        if this_sub_idx == 0:
-                            self.sim_helper.update_times(self.dt, 0.0, self.sim_time, self.pre_time)
-                            current_time += self.pre_time
-                        else:
-                            self.sim_helper.update_times(self.dt, current_time, self.sim_time, 0.0)
+                    while not success and retry_count < max_retries:
 
-                        # set subexperiment-specific parameters
-                        self.sim_helper.set_param_vals(
-                            list(self.protocol_info["params_to_change"].keys()),
-                            [
-                                self.protocol_info["params_to_change"][param_name][exp_idx][this_sub_idx]
-                                for param_name in self.protocol_info["params_to_change"].keys()
-                            ]
-                        )
-
-                        success = self.sim_helper.run()
-
-                        retry_count = 0
-                        max_retries = 0
                         original_MaximumStep = self.solver_info.get("MaximumStep", None)
-                        original_MaximumNumberOfSteps = self.solver_info.get("MaximumNumberOfSteps", None)
+                        reduced_MaximumStep = original_MaximumStep / 2 if original_MaximumStep else 0.001
+                        increased_MaximumNumberOfSteps = original_MaximumNumberOfSteps * 2 if original_MaximumNumberOfSteps else 1000000
+                        retry_count += 1
+                        # Reduce max_dt for retry
+                        self.solver_info["MaximumStep"] = reduced_MaximumStep
+                        self.solver_info["MaximumNumberOfSteps"] = increased_MaximumNumberOfSteps
 
-                        while not success and retry_count < max_retries:
-
-                            original_MaximumStep = self.solver_info.get("MaximumStep", None)
-                            reduced_MaximumStep = original_MaximumStep / 2 if original_MaximumStep else 0.001
-                            increased_MaximumNumberOfSteps = original_MaximumNumberOfSteps * 2 if original_MaximumNumberOfSteps else 1000000
-                            retry_count += 1
-                            # Reduce max_dt for retry
-                            self.solver_info["MaximumStep"] = reduced_MaximumStep
-                            self.solver_info["MaximumNumberOfSteps"] = increased_MaximumNumberOfSteps
-                            
-                            self.sim_helper.set_param_vals(self.param_id_info["param_names"], param_vals)
-                            self.sim_helper.reset_states()
-                            success = self.sim_helper.run()
+                        self.sim_helper.set_param_vals(self.param_id_info["param_names"], param_vals)
+                        self.sim_helper.reset_states()
+                        success = self.sim_helper.run()
 
                         # Restore original max_dt after retries
                         self.solver_info["MaximumStep"] = original_MaximumStep
                         self.solver_info["MaximumNumberOfSteps"] = original_MaximumNumberOfSteps
-                        if success:
-                            current_time += self.sim_time
-                            operands_outputs = self.sim_helper.get_results(self.obs_info["operands"])
-                            operands_outputs_dict[(exp_idx, this_sub_idx)] = operands_outputs
 
-                            # reset at the end of each experiment
-                            if this_sub_idx == self.protocol_info["num_sub_per_exp"][exp_idx] - 1:
-                                self.sim_helper.reset_and_clear()
-                        else:
-                            self._rank0_print(f"[MPI Rank {self.rank}] Simulation failed for params: {param_vals}, subexp={subexp_count} after {retry_count} retries")
-                            # Set a flag in operands_outputs_dict to indicate failure
-                            operands_outputs_dict[(exp_idx, this_sub_idx)] = {"failed": True}
+                    if success:
+                        operands_outputs = self.sim_helper.get_results(self.obs_info["operands"])
+                        operands_outputs_dict[(0, 0)] = operands_outputs
 
-                            # reset at the end of each experiment
-                            if this_sub_idx == self.protocol_info["num_sub_per_exp"][exp_idx] - 1:
-                                self.sim_helper.reset_and_clear()
+                        self.sim_helper.reset_and_clear()
+                    else:
+                        print(f"[MPI Rank {self.rank}] Simulation failed for params: {param_vals}, after {retry_count} retries")
+                        # Set a flag in operands_outputs_dict to indicate failure
+                        operands_outputs_dict[(0, 0)] = {"failed": True}
+
+                        # reset at the end of each experiment
+                        self.sim_helper.reset_and_clear()
+
+                else:
+                    # multiple subexperiments
+                    current_time = 0
+                    operands_outputs_dict = {}
+                    for exp_idx in range(self.protocol_info["num_experiments"]):
+                        self.sim_helper.set_param_vals(self.param_id_info["param_names"], param_vals)
+                        self.sim_helper.reset_states()
+
+                        for this_sub_idx in range(self.protocol_info["num_sub_per_exp"][exp_idx]):
+                            subexp_count = int(np.sum(
+                                [num_sub for num_sub in self.protocol_info["num_sub_per_exp"][:exp_idx]]
+                            ) + this_sub_idx)
+
+                            self.sim_time = self.protocol_info["sim_times"][exp_idx][this_sub_idx]
+                            self.pre_time = self.protocol_info["pre_times"][exp_idx]
+
+                            if self.protocol_info["num_sub_total"] > 1:
+                                if this_sub_idx == 0:
+                                    self.sim_helper.update_times(self.dt, 0.0, self.sim_time, self.pre_time)
+                                    current_time += self.pre_time
+                                else:
+                                    self.sim_helper.update_times(self.dt, current_time, self.sim_time, 0.0)
+
+                            # set subexperiment-specific parameters
+                            self.sim_helper.set_param_vals(
+                                list(self.protocol_info["params_to_change"].keys()),
+                                [
+                                    self.protocol_info["params_to_change"][param_name][exp_idx][this_sub_idx]
+                                    for param_name in self.protocol_info["params_to_change"].keys()
+                                ]
+                            )
+
+                            success = self.sim_helper.run()
+
+                            retry_count = 0
+                            max_retries = 2
+                            original_MaximumStep = self.solver_info.get("MaximumStep", None)
+                            original_MaximumNumberOfSteps = self.solver_info.get("MaximumNumberOfSteps", None)
+
+                            while not success and retry_count < max_retries:
+
+                                original_MaximumStep = self.solver_info.get("MaximumStep", None)
+                                reduced_MaximumStep = original_MaximumStep / 2 if original_MaximumStep else 0.001
+                                increased_MaximumNumberOfSteps = original_MaximumNumberOfSteps * 2 if original_MaximumNumberOfSteps else 1000000
+                                retry_count += 1
+                                # Reduce max_dt for retry
+                                self.solver_info["MaximumStep"] = reduced_MaximumStep
+                                self.solver_info["MaximumNumberOfSteps"] = increased_MaximumNumberOfSteps
+
+                                self.sim_helper.set_param_vals(self.param_id_info["param_names"], param_vals)
+                                self.sim_helper.reset_states()
+                                success = self.sim_helper.run()
+
+                            # Restore original max_dt after retries
+                            self.solver_info["MaximumStep"] = original_MaximumStep
+                            self.solver_info["MaximumNumberOfSteps"] = original_MaximumNumberOfSteps
+                            if success:
+                                current_time += self.sim_time
+                                operands_outputs = self.sim_helper.get_results(self.obs_info["operands"])
+                                operands_outputs_dict[(exp_idx, this_sub_idx)] = operands_outputs
+
+                                # reset at the end of each experiment
+                                if this_sub_idx == self.protocol_info["num_sub_per_exp"][exp_idx] - 1:
+                                    self.sim_helper.reset_and_clear()
+                            else:
+                                self._rank0_print(f"[MPI Rank {self.rank}] Simulation failed for params: {param_vals}, subexp={subexp_count} after {retry_count} retries")
+                                # Set a flag in operands_outputs_dict to indicate failure
+                                operands_outputs_dict[(exp_idx, this_sub_idx)] = {"failed": True}
+
+                                # reset at the end of each experiment
+                                if this_sub_idx == self.protocol_info["num_sub_per_exp"][exp_idx] - 1:
+                                    self.sim_helper.reset_and_clear()
+
 
                 features = []
                 for j in range(len(self.obs_info["operations"])):
@@ -371,42 +414,53 @@ class sobol_SA():
                     operands_outputs = operands_outputs_dict.get((exp_idx, subexp_idx), None)
                     if operands_outputs is not None and not (isinstance(operands_outputs, dict) and operands_outputs == {"failed": True}):
                         feature = func(*operands_outputs[j], **self.obs_info["operation_kwargs"][j])
+
                         if feature is None or (isinstance(feature, (float, int)) and np.isnan(feature)):
-                            feature = np.nanmean(features) if not np.all(np.isnan(features)) else 0.0
+                            n_invalid_local += 1
+                            feature = np.nanmean(local_outputs) if not np.all(np.isnan(local_outputs)) else 0.0
+
+                        # print(f">>>>>>>>>>>>>>>>>> exp: {exp_idx}, sub: {subexp_idx}", feature)
 
                         features.append(feature)
                     else:
                         # WARNING: using mean biases variance estimates (shrinks variance), underestimates sensitivity
                         # TODO: come up with a better way to impute missing features
                         # Append the mean of the current features (ignoring None) -> reduces variance and bias induces toward zero
-                        features.append(np.mean(local_outputs))
+                        print("FAILED :(((((((")
+                        if len(local_outputs) < 1:
+                            print("Empty features, appending 0.0")
+                            features.append(0.0)
+                        else:
+                            features.append(np.mean(local_outputs))
+
+                        n_invalid_local += 1
+
 
                 local_outputs.append(features)
-              except Exception as e:
-                # Catch any exception so this rank doesn't die before reaching
-                # the collective gather call (which would hang all other ranks).
-                print(f"[MPI Rank {self.rank}] Exception for sample (caught to prevent MPI abort): {e}")
-                # Append a NaN placeholder so the output array stays the right length
-                n_features = len(self.obs_info["operations"])
-                local_outputs.append([np.nan] * n_features)
-              finally:
                 pbar.update(1)
 
-        self._rank0_print(f"[MPI Rank {self.rank}] Finished processing samples {start}:{end}")
+        print(f"[MPI Rank {self.rank}] Finished processing samples {start}:{end}")
 
         # Gather results at rank 0
+        n_invalid_samples = self.comm.reduce(n_invalid_local, op=MPI.SUM, root=0)
         all_outputs = self.comm.gather(local_outputs, root=0)
 
         if self.rank == 0:
             outputs = [item for sublist in all_outputs for item in sublist]
+            print("Outputs gathered at rank 0, flattening results...")
+            print(f"Total samples processed across all ranks: {len(outputs)}")
             outputs = np.array(outputs)
+
             self._rank0_print(f"[MPI Rank 0] Gathered and flattened all outputs. Total outputs: {outputs.shape}")
+            # if n_invalid_samples > 0:
+            #     self._rank0_print(f"[WARNING!] Number of invalid samples encountered: {n_invalid_samples} (out of {n_samples}). These were imputed with mean values, which may bias sensitivity estimates.")
+            self._rank0_print(f"[WARNING!] Number of invalid samples encountered: {n_invalid_samples} (out of {n_samples}). These were imputed with mean values, which may bias sensitivity estimates.")
             return outputs
         else:
             return None
-
+        
+        
     def sobol_index(self, outputs):
-
         if self.rank !=0:
             return None, None, None
         
@@ -718,15 +772,14 @@ class sobol_SA():
         samples = self.generate_samples()
         if self.use_mpi:
             outputs = self.generate_outputs_mpi(samples)
+            print(f"[MPI Rank {self.rank}] Completed output generation. Now computing Sobol indices...")
             if self.rank == 0:
                 S1_all, ST_all, S2_all = self.sobol_index(outputs)
+                print(f"[MPI Rank 0] Sobol indices computed. S1 shape: {S1_all.shape}, ST shape: {ST_all.shape}, S2 shape: {S2_all.shape}")
+                # print(f">>>>>>>>>>  {S1_all}, {ST_all}, {S2_all}")
+                return S1_all, ST_all, S2_all
             else:
-                S1_all, ST_all, S2_all = None, None, None
-            # Synchronize all ranks so no rank exits (and triggers MPI
-            # finalization / process termination) while rank 0 is still
-            # computing Sobol indices or saving results.
-            self.comm.Barrier()
-            return S1_all, ST_all, S2_all
+                return None, None, None
         else:
             outputs = self.generate_outputs(samples)
             S1_all, ST_all, S2_all = self.sobol_index(outputs)

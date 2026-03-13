@@ -20,10 +20,6 @@ src_dir = os.path.join(os.path.dirname(__file__), '..')
 import utilities.libcellml_helper_funcs as cellml
 import utilities.libcellml_utilities as libcellml_utils
 
-# TODO:
-# - Add support for multiple components in a cellml model
-# - Add support for automatically generating the ports in the module_config.json file. Currently the ports are not generated automatically.
-
 # Define file paths
 user_units_cellml = os.path.join(root_dir, 'module_config_user/user_units.cellml')
 units_cellml = os.path.join(src_dir, 'generators/resources/units.cellml')
@@ -31,14 +27,13 @@ user_inputs_yaml = os.path.join(user_inputs_dir, 'user_inputs.yaml')
 
 # Define file_prefix, vessel_name and data_reference for the model
 # Specify the time variable and component for which you want to generate files
-
-file_prefix = "smc_hernandez"
-vessel_name = "smc_hernandez"
-data_reference = "hernandezhernandez2024"
+file_prefix = "smc_kapela"
+vessel_name = "smc_kapela"
+data_reference = "kapela_data"
 time_variable = "t"
-component_name = "smc_hernandez"
-input_model = "/home/farg967/Documents/git_projects/cellml_models/Gonzalo_H_SMC/smc_hernandez_one_module.cellml"
-output_dir = "/home/farg967/Documents/git_projects/CA_user/smc_hernandez"
+component_name = "all"
+input_model = r"C:\Users\jebollen\OneDrive - UGent\Documents\Research\1-WP\CellModels\0_ABI_SMC\CircAutogen\FirstTry\SMC_Kapela-Coupled.cellml"
+output_dir = r"C:\Users\jebollen\OneDrive - UGent\Documents\Research\1-WP\CellModels\0_ABI_SMC\CircAutogen\FirstTry\circulatory_autogen\CA_user\smc_kapela"
 
 # Parse arguments
 def _parse_args():
@@ -304,7 +299,8 @@ def _generate_user_inputs_yaml(output_dir, file_prefix):
 def main():
     # args = _parse_args()
     args = {"input_model": input_model, "output_dir": output_dir}
-    if not os.path.isfile(args["input_model"]):
+    print(f"input_model: {args['input_model']}")
+    if not os.path.isfile(args["input_model"]): 
         print(f"Input file '{args["input_model"]}' not found.")
         sys.exit(1)
 
@@ -318,6 +314,7 @@ def main():
     with open(args["input_model"]) as fh:
         content = fh.read()
 
+    print(f"OPENED MODEL {args['input_model']}")
     # Parse model
     parser = lc.Parser(False)
     model = parser.parseModel(content)
@@ -355,7 +352,9 @@ def main():
     analyser.analyseModel(flat_model)
     analysed_model = analyser.model()
 
-    libcellml_utils.print_issues(analyser)
+    # TODO this commented out temporarily
+    # libcellml_utils.print_issues(analyser)
+    pass
     print(analysed_model.type())
     if analysed_model.type() != lc.AnalyserModel.Type.ODE:
         print("WARNING model is has some issues, see above. "

@@ -112,13 +112,13 @@ class CVS0DParamID():
                 self.param_id_output_dir = param_id_output_dir
             
             if not os.path.exists(self.param_id_output_dir):
-                os.mkdir(self.param_id_output_dir)
+                os.makedirs(self.param_id_output_dir)
             self.output_dir = os.path.join(self.param_id_output_dir, f'{case_type}')
             if not os.path.exists(self.output_dir):
-                os.mkdir(self.output_dir)
+                os.makedirs(self.output_dir)
             self.plot_dir = os.path.join(self.output_dir, 'plots_param_id')
             if not os.path.exists(self.plot_dir):
-                os.mkdir(self.plot_dir)
+                os.makedirs(self.plot_dir)
         else:
             self.output_dir = None
         
@@ -323,6 +323,17 @@ class CVS0DParamID():
             self.param_id.set_best_param_vals(best_param_vals)
 
     def plot_outputs(self):
+        if self.rank != 0:
+            return
+        
+        # Ensure plot directory exists, retrying if needed (e.g. OneDrive sync delays)
+        for _attempt in range(5):
+            os.makedirs(self.plot_dir, exist_ok=True)
+            if os.path.isdir(self.plot_dir):
+                break
+            import time as _time
+            _time.sleep(1)
+        print(f'[DEBUG] plot_dir: {self.plot_dir}, exists: {os.path.isdir(self.plot_dir)}')
         print('plotting best observables')
         m3_to_cm3 = 1e6
         Pa_to_kPa = 1e-3
@@ -649,11 +660,11 @@ class CVS0DParamID():
             if phase:
                 axs_phase.legend(loc='upper right', fontsize=10)
             fig.tight_layout()
+
+            
             if phase:
                 fig_phase.tight_layout()
-            fig.savefig(os.path.join(self.plot_dir,
-                                        f'reconstruct_{self.file_name_prefix}_'
-                                        f'{self.param_id_obs_file_prefix}_{plot_idx}.eps'))
+            os.makedirs(self.plot_dir, exist_ok=True)
             fig.savefig(os.path.join(self.plot_dir,
                                         f'reconstruct_{self.file_name_prefix}_'
                                         f'{self.param_id_obs_file_prefix}_{plot_idx}.pdf'))
@@ -662,11 +673,11 @@ class CVS0DParamID():
                                         f'reconstruct_{self.file_name_prefix}_'
                                         f'{self.param_id_obs_file_prefix}_{plot_idx}.png'))
             plt.close(fig)
+
+            
             
             if phase:
-                fig_phase.savefig(os.path.join(self.plot_dir,
-                                        f'phase_reconstruct_{self.file_name_prefix}_'
-                                        f'{self.param_id_obs_file_prefix}_{plot_idx}.eps'))
+                os.makedirs(self.plot_dir, exist_ok=True)
                 fig_phase.savefig(os.path.join(self.plot_dir,
                                         f'phase_reconstruct_{self.file_name_prefix}_'
                                         f'{self.param_id_obs_file_prefix}_{plot_idx}.pdf'))
@@ -696,9 +707,7 @@ class CVS0DParamID():
         if not plot_saved:
             axs.legend(loc='lower right', fontsize=12)
             plt.tight_layout()
-            plt.savefig(os.path.join(self.plot_dir,
-                                    f'reconstruct_{self.file_name_prefix}_'
-                                    f'{self.param_id_obs_file_prefix}_{plot_idx}.eps'))
+            os.makedirs(self.plot_dir, exist_ok=True)
             plt.savefig(os.path.join(self.plot_dir,
                                     f'reconstruct_{self.file_name_prefix}_'
                                     f'{self.param_id_obs_file_prefix}_{plot_idx}.pdf'))
@@ -732,9 +741,7 @@ class CVS0DParamID():
             axs.set_ylabel(r'E$_{\%}$')
             plt.xticks(rotation=90)
             plt.tight_layout()
-            plt.savefig(os.path.join(self.plot_dir,
-                                    f'error_bars_{self.file_name_prefix}_'
-                                    f'{self.param_id_obs_file_prefix}_{plot_idx}.eps'))
+            os.makedirs(self.plot_dir, exist_ok=True)
             plt.savefig(os.path.join(self.plot_dir,
                                     f'error_bars_{self.file_name_prefix}_'
                                     f'{self.param_id_obs_file_prefix}_{plot_idx}.pdf'))
@@ -760,9 +767,7 @@ class CVS0DParamID():
             axs.set_ylabel('E$_{std}$')
             plt.xticks(rotation=90)
             plt.tight_layout()
-            plt.savefig(os.path.join(self.plot_dir,
-                                    f'std_error_bars_{self.file_name_prefix}_'
-                                    f'{self.param_id_obs_file_prefix}_{plot_idx}.eps'))
+            os.makedirs(self.plot_dir, exist_ok=True)
             plt.savefig(os.path.join(self.plot_dir,
                                     f'std_error_bars_{self.file_name_prefix}_'
                                     f'{self.param_id_obs_file_prefix}_{plot_idx}.pdf'))
@@ -794,6 +799,8 @@ class CVS0DParamID():
             # TODO find a way to usefully plot the error for prob dists
 
     def get_mcmc_samples(self):
+        if self.rank != 0:
+            return 
         mcmc_chain_path = os.path.join(self.output_dir, 'mcmc_chain.npy')
 
         if not os.path.exists(mcmc_chain_path):
@@ -840,10 +847,10 @@ class CVS0DParamID():
         return flat_samples, samples, num_params
 
     def plot_mcmc(self):
-
-        flat_samples, samples, num_params = self.get_mcmc_samples()
         if self.rank != 0:
             return
+        flat_samples, samples, num_params = self.get_mcmc_samples()
+
 
         means = np.zeros((num_params))
         conf_ivals = np.zeros((num_params, 3))
@@ -1183,9 +1190,6 @@ class CVS0DParamID():
             pred_save_array = conversion*np.array(save_list)
             np.save(os.path.join(self.output_dir, f'prediction_vals_std_ci_{pred_idx}.npy'), pred_save_array)
 
-            plt.savefig(os.path.join(self.plot_dir,
-                                    f'prediction_{self.file_name_prefix}_'
-                                    f'{self.param_id_obs_file_prefix}_pred_var_{pred_idx}.eps'))
             plt.savefig(os.path.join(self.plot_dir,
                                     f'prediction_{self.file_name_prefix}_'
                                     f'{self.param_id_obs_file_prefix}_pred_var_{pred_idx}.pdf'))
@@ -2089,7 +2093,11 @@ class OpencorMCMC(OpencorParamID):
 
             try:
                 pool = MPIPool() # workers dont get past this line in this try, they wait for work to do
-            except:
+            except Exception as e:
+                import traceback
+                print(f"MPIPool creation failed on rank {rank}: {e}")
+                traceback.print_exc()
+                sys.stdout.flush()
                 return
 
             if not pool.is_master():

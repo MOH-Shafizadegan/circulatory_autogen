@@ -111,7 +111,7 @@ class SensitivityAnalysis():
         for item in obs_data_dict["data_items"]:
             if len(item["operands"]) > 1:
                 print(f'{RED}ERROR: more than one operand for {item["name_for_plotting"]}, not supported{RESET}')
-                exit()
+                MPI.COMM_WORLD.Abort(1)
             self.model_out_names.append(item["operands"][0])
 
     def run_sensitivity_analysis(self, sa_options=None):
@@ -126,7 +126,7 @@ class SensitivityAnalysis():
             self.run_sobol_sensitivity(sa_options)
         else:
             print('ERROR: sensitivity analysis method not recognised')
-            exit()
+            MPI.COMM_WORLD.Abort(1)
 
     def run_sobol_sensitivity(self, sa_options=None):
 
@@ -138,7 +138,8 @@ class SensitivityAnalysis():
 
         if self.SA_manager.gt_df is None or self.SA_manager.param_id_info is None:
             print(f'{RED}ERROR: need to set ground truth data and params for id before running sobol sensitivity analysis{RESET}')
-            exit()
+            # Use MPI.Abort instead of exit() to cleanly terminate all ranks
+            comm.Abort(1)
 
         S1_all, ST_all, S2_all = self.SA_manager.run()
 
@@ -149,6 +150,11 @@ class SensitivityAnalysis():
             self.SA_manager.plot_sobol_first_order_idx(S1_all, ST_all)
             self.SA_manager.plot_sobol_S2_idx(S2_all)
             self.SA_manager.plot_sobol_heatmap(S1_all, ST_all)
+
+        # Synchronize all ranks so no rank exits (and triggers MPI
+        # finalization / process termination) while rank 0 is still
+        # saving or plotting results.
+        comm.Barrier()
 
     
     def choose_most_impactful_params_sobol(self, top_n=5, index_type='ST', criterion='max', threshold=0.01, use_threshold=False):

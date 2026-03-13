@@ -84,7 +84,8 @@
         "general_ports":[],
         "variables_and_units":
         [
-          ["v", "m3_per_s", "access", "constant"] 
+          ["v", "m3_per_s", "access", "constant"],
+		  ["P", "J_per_m3", "access", "constant"] 
         ]
       },
       {

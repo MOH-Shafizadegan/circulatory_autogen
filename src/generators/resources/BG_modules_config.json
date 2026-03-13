@@ -2692,6 +2692,7 @@
         "variables_and_units":
         [
           ["u", "J_per_m3", "access", "variable"],
+		  ["u_in", "J_per_m3", "access", "boundary_condition"], 
           ["v", "m3_per_s", "access", "variable"],
           ["v_T", "m3_per_s", "no_access", "variable"],
           ["R_T", "Js_per_m6", "access", "constant"],
