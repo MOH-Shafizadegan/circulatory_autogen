@@ -1,0 +1,224 @@
+{
+  "protocol_info": {
+    "sim_times": [
+      [
+        0.25
+      ]
+    ],
+    "pre_times": [
+      10
+    ],
+    "num_experiments": 1,
+    "num_sub_per_exp": [
+      1
+    ],
+    "num_sub_total": 1,
+    "total_sim_times_per_exp": [
+      0.25
+    ],
+    "tSims_per_exp": [
+      [
+        0.0,
+        0.01,
+        0.02,
+        0.03,
+        0.04,
+        0.05,
+        0.06,
+        0.07,
+        0.08,
+        0.09,
+        0.1,
+        0.11,
+        0.12,
+        0.13,
+        0.14,
+        0.15,
+        0.16,
+        0.17,
+        0.18,
+        0.19,
+        0.2,
+        0.21,
+        0.22,
+        0.23,
+        0.24,
+        0.25
+      ]
+    ],
+    "num_steps_total_per_exp": [
+      25
+    ],
+    "experiment_colors": [
+      "r"
+    ],
+    "experiment_labels": [
+      "exp0"
+    ],
+    "scaled_weight_const_from_exp_sub": [
+      [
+        [
+          0.0
+        ]
+      ]
+    ],
+    "scaled_weight_series_from_exp_sub": [
+      [
+        [
+          1.0
+        ]
+      ]
+    ],
+    "scaled_weight_amp_from_exp_sub": [
+      [
+        [
+          0.0
+        ]
+      ]
+    ],
+    "scaled_weight_phase_from_exp_sub": [
+      [
+        [
+          0.0
+        ]
+      ]
+    ],
+    "scaled_weight_prob_dist_from_exp_sub": [
+      [
+        [
+          0.0
+        ]
+      ]
+    ],
+    "params_to_change": {
+      "smc_kapela_VoltageClamp/Na_e": [
+        [
+          130.0
+        ]
+      ],
+      "smc_kapela_VoltageClamp/K_e": [
+        [
+          5.0
+        ]
+      ],
+      "smc_kapela_VoltageClamp/Ca_e": [
+        [
+          1.5
+        ]
+      ],
+      "smc_kapela_VoltageClamp/Cl_e": [
+        [
+          140.4
+        ]
+      ],
+      "smc_kapela_VoltageClamp/C_m": [
+        [
+          13.5
+        ]
+      ],
+      "smc_kapela_VoltageClamp/Na_i": [
+        [
+          10.0
+        ]
+      ],
+      "smc_kapela_VoltageClamp/K_i": [
+        [
+          110.0
+        ]
+      ],
+      "smc_kapela_VoltageClamp/Ca_i": [
+        [
+          1e-06
+        ]
+      ],
+      "smc_kapela_VoltageClamp/Cl_i": [
+        [
+          130.0
+        ]
+      ],
+      "smc_kapela_VoltageClamp/V_m_fixed": [
+        [
+          60.0
+        ]
+      ]
+    }
+  },
+  "data_items": [
+    {
+      "variable": "I_Kv",
+      "name_for_plotting": "I_Kv",
+      "data_type": "series",
+      "operation": "null",
+      "operands": [
+        "smc_kapela_VoltageClamp/I_Kv"
+      ],
+      "unit": "pA",
+      "weight": 1.0,
+      "value": [
+        0.0,
+        57.39381148185584,
+        97.98029037959624,
+        118.407047421264,
+        127.03719974846798,
+        132.12845043229962,
+        136.35766341982384,
+        148.0957571907755,
+        135.88757135086735,
+        135.0768330648322,
+        139.59994423671696,
+        148.58452008553076,
+        142.30189180277003,
+        139.75634069273934,
+        141.6178409407555,
+        145.16966826338026,
+        141.7953259814041,
+        146.9485533754739,
+        143.03393880856274,
+        144.78134540366142,
+        146.7451416877138,
+        143.34010080125375,
+        144.6989726472443,
+        146.18156235566093,
+        144.33644089291752,
+        141.303984201843,
+        143.55852393368008,
+        145.44466465251813,
+        137.93221675938074
+      ],
+      "std": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "obs_dt": 0.01,
+      "experiment_idx": 0,
+      "subexperiment_idx": 0
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+vessel,variable_name,unit,min,max,data_ref
+A_aorta_ascending_1,r_0,metre,0.001,0.1,None

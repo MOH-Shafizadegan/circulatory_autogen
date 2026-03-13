@@ -1,0 +1,10 @@
+variable_name,units,value,min,max,data_reference
+g_Kv_smc_kapela_VoltageClamp,nS,1.35,0.1,10,kapela_data
+tau_q1_smc_kapela_VoltageClamp,ms,371,10,3000,kapela_data
+tau_q2_smc_kapela_VoltageClamp,ms,2884,10,6000,kapela_data
+cnst_tau_pk_exp_smc_kapela_VoltageClamp,dimensionless,0.0268,0.0001,1,smc_kapela_VoltageClamp_parameters.csv
+cnst_tau_pK_coef_smc_kapela_VoltageClamp,dimensionless,61.49,1,120,smc_kapela_VoltageClamp_parameters.csv
+cnst_qbar_V_m_smc_kapela_VoltageClamp,dimensionless,40,0,60,smc_kapela_VoltageClamp_parameters.csv
+cnst_qbar_divide_smc_kapela_VoltageClamp,dimensionless,14,1,90,smc_kapela_VoltageClamp_parameters.csv
+cnst_pbar_K_V_m_smc_kapela_VoltageClamp,dimensionless,11,0,60,smc_kapela_VoltageClamp_parameters.csv
+cnst_pbar_K_div_smc_kapela_VoltageClamp,dimensionless,15,1,60,smc_kapela_VoltageClamp_parameters.csv

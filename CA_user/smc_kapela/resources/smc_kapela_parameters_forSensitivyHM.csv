@@ -1,0 +1,7 @@
+variable_name,units,value,data_reference
+K_2_smc_kapela,per_ms,0.5e-3,kapela_data
+K_3_smc_kapela,per_ms,0.4e-3,kapela_data
+K_4_smc_kapela,per_ms,0.1e-3,kapela_data
+K_5_smc_kapela,per_ms,0.5e-3,kapela_data
+K_7_smc_kapela,per_ms,0.1e-3,kapela_data
+gamma_smc_kapela,per_mM_3_s,17e6,kapela_data

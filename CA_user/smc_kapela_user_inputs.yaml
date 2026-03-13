@@ -1,0 +1,48 @@
+DEBUG: false
+user_inputs_path_override: ../CA_user/smc_kapela_user_inputs.yaml
+file_prefix: smc_kapela
+input_param_file: smc_kapela_parameters.csv
+model_type: cellml_only
+param_id_method: genetic_algorithm
+pre_time: 20
+sim_time: 2
+resources_dir: C:\Users\jebollen\OneDrive - UGent\Documents\Research\1-WP\CellModels\0_ABI_SMC\CircAutogen\FirstTry\circulatory_autogen\CA_user/resources
+cpp_generated_models_dir: /home/farg967/Documents/git_projects/circulatory_autogen/generated_models/3compartment/
+couple_to_1d: false
+cpp_1d_model_config_path: /home/farg967/software/venous_system/lucas_model/aortic_bif_coupling/run_dir/input1d.dat
+dt: 0.01
+solver: CVODE
+solver_info:
+  MaximumStep: 0.0001
+  MaximumNumberOfSteps: 5000
+param_id_obs_path: /home/farg967/Documents/git_projects/circulatory_autogen/resources/3compartment_obs_data.json
+do_sensitivity: false
+optimiser_options:
+  num_calls_to_function: 10000
+  cost_convergence: 0.001
+  max_patience: 10
+  cost_type: MSE
+debug_optimiser_options:
+  num_calls_to_function: 30
+  cost_convergence: 0.001
+  cost_type: MSE
+do_mcmc: true
+mcmc_options:
+  num_steps: 1000
+  num_walkers: 64
+  cost_type: MSE
+  cost_convergence: 0.001
+debug_mcmc_options:
+  num_steps: 5
+  num_walkers: 40
+  cost_type: MSE
+  cost_convergence: 0.001
+sa_options:
+  method: sobol
+  sample_type: saltelli
+  num_samples: 256
+do_ia: true
+ia_options:
+  method: Laplace
+plot_predictions: true
+generated_models_dir: C:\Users\jebollen\OneDrive - UGent\Documents\Research\1-WP\CellModels\0_ABI_SMC\CircAutogen\FirstTry\circulatory_autogen\CA_user/generated_models
