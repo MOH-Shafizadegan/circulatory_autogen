@@ -3,7 +3,7 @@
 
 # the below for my hpc
 # opencor_pythonshell_path=/hpc/farg967/OpenCOR-0-8-1-Linux/pythonshell
-opencor_pythonshell_path=/hpc/farg967/OpenCOR-0-8-3-Linux/pythonshell
+opencor_pythonshell_path="/mnt/c/Program Files/OpenCOR/Python/bin/python.exe"
 # opencor_pythonshell_path=/hpc/bghi639/Software/OpenCOR-0-7-1-Linux/pythonshell
 # opencor_pythonshell_path=/hpc/bghi639/Software/OpenCOR-0-8-1-Linux/pythonshell
 
