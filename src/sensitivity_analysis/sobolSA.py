@@ -839,9 +839,12 @@ class sobol_SA():
             self._rank0_print(f"[INFO] Valid samples: {n_valid_samples}/{n_samples}")
             self._rank0_print(f"[WARNING] Invalid samples: {n_invalid_samples}/{n_samples}")
 
-            return outputs
         else:
-            return None
+            outputs = None
+
+        self.comm.Barrier()
+
+        return outputs
 
     def sobol_index(self, outputs):
 
