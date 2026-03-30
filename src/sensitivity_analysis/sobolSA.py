@@ -638,6 +638,8 @@ class sobol_SA():
     def generate_outputs_mpi(self, samples):
         # Split samples across ranks
         n_samples = len(samples)
+        n_invalid_local = 0
+
         samples_per_rank = n_samples // self.num_procs
         remainder = n_samples % self.num_procs
 
@@ -657,6 +659,8 @@ class sobol_SA():
         # Create a single progress bar for rank 0 only to avoid noisy output from all ranks
         with tqdm(total=len(local_samples), desc=f"Rank {self.rank}", position=self.rank, leave=True, disable=self.rank != 0) as pbar:
             for param_vals in local_samples:
+
+                sample_invalid = False
 
                 # --- handle single vs multi subexperiment ---
                 if self.protocol_info["num_sub_total"] == 1:
@@ -694,14 +698,14 @@ class sobol_SA():
                         operands_outputs = self.sim_helper.get_results(self.obs_info["operands"])
                         operands_outputs_dict[(0, 0)] = operands_outputs
 
-                        self.sim_helper.reset_and_clear()
                     else:
                         print(f"[MPI Rank {self.rank}] Simulation failed for params: {param_vals}, after {retry_count} retries")
                         # Set a flag in operands_outputs_dict to indicate failure
                         operands_outputs_dict[(0, 0)] = {"failed": True}
+                        sample_invalid = True
 
-                        # reset at the end of each experiment
-                        self.sim_helper.reset_and_clear()
+                    # reset at the end of each experiment
+                    self.sim_helper.reset_and_clear()
 
                 else:
                     # multiple subexperiments
@@ -738,7 +742,7 @@ class sobol_SA():
                             success = self.sim_helper.run()
 
                             retry_count = 0
-                            max_retries = 0
+                            max_retries = 5
                             original_MaximumStep = self.solver_info.get("MaximumStep", None)
                             original_MaximumNumberOfSteps = self.solver_info.get("MaximumNumberOfSteps", None)
 
@@ -771,6 +775,7 @@ class sobol_SA():
                                 self._rank0_print(f"[MPI Rank {self.rank}] Simulation failed for params: {param_vals}, subexp={subexp_count} after {retry_count} retries")
                                 # Set a flag in operands_outputs_dict to indicate failure
                                 operands_outputs_dict[(exp_idx, this_sub_idx)] = {"failed": True}
+                                sample_invalid = True
 
                                 # reset at the end of each experiment
                                 if this_sub_idx == self.protocol_info["num_sub_per_exp"][exp_idx] - 1:
@@ -803,6 +808,7 @@ class sobol_SA():
                                                        np.any([f is None or (isinstance(f, (float, int)) and 
                                                                              np.isnan(f)) for f in feature])):
                                     feature = np.nanmean(features) if not np.all(np.isnan(features)) else 0.0
+                                    sample_invalid = True
 
                             features.append(feature)  
                             series_indices.append((j, None))  # Not a series point  
@@ -810,12 +816,16 @@ class sobol_SA():
                         features.append(np.mean(features) if features else 0)  
                         series_indices.append((j, None)) 
 
+                if sample_invalid:
+                    n_invalid_local += 1
+
                 local_outputs.append(features)
                 pbar.update(1)
 
         self._rank0_print(f"[MPI Rank {self.rank}] Finished processing samples {start}:{end}")
 
         # Gather results at rank 0
+        n_invalid_samples = self.comm.reduce(n_invalid_local, op=MPI.SUM, root=0)
         all_outputs = self.comm.gather(local_outputs, root=0)
 
         if self.rank == 0:
@@ -823,6 +833,12 @@ class sobol_SA():
             outputs = np.array(outputs)
             self._rank0_print(f"[MPI Rank 0] Gathered and flattened all outputs. Total outputs: {outputs.shape}")
             self.series_indices = series_indices
+
+            n_valid_samples = n_samples - n_invalid_samples
+            self._rank0_print(f"[MPI Rank 0] Outputs shape: {outputs.shape}")
+            self._rank0_print(f"[INFO] Valid samples: {n_valid_samples}/{n_samples}")
+            self._rank0_print(f"[WARNING] Invalid samples: {n_invalid_samples}/{n_samples}")
+
             return outputs
         else:
             return None
