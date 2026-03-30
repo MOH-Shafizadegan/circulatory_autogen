@@ -1434,7 +1434,17 @@ class OpencorParamID():
                     pred_outputs_list.append(pred_outputs)
                 # reset params
                 if reset:
+                    # TODO: This is needed for profile likelihood. Need to be checked that it doesn't cause issues for other methods. 
+                    # I think it should be fine, but just need to check.
                     self.sim_helper.reset_and_clear()
+                    param_names = self.param_id_info["param_names"][0]
+                    init_vals = self.sim_helper.get_init_param_vals(param_names)[0]
+                    self.sim_helper.set_param_vals(param_names, init_vals)  
+          
+                    # Reset states (but not constants)  
+                    self.sim_helper.reset_states()
+                    self.sim_helper.simulation.release_all_values()
+                    self.sim_helper.simulation.clear_results()
 
             else:
                 # simulation set cost to large,
