@@ -548,3 +548,60 @@ def calc_AHP_duration(t, V, baseline_voltage=None, series_output=False):
         return np.nan
     else:
         return np.nanmean(ahp_durations)
+    
+
+@series_to_constant
+def calc_AHP_recovery(t, v, spike_min_thresh=-20, window_size=100, series_output=False):
+
+    if series_output:
+        return v
+    
+    # 1. Detect all spikes using your specific parameters
+    peak_idxs, _ = find_peaks(v, height=spike_min_thresh, prominence=20)
+    
+    if len(peak_idxs) == 0:
+        return 0.0
+    
+    # Define the first spike
+    idx_spike1 = peak_idxs[0]
+    
+    # 2. Determine the "Target Voltage" for recovery
+    if len(peak_idxs) > 1:
+        # Scenario: Multiple APs. Target is the threshold of the second spike.
+        idx_spike2 = peak_idxs[1]
+        
+        # Threshold is typically the voltage where the upstroke begins.
+        # We look ~2ms (or a few samples) before the peak of the second spike.
+        idx_threshold2 = idx_spike2 - 10 if (idx_spike2 - 10) > idx_spike1 else idx_spike1 + 1
+        
+        v_target = v[idx_threshold2]
+        idx_end_search = idx_spike2
+    else:
+        # Scenario: Single AP. Target is the steady-state baseline.
+        v_target = np.mean(v[-window_size:-int(0.1*window_size)])
+        idx_end_search = len(v) - 1
+
+    # 3. Find AHP Trough between spikes (or after the first spike)
+    # Search from the first peak to the end of our search window
+    post_spike_v = v[idx_spike1 : idx_end_search]
+    idx_trough_relative = np.argmin(post_spike_v)
+    idx_trough = idx_spike1 + idx_trough_relative
+    t_trough = t[idx_trough]
+
+    # 4. Find the recovery time to the target voltage
+    # We use a 1.5mV buffer to account for your 3mV uncertainty
+    recovery_threshold = v_target
+    
+    post_trough_v = v[idx_trough : idx_end_search]
+    post_trough_t = t[idx_trough : idx_end_search]
+    
+    recovery_indices = np.where(post_trough_v >= recovery_threshold)[0]
+    
+    if recovery_indices.size > 0:
+        t_recovery = post_trough_t[recovery_indices[0]]
+    else:
+        # If it never hits the threshold, the "recovery" is cut off by the next spike/end
+        t_recovery = t[idx_end_search]
+
+    # 5. Result: Time from trough to reaching target voltage
+    return t_recovery - t_trough
