@@ -1261,7 +1261,13 @@ class sobol_SA():
         title_prefix = f"Sobol Indices (N={self.num_samples*(self.num_params+2)})"  
         
         def create_heatmap(data, index_type, output_labels):  
-            df_data = pd.DataFrame(data, index=param_labels, columns=output_labels)  
+
+            # Escape underscores in output_labels and param_labels
+            output_labels = [str(l).replace('_', r'\_') for l in output_labels]
+            # Assuming param_labels is accessible in this scope (it appears used in your df_data line)
+            safe_param_labels = [str(l).replace('_', r'\_') for l in param_labels]
+            
+            df_data = pd.DataFrame(data, index=safe_param_labels, columns=output_labels)  
             
             fig_width = max(10, len(output_labels) * 0.5)   
             fig_height = max(6, len(param_labels) * 0.5)  
