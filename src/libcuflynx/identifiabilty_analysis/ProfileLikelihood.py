@@ -274,7 +274,7 @@ class ProfileLikelihood:
                     dpi=300, bbox_inches='tight')  
             plt.close()
 
-    def run_profile_likelihood(self):  
+    def _run(self):  
         """Run profile likelihood analysis for all parameters."""  
         if self.best_param_vals is None:  
             raise ValueError("Best parameter values must be set first - Run param_id script first")  
