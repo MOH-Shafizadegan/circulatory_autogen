@@ -10,14 +10,47 @@ markdown_extensions:
   - pymdownx.superfences
   - pymdownx.tabbed:
       alternate_style: true
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          # The package root is src/, so griffe finds `libcuflynx` under it. Every `:::`
+          # identifier in docs/api/*.md is therefore spelled from the top of the package
+          # (`libcuflynx.param_id.paramID.CVS0DParamID`); an unprefixed name does not resolve.
+          paths: [../src]
+          options:
+            docstring_style: google
+            docstring_options:
+              warn_missing_types: false
+            show_source: false
+            show_root_heading: true
+            members_order: source
+            filters: ["!^_"]
+            merge_init_into_class: true
+            separate_signature: true
 nav:
   - Welcome to Circulatory Autogen: index.md
   - Getting Started: getting-started.md
   - Model Generation and Simulation: model-generation-simulation.md
   - Designing a model: design-model.md
+  - External Python Solvers: external-python-solvers.md
+  - Importing other model formats: model-formats.md
   - Parameter Identification: parameter-identification.md
   - Sensitivity Analysis: sensitivity-analysis.md
   - Identifiability Analysis: identifiability-analysis.md
+  - Emulators (Surrogate Models): emulators.md
   - "Example: 3Compartment Model": example-3compartment-model.md
   - Running on the HPC: running-on-hpc.md
   - Other Useful Features: other-features.md
+  - API Reference:
+      - Overview: api/index.md
+      - Model generation: api/generation.md
+      - Simulation: api/solver-wrappers.md
+      - Parameter identification: api/param-id.md
+      - Sensitivity analysis: api/sensitivity.md
+      - Identifiability analysis: api/identifiability.md
+      - Emulators: api/emulators.md
+      - Protocols: api/protocols.md
+      - Observation data &amp; utilities: api/utilities.md
+      - Parsers &amp; generators (internal): api/internals.md

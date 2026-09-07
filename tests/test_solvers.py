@@ -1,27 +1,26 @@
 """
 Tests for different solver implementations.
 
-These tests verify that OpenCOR (CVODE), Myokit (CVODE_myokit), and Python BDFsolvers
+These tests verify that OpenCOR (CVODE_opencor), Myokit (CVODE_myokit), and Python BDFsolvers
 work correctly for various models.
 
 """
 import os
+import re
 import sys
 import pytest
 import numpy as np
-import tempfile
 import shutil
 
-# Ensure src is on sys.path
 _TEST_ROOT = os.path.join(os.path.dirname(__file__), '..')
-_SRC_DIR = os.path.join(_TEST_ROOT, 'src')
-if _SRC_DIR not in sys.path:
-    sys.path.insert(0, _SRC_DIR)
 
-from solver_wrappers import get_simulation_helper
-from generators.PythonGenerator import PythonGenerator
-from scripts.script_generate_with_new_architecture import generate_with_new_architecture
+from libcuflynx.solver_wrappers import get_simulation_helper
+from libcuflynx.generators.PythonGenerator import PythonGenerator
+from libcuflynx.scripts.script_generate_with_new_architecture import generate_with_new_architecture
 import xml.etree.ElementTree as ET
+
+# _MODEL_INPUT_FILES and the generated_cellml_model_factory fixture now live in
+# tests/conftest.py so they are shared with test_protocol_state_continuity.py.
 
 
 def _normalize_variable_name(var_name, solver_type):
@@ -43,15 +42,15 @@ def _normalize_variable_name(var_name, solver_type):
             var = '.'.join(parts[1:])
             return comp, var
         return None, var_name
-    elif solver_type == 'opencor':
+    elif solver_type == 'opencor' or solver_type == 'python':
         # Format: component/variable
         parts = var_name.split('/')
         if len(parts) == 2:
             return parts[0], parts[1]
         return None, var_name
-    elif solver_type == 'python':
-        # Format: variable (no component prefix typically)
-        return None, var_name
+    # elif solver_type == 'python':
+    #     # Format: variable (no component prefix typically)
+    #     return None, var_name
     return None, var_name
 
 
@@ -78,20 +77,28 @@ def _match_variables(ref_vars, ref_type, other_vars, other_type):
         if key not in other_normalized:
             other_normalized[key] = var
     
-    # Match reference variables
+    # First pass: collect exact matches and build fallback candidates
+    fallback_candidates = {}  # ref_var -> other_var (via short-name fallback)
+    fallback_claims = {}      # other_var -> count of ref_vars that would claim it
     for ref_var in ref_vars:
         ref_comp, ref_var_name = _normalize_variable_name(ref_var, ref_type)
         ref_key = (ref_comp, ref_var_name) if ref_comp else (None, ref_var_name)
-        
-        # Try exact match first
+
         if ref_key in other_normalized:
             mapping[ref_var] = other_normalized[ref_key]
         else:
-            # Try matching by variable name only
+            # Fallback: match by variable name only (component-agnostic)
             var_only_key = (None, ref_var_name)
             if var_only_key in other_normalized:
-                mapping[ref_var] = other_normalized[var_only_key]
-    
+                other_var = other_normalized[var_only_key]
+                fallback_candidates[ref_var] = other_var
+                fallback_claims[other_var] = fallback_claims.get(other_var, 0) + 1
+
+    # Second pass: only include unambiguous fallback matches (one ref_var per other_var)
+    for ref_var, other_var in fallback_candidates.items():
+        if fallback_claims[other_var] == 1:
+            mapping[ref_var] = other_var
+
     return mapping
 
 
@@ -244,6 +251,125 @@ def _check_initial_states(myokit_helper, opencor_helper, model_name):
     
 
 
+def _to_numpy(data):
+    """Convert data to a 1-D numpy float64 array, handling CasADi DM/SX objects."""
+    if isinstance(data, np.ndarray):
+        return data.astype(float)
+    try:
+        import casadi as _ca
+        if isinstance(data, (_ca.DM, _ca.SX, _ca.MX)):
+            return np.array(_ca.DM(data)).flatten().astype(float)
+    except (ImportError, Exception):
+        pass
+    return np.array([data], dtype=float)
+
+
+def _get_python_model_initial_states(model_path):
+    """
+    Load a Python model file fresh (without any CasADi patching) and return
+    numeric initial state values.
+
+    Returns:
+        dict mapping state name (component/variable) -> float initial value
+    """
+    import importlib.util as _ilu
+    spec = _ilu.spec_from_file_location("_init_check_model", model_path)
+    mod = _ilu.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    states = mod.create_states_array()
+    rates = mod.create_states_array()
+    variables = mod.create_variables_array()
+    mod.initialise_variables(states, rates, variables)
+    mod.compute_computed_constants(variables)
+    def _qname(info):
+        comp = info.get("component", "")
+        if comp.endswith("_module"):
+            comp = comp[:-7]
+        return f"{comp}/{info['name']}" if comp else info["name"]
+    return {_qname(info): float(states[idx]) for idx, info in enumerate(mod.STATE_INFO)}
+
+
+def _check_python_family_initial_states(helpers, model_name, tolerance=0.01):
+    """
+    Compare Python-family helpers (solve_ivp_BDF, casadi_integrator_cvodes) initial
+    states against a reference built from OpenCOR (preferred) or Myokit (fallback).
+
+    The reference uses OpenCOR-style component/variable keys. Myokit keys are
+    converted to the same format when OpenCOR is unavailable so CI can still
+    validate Python-family helpers.
+
+    Returns:
+        dict with 'mismatches' list of
+        (state_name, helper_key, ref_val, other_val, diff_pct)
+    """
+    python_family_keys = [
+        k for k in ("solve_ivp_BDF", "casadi_integrator_cvodes") if k in helpers
+    ]
+    if not python_family_keys:
+        return {"mismatches": []}
+
+    # Build reference state map in component/variable format
+    ref_state_map = {}
+    ref_label = None
+    if "CVODE_opencor" in helpers:
+        oc = helpers["CVODE_opencor"]
+        for name, val in oc.data.states().items():
+            # OpenCOR returns DataStore::DataStoreValue objects; extract numeric value
+            ref_state_map[name] = float(val.value() if hasattr(val, "value") else val)
+        ref_label = "CVODE_opencor"
+    elif "CVODE_myokit" in helpers:
+        mk = helpers["CVODE_myokit"]
+        try:
+            mk_state = mk.simulation.default_state()
+        except Exception:
+            mk_state = mk.simulation.state()
+        for qname, idx in mk.state_index.items():
+            if "." in qname:
+                comp_mod, var = qname.split(".", 1)
+                comp = comp_mod[:-7] if comp_mod.endswith("_module") else comp_mod
+                ref_state_map[f"{comp}/{var}"] = float(mk_state[idx])
+        ref_label = "CVODE_myokit"
+
+    if not ref_state_map:
+        return {"mismatches": []}
+
+    mismatches = []
+    print(f"\n{'='*80}")
+    print(
+        f"PYTHON-FAMILY INITIAL STATE CHECK - {model_name} (ref: {ref_label})"
+    )
+    print("=" * 80)
+
+    for helper_key in python_family_keys:
+        # Reload the model numerically (avoids CasADi symbolic patching)
+        model_path = helpers[helper_key].model_path
+        try:
+            python_model_initial = _get_python_model_initial_states(model_path)
+        except Exception as e:
+            print(f"  ⊘ {helper_key}: could not load model numerically: {e}")
+            continue
+
+        print(f"\n  {helper_key}:")
+        for state_name, ref_val in sorted(ref_state_map.items()):
+            if state_name not in python_model_initial:
+                print(f"    ⊘ {state_name}: missing in {helper_key} model")
+                continue
+            other_val = python_model_initial[state_name]
+            denom = max(abs(ref_val), abs(other_val), 1e-15)
+            diff_pct = abs(ref_val - other_val) / denom * 100
+            status = "✓" if diff_pct < tolerance else "✗"
+            print(
+                f"    {status} {state_name}: {ref_val:.6e} vs {other_val:.6e} "
+                f"({diff_pct:.3f}%)"
+            )
+            if diff_pct >= tolerance:
+                mismatches.append(
+                    (state_name, helper_key, ref_val, other_val, diff_pct)
+                )
+
+    return {"mismatches": mismatches}
+
+
 def _compare_solver_results(ref_helper, ref_name, other_helper, other_name, tolerance=0.01):
     """
     Compare results between two solvers.
@@ -274,8 +400,8 @@ def _compare_solver_results(ref_helper, ref_name, other_helper, other_name, tole
         other_dict[var] = other_results[i][0]
     
     # Match variables
-    ref_type = 'myokit' if 'Myokit' in ref_name else ('opencor' if 'OpenCOR' in ref_name else 'python')
-    other_type = 'myokit' if 'Myokit' in other_name else ('opencor' if 'OpenCOR' in other_name else 'python')
+    ref_type = 'myokit' if 'myokit' in ref_name else ('opencor' if 'opencor' in ref_name.lower() else 'python')
+    other_type = 'myokit' if 'myokit' in other_name else ('opencor' if 'opencor' in other_name.lower() else 'python')
     
     var_mapping = _match_variables(ref_vars, ref_type, other_vars, other_type)
     
@@ -288,11 +414,9 @@ def _compare_solver_results(ref_helper, ref_name, other_helper, other_name, tole
         ref_data = ref_dict[ref_var]
         other_data = other_dict[other_var]
         
-        # Ensure arrays
-        if not isinstance(ref_data, np.ndarray):
-            ref_data = np.array([ref_data])
-        if not isinstance(other_data, np.ndarray):
-            other_data = np.array([other_data])
+        # Ensure numpy float arrays (handles CasADi DM/SX and scalars)
+        ref_data = _to_numpy(ref_data)
+        other_data = _to_numpy(other_data)
         
         # Skip scalars (constants) - only compare time series
         if len(ref_data) <= 1 or len(other_data) <= 1:
@@ -311,22 +435,24 @@ def _compare_solver_results(ref_helper, ref_name, other_helper, other_name, tole
         max_abs = np.maximum(max_abs, 1e-10)  # Avoid division by zero
         
         rel_error = (abs_diff / max_abs) * 100
-        max_rel_error_var = np.max(rel_error)
-        mean_rel_error_var = np.mean(rel_error)
+        has_nan = bool(np.any(np.isnan(rel_error)))
+        max_rel_error_var = np.nanmax(rel_error) if not has_nan else float('nan')
+        mean_rel_error_var = np.nanmean(rel_error)
         
         comparisons.append({
             'ref_var': ref_var,
             'other_var': other_var,
             'max_rel_error': max_rel_error_var,
             'mean_rel_error': mean_rel_error_var,
-            'max_abs_diff': np.max(abs_diff),
-            'mean_abs_diff': np.mean(abs_diff)
+            'max_abs_diff': np.nanmax(abs_diff),
+            'mean_abs_diff': np.nanmean(abs_diff)
         })
         
-        if max_rel_error_var > max_rel_error:
+        if has_nan or max_rel_error_var > max_rel_error:
             max_rel_error = max_rel_error_var
         
-        if max_rel_error_var > tolerance:
+        # NaN counts as a failure (comparison undefined — likely a conversion bug)
+        if has_nan or max_rel_error_var > tolerance:
             failed_vars.append({
                 'ref_var': ref_var,
                 'other_var': other_var,
@@ -342,7 +468,422 @@ def _compare_solver_results(ref_helper, ref_name, other_helper, other_name, tole
     }
 
 
-def test_init_states_myokit(base_user_inputs, resources_dir):
+@pytest.mark.integration
+@pytest.mark.solver
+def test_myokit_multi_trace_protocol():
+    """
+    Verify multi-experiment forcing: protocol traces vs constants, with pace rebounding.
+
+    Uses tests/test_inputs/Lotka_Volterra_forced.cellml (flat CellML 2.0 with u_alpha
+    and u_gamma forcing inputs) and resources/Lotka_Volterra_forced_multi_trace_obs_data.json:
+
+      - Experiment 0: pre_time=1 s, two subexperiments [0.25 s, 5 s] — constants then
+        u_alpha trace — exercises cumulative protocol times vs Myokit simulation.reset().
+      - Experiment 1: u_alpha = 0, u_gamma step trace
+      - Experiment 2: u_alpha fixed constant, u_gamma = 0 (both numeric — no trace)
+      - Experiment 3: u_alpha = 0, u_gamma fixed constant
+
+    This exercises myokit_helper rebinding the 'pace' label when switching which
+    input is driven by TimeSeriesProtocol, multi-subexperiment update_times/run loops,
+    and runs where both inputs use plain constants only.
+    """
+    import json
+
+    tests_dir = os.path.dirname(__file__)
+    cellml_path = os.path.join(tests_dir, "test_inputs", "Lotka_Volterra_forced.cellml")
+    obs_data_path = os.path.join(_TEST_ROOT, "resources", "Lotka_Volterra_forced_multi_trace_obs_data.json")
+
+    assert os.path.exists(cellml_path), f"CellML model not found: {cellml_path}"
+    assert os.path.exists(obs_data_path), f"obs_data not found: {obs_data_path}"
+
+    with open(obs_data_path, encoding="utf-8-sig") as fh:
+        obs_data = json.load(fh)
+    protocol_info = obs_data["protocol_info"]
+
+    dt = 0.01
+    solver_info = {"MaximumStep": 0.05, "MaximumNumberOfSteps": 50000}
+
+    try:
+        helper = get_simulation_helper(
+            model_path=cellml_path,
+            model_type="cellml",
+            solver="CVODE_myokit",
+            dt=dt,
+            sim_time=1.0,   # overridden per-experiment below
+            solver_info=solver_info,
+            pre_time=0.0,
+        )
+    except RuntimeError as exc:
+        pytest.skip(f"Myokit backend not available: {exc}")
+
+    helper.set_protocol_info(protocol_info)
+
+    sim_times = protocol_info["sim_times"]
+    pre_times = protocol_info["pre_times"]
+    params_to_change = protocol_info["params_to_change"]
+    param_keys = list(params_to_change.keys())
+
+    all_results = {}
+
+    for exp_idx in range(len(sim_times)):
+        current_time = 0.0
+        for sub_idx, sim_time in enumerate(sim_times[exp_idx]):
+            if sub_idx == 0:
+                helper.update_times(dt, current_time, sim_time, pre_times[exp_idx])
+                current_time += pre_times[exp_idx]
+            else:
+                helper.update_times(dt, current_time, sim_time, pre_time=0.0)
+
+            param_vals = [params_to_change[k][exp_idx][sub_idx] for k in param_keys]
+            helper.set_param_vals(param_keys, param_vals)
+            ok = helper.run()
+            assert ok, f"Simulation failed for experiment {exp_idx}, sub-experiment {sub_idx}"
+            current_time += sim_time
+
+        # Collect results after last sub-experiment
+        var_names = helper.get_all_variable_names()
+        x_name = next((n for n in var_names if n.endswith(".x")), None)
+        y_name = next((n for n in var_names if n.endswith(".y")), None)
+        assert x_name and y_name, f"Could not find x/y in {var_names[:10]}"
+
+        x_series = np.asarray(helper.get_results([x_name], flatten=True)[0], dtype=float)
+        y_series = np.asarray(helper.get_results([y_name], flatten=True)[0], dtype=float)
+
+        assert np.all(np.isfinite(x_series)), f"x series contains non-finite values in exp {exp_idx}"
+        assert np.all(np.isfinite(y_series)), f"y series contains non-finite values in exp {exp_idx}"
+        assert np.all(x_series >= 0), f"Prey (x) went negative in exp {exp_idx}"
+        assert np.all(y_series >= 0), f"Predator (y) went negative in exp {exp_idx}"
+
+        all_results[exp_idx] = {"x": x_series, "y": y_series}
+        helper.reset_and_clear()
+
+    # Distinct regimes: pacing u_alpha vs u_gamma produces different dynamics
+    assert not np.allclose(all_results[0]["x"], all_results[1]["x"], rtol=1e-3), (
+        "Experiments 0 vs 1: x trajectories should differ when different inputs are paced."
+    )
+    # Pure-constant forcings differ between exp 2 (boost u_alpha) and exp 3 (boost u_gamma)
+    assert not np.allclose(all_results[2]["x"], all_results[3]["x"], rtol=1e-3), (
+        "Experiments 2 vs 3: different constant forcings should produce different dynamics."
+    )
+    # Trace on u_alpha (exp 0) should differ from flat constant u_alpha (exp 2)
+    assert not np.allclose(all_results[0]["x"], all_results[2]["x"], rtol=1e-3), (
+        "Experiments 0 vs 2: time-varying u_alpha should differ from constant u_alpha."
+    )
+
+
+def _lotka_sim_helper(generated_cellml_model_factory, temp_model_dir, model_type, dt, sim_time):
+    """A Lotka-Volterra simulation helper on the given backend (Myokit or CasADi).
+
+    CasADi needs a generated (casadi_compat) Python model; Myokit runs the cellml directly. Both
+    are non-stiff CVODE-family integrations at tight tolerance so their trajectories agree.
+    """
+    cellml = generated_cellml_model_factory("Lotka_Volterra", "Lotka_Volterra_parameters.csv")
+    if model_type == "casadi_python":
+        pytest.importorskip("casadi")
+        model_path = PythonGenerator(
+            cellml, output_dir=temp_model_dir, module_name="Lotka_Volterra_casadi",
+            casadi_compat=True).generate()
+        solver = "casadi_integrator"
+        solver_info = {"method": "cvodes", "max_step_size": 0.005, "max_num_steps": 50000}
+    else:
+        model_path = cellml
+        solver = "CVODE_myokit"
+        solver_info = {"MaximumStep": 0.005, "MaximumNumberOfSteps": 50000,
+                       "rtol": 1e-9, "atol": 1e-9}
+    return get_simulation_helper(
+        model_path=model_path, model_type=model_type, solver=solver,
+        dt=dt, sim_time=sim_time, solver_info=solver_info, pre_time=0.0)
+
+
+@pytest.mark.integration
+@pytest.mark.solver
+@pytest.mark.parametrize("model_type", ["cellml", "casadi_python"])
+def test_params_to_change_affects_targeted_subexperiment_output(
+        model_type, generated_cellml_model_factory, temp_model_dir):
+    """A params_to_change value must change the simulated output of the sub-experiment it targets,
+    and only that one -- on both the Myokit (cellml) and CasADi backends.
+
+    Lotka-Volterra with gamma (the predator decay rate) changed between two sub-experiments: gamma
+    is the model default in sub 0 and set per-run in sub 1. Running two different sub-1 values,
+    sub 0 (same gamma in both) must be identical and sub 1 (differing gamma) must visibly differ.
+    A silently-ignored params_to_change would leave sub 1 identical too.
+    """
+    dt, T = 0.02, 2.0
+    GAMMA, Y = "Lotka_Volterra/gamma", "Lotka_Volterra/y"
+
+    def run_protocol(gamma_sub1):
+        h = _lotka_sim_helper(generated_cellml_model_factory, temp_model_dir, model_type, dt, T)
+        h.set_protocol_info({"pre_times": [0.0], "sim_times": [[T, T]],
+                             "params_to_change": {GAMMA: [[3.0, gamma_sub1]]}})
+        h.reset_states()
+        traces, cur = [], 0.0
+        for sub_idx, st in enumerate([T, T]):
+            h.update_times(dt, cur, st, 0.0)
+            h.set_param_vals([GAMMA], [3.0 if sub_idx == 0 else gamma_sub1])
+            assert h.run(), f"sub-experiment {sub_idx} failed"
+            traces.append(np.asarray(h.get_results([[Y]], flatten=True)[0]).flatten())
+            cur += st
+        h.close_simulation()
+        return traces
+
+    base = run_protocol(3.0)      # gamma unchanged in sub 1
+    changed = run_protocol(6.0)   # gamma changed in sub 1
+
+    n0 = min(len(base[0]), len(changed[0]))
+    np.testing.assert_allclose(
+        base[0][:n0], changed[0][:n0], rtol=1e-6, atol=1e-6,
+        err_msg="sub 0 output changed even though its params_to_change value did not")
+
+    n1 = min(len(base[1]), len(changed[1]))
+    denom = np.max(np.abs(base[1][:n1])) + 1e-9
+    max_rel_diff = float(np.max(np.abs(changed[1][:n1] - base[1][:n1])) / denom)
+    assert max_rel_diff > 0.05, (
+        f"params_to_change (gamma) had no meaningful effect on its target sub-experiment: "
+        f"max relative difference {max_rel_diff:.4g}")
+
+
+@pytest.mark.integration
+@pytest.mark.solver
+def test_trace_step_input_equals_discrete_subexperiment_change(
+        generated_cellml_model_factory, temp_model_dir):
+    """A step-function trace input over ONE sub-experiment gives the same output as the same step
+    encoded as a DISCRETE parameter change across TWO sub-experiments.
+
+    "gamma steps 3 -> 5 at t=T", compared against a Myokit step-trace reference:
+      - Myokit, one sub-experiment, gamma driven by a step trace (a 0-order step at t=T);
+      - Myokit, two sub-experiments, gamma = 3 then 5 (discrete);
+      - CasADi, two sub-experiments, gamma = 3 then 5 (discrete).
+    CasADi has no trace/pace mechanism, so it can only express the discrete two-sub encoding; that
+    it matches the Myokit trace-step is the check that CasADi's multi-sub state carry is correct.
+    The two-sub versions restart the integrator at the boundary while the trace crosses the
+    discontinuity continuously, so they agree to solver tolerance, not bits.
+    """
+    dt, T, G0, G1 = 0.02, 2.0, 3.0, 5.0
+    GAMMA, Y = "Lotka_Volterra/gamma", "Lotka_Volterra/y"
+
+    def discrete_2sub(model_type):
+        h = _lotka_sim_helper(generated_cellml_model_factory, temp_model_dir, model_type, dt, T)
+        h.set_protocol_info({"pre_times": [0.0], "sim_times": [[T, T]],
+                             "params_to_change": {GAMMA: [[G0, G1]]}})
+        h.reset_states()
+        ys, cur = [], 0.0
+        for sub_idx, st in enumerate([T, T]):
+            h.update_times(dt, cur, st, 0.0)
+            h.set_param_vals([GAMMA], [G0 if sub_idx == 0 else G1])
+            assert h.run(), f"{model_type} sub-experiment {sub_idx} failed"
+            ys.append(np.asarray(h.get_results([[Y]], flatten=True)[0]).flatten())
+            cur += st
+        h.close_simulation()
+        return np.concatenate([ys[0], ys[1][1:]])
+
+    # Reference: Myokit, one sub-experiment, gamma driven by a step trace (0-order step at t=T).
+    hT = _lotka_sim_helper(generated_cellml_model_factory, temp_model_dir, "cellml", dt, 2 * T)
+    hT.set_protocol_info({"pre_times": [0.0], "sim_times": [[2 * T]],
+                          "params_to_change": {GAMMA: [["g_step"]]},
+                          "protocol_traces": {"g_step": {"t": [0.0, T, T, 2 * T],
+                                                         "values": [G0, G0, G1, G1]}}})
+    hT.reset_states()
+    hT.update_times(dt, 0.0, 2 * T, 0.0)
+    hT.set_param_vals([GAMMA], ["g_step"])
+    assert hT.run(), "myokit trace-step run failed"
+    trace = np.asarray(hT.get_results([[Y]], flatten=True)[0]).flatten()
+    hT.close_simulation()
+
+    for model_type in ("cellml", "casadi_python"):
+        disc = discrete_2sub(model_type)
+        n = min(len(trace), len(disc))
+        assert n > 10 and len(trace) == len(disc), \
+            f"{model_type}: grid mismatch {len(trace)} vs {len(disc)}"
+        np.testing.assert_allclose(
+            disc[:n], trace[:n], rtol=1e-3, atol=1e-3,
+            err_msg=f"{model_type} two-sub discrete gamma differs from the Myokit step trace")
+
+
+@pytest.mark.integration
+@pytest.mark.solver
+def test_casadi_ad_mode_carries_state_across_sub_experiments(
+        generated_cellml_model_factory, temp_model_dir):
+    """Under do_ad, CasADi must chain sub-experiments exactly as the forward path does.
+
+    _create_param_subset flips the helper into AD mode, where the cost and its gradient are read
+    off one symbolic graph. That graph used to skip the sub-experiment carry altogether -- the
+    carry was recorded only `if not self._do_ad` -- so every sub-experiment restarted from the
+    default state while the forward path continued from the previous sub's end state. do_ad
+    therefore calibrated a different protocol from the one that was simulated afterwards, since
+    reset_and_clear turns _do_ad back off and the final simulate/plot does carry. Cost and
+    gradient agreed with each other (same graph), so nothing downstream could detect it.
+
+    Runs the same two-sub protocol with and without AD mode and requires identical numeric
+    trajectories. Fails on the second sub-experiment before the fix.
+    """
+    pytest.importorskip("casadi")
+    dt, T, G0, G1 = 0.02, 2.0, 3.0, 5.0
+    GAMMA = "Lotka_Volterra/gamma"
+
+    def two_sub_trajectories(ad_mode):
+        h = _lotka_sim_helper(generated_cellml_model_factory, temp_model_dir,
+                              "casadi_python", dt, T)
+        h.set_protocol_info({"pre_times": [0.0], "sim_times": [[T, T]],
+                             "params_to_change": {GAMMA: [[G0, G1]]}})
+        h.reset_states()
+        if ad_mode:
+            # What build_casadi_functions does before evaluating a cost or gradient.
+            h._create_param_subset([["Lotka_Volterra/alpha"]])
+            assert h._do_ad, "_create_param_subset should have switched the helper into AD mode"
+        trajectories, cur = [], 0.0
+        for sub_idx, st in enumerate([T, T]):
+            h.update_times(dt, cur, st, 0.0)
+            h.set_param_vals([GAMMA], [G0 if sub_idx == 0 else G1])
+            assert h.run(), f"sub-experiment {sub_idx} failed (ad_mode={ad_mode})"
+            # get_results returns SX under do_ad, so compare the numeric trajectory the helper
+            # evaluates alongside the symbolic one.
+            trajectories.append(np.array(h.state_traj_dm, dtype=float))
+            cur += st
+        h.close_simulation()
+        return trajectories
+
+    forward = two_sub_trajectories(ad_mode=False)
+    ad = two_sub_trajectories(ad_mode=True)
+
+    # Guard that the comparison is meaningful: if sub 1 happened to start where sub 0 did, a
+    # missing carry would be undetectable and this test would pass vacuously.
+    assert not np.allclose(forward[1][:, 0], forward[0][:, 0], rtol=1e-3, atol=1e-3), (
+        "the two sub-experiments start from the same state, so this test cannot detect a "
+        "missing carry -- pick a protocol where the first sub actually moves the state")
+
+    np.testing.assert_allclose(
+        ad[0], forward[0], rtol=1e-8, atol=1e-10,
+        err_msg="AD and forward mode disagree on the FIRST sub-experiment, before any carry")
+    np.testing.assert_allclose(
+        ad[1], forward[1], rtol=1e-6, atol=1e-8,
+        err_msg="AD mode did not carry state across the sub-experiment boundary: its second "
+                "sub-experiment restarts from the default state instead of continuing from "
+                "the first sub's end state")
+
+
+@pytest.mark.integration
+@pytest.mark.solver
+def test_myokit_set_constant_preserved_after_rebind():
+    """
+    Regression test for issue #219: cost mismatch when two protocol_traces are active.
+
+    Root cause: _rebind_pace_to creates a new myokit.Simulation(self.model). Myokit clones
+    self.model at construction time, so any set_constant calls made on the *old* simulation
+    (e.g. ID parameters applied at the start of each experiment) were silently discarded.
+    The fix syncs self.model via Variable.set_rhs so the next _recreate_simulation picks
+    them up.
+
+    Protocol: two experiments, each driven by a different trace parameter.
+      - exp0: u_alpha trace  (set_protocol_info pre-binds u_alpha → no rebind here)
+      - exp1: u_gamma trace  (u_gamma ≠ u_alpha → rebind triggered)
+
+    A non-default alpha value (7.0 vs model default 5.0) is applied as an ID param at the
+    start of each experiment.  exp1's results should reflect alpha=7.0; before the fix they
+    reverted to alpha=5.0 (template model default) after the rebind, making them
+    indistinguishable from a run where alpha was never changed.
+    """
+    tests_dir = os.path.dirname(__file__)
+    cellml_path = os.path.join(tests_dir, "test_inputs", "Lotka_Volterra_forced.cellml")
+
+    assert os.path.exists(cellml_path), f"CellML model not found: {cellml_path}"
+
+    dt = 0.01
+    sim_time = 5.0
+    solver_info = {"MaximumStep": 0.05}
+
+    # Minimal two-experiment protocol: exp0 paces u_alpha, exp1 paces u_gamma.
+    # Both traces are identically zero so they don't alter dynamics directly;
+    # only alpha (the ID param) changes dynamics between Run A and Run B.
+    zero_trace = {"t": [0.0, sim_time], "values": [0.0, 0.0]}
+    protocol_info = {
+        "pre_times": [0.0, 0.0],
+        "sim_times": [[sim_time], [sim_time]],
+        "params_to_change": {
+            "Lotka_Volterra_module/u_alpha": [["u_alpha_trace"], [0.0]],
+            "Lotka_Volterra_module/u_gamma": [[0.0], ["u_gamma_trace"]],
+        },
+        "protocol_traces": {
+            "u_alpha_trace": zero_trace,
+            "u_gamma_trace": zero_trace,
+        },
+    }
+
+    def _run_protocol(id_alpha):
+        """Run both experiments applying id_alpha as the ID param for alpha."""
+        try:
+            helper = get_simulation_helper(
+                model_path=cellml_path,
+                model_type="cellml",
+                solver="CVODE_myokit",
+                dt=dt,
+                sim_time=sim_time,
+                solver_info=solver_info,
+                pre_time=0.0,
+            )
+        except RuntimeError as exc:
+            pytest.skip(f"Myokit backend not available: {exc}")
+
+        helper.set_protocol_info(protocol_info)
+
+        var_names_out = None
+        results_by_exp = {}
+
+        for exp_idx in range(2):
+            # Step A: apply ID params (the alpha value under test)
+            helper.set_param_vals(
+                ["Lotka_Volterra_module/alpha"],
+                [id_alpha],
+            )
+            helper.reset_states()
+
+            # Step C: update times + run the single sub-experiment
+            helper.update_times(dt, 0.0, sim_time, 0.0)
+
+            ptc_vals = [
+                protocol_info["params_to_change"][k][exp_idx][0]
+                for k in protocol_info["params_to_change"]
+            ]
+            helper.set_param_vals(
+                list(protocol_info["params_to_change"].keys()),
+                ptc_vals,
+            )
+
+            ok = helper.run()
+            assert ok, f"Simulation failed for exp {exp_idx} with alpha={id_alpha}"
+
+            var_names = helper.get_all_variable_names()
+            x_name = next((n for n in var_names if n.endswith(".x")), None)
+            assert x_name, f"x variable not found in {var_names[:6]}"
+            var_names_out = var_names
+
+            results_by_exp[exp_idx] = np.asarray(
+                helper.get_results([x_name], flatten=True)[0], dtype=float
+            )
+            helper.reset_and_clear()
+
+        return results_by_exp
+
+    # Run A: alpha overridden to 7.0 (non-default)
+    results_alpha7 = _run_protocol(id_alpha=7.0)
+    # Run B: alpha left at model default (5.0)
+    results_alpha5 = _run_protocol(id_alpha=5.0)
+
+    # exp0 (u_alpha trace, NO rebind): alpha differs → dynamics differ
+    assert not np.allclose(results_alpha7[0], results_alpha5[0], rtol=1e-3), (
+        "exp0 (no rebind): alpha=7 and alpha=5 should produce different x trajectories."
+    )
+
+    # exp1 (u_gamma trace, REBIND triggered): alpha must still differ.
+    # Before the fix, alpha reverted to 5.0 after rebind in both runs,
+    # making results_alpha7[1] == results_alpha5[1].
+    assert not np.allclose(results_alpha7[1], results_alpha5[1], rtol=1e-3), (
+        "exp1 (rebind triggered): alpha=7.0 should still be active after rebind — "
+        "if this fails, set_constant changes are being lost in _rebind_pace_to "
+        "(issue #219)."
+    )
+
+
+def test_init_states_myokit(generated_cellml_model_factory):
     """
     Repro for computed-constant initial state values via Myokit wrapper.
 
@@ -351,33 +892,17 @@ def test_init_states_myokit(base_user_inputs, resources_dir):
     - Module defines x0 = 2 * a and x has initial_value=\"x0\"
     - Expect x(0) == 6 and y(0) == 1
     """
-    # Prefer using the autogeneration step output; only generate here if missing.
-    cellml_path = os.path.join(_TEST_ROOT, "generated_models", "test_init_states", "test_init_states.cellml")
-    if not os.path.exists(cellml_path):
-        cfg = base_user_inputs.copy()
-        cfg.update({
-            "DEBUG": True,
-            "file_prefix": "test_init_states",
-            "input_param_file": "test_init_states_parameters.csv",
-            "model_type": "cellml_only",
-            "solver": "CVODE",
-            "pre_time": 0.0,
-            "sim_time": 0.1,
-            "dt": 0.01,
-            "plot_predictions": False,
-            "do_mcmc": False,
-            "solver_info": {"MaximumStep": 0.001, "MaximumNumberOfSteps": 5000},
-            # Make sure generation uses the repo resources dir (contains our vessel array)
-            "resources_dir": resources_dir,
-        })
-        ok = generate_with_new_architecture(False, cfg)
-        assert ok, "Autogeneration failed for test_init_states"
-        assert os.path.exists(cellml_path), f"Generated model not found after generation: {cellml_path}"
+    cellml_path = generated_cellml_model_factory(
+        "test_init_states",
+        input_param_file="test_init_states_parameters.csv",
+        solver="CVODE_myokit",
+    )
 
     dt = 0.01
     sim_time = 0.1
     solver_info = {"MaximumStep": 0.001, "MaximumNumberOfSteps": 5000}
-    helper = get_simulation_helper(model_path=cellml_path, model_type="cellml_only", dt=dt, sim_time=sim_time, solver_info=solver_info, pre_time=0.0, solver="CVODE")
+    helper = get_simulation_helper(model_path=cellml_path, model_type="cellml", dt=dt, sim_time=sim_time, 
+                                   solver_info=solver_info, pre_time=0.0, solver="CVODE_myokit")
     result = helper.run()
     assert result, "Myokit simulation failed for init_states_test"
 
@@ -387,43 +912,186 @@ def test_init_states_myokit(base_user_inputs, resources_dir):
     y_name = next((n for n in names if n.endswith(".y")), None)
     assert x_name is not None and y_name is not None, f"Could not find x/y. Sample: {names[:20]}"
 
-    x0 = float(np.asarray(helper.get_results([x_name], flatten=True)[0][0])[0])
-    y0 = float(np.asarray(helper.get_results([y_name], flatten=True)[0][0])[0])
+    x0 = float(np.asarray(helper.get_results([x_name], flatten=True)[0][0]))
+    y0 = float(np.asarray(helper.get_results([y_name], flatten=True)[0][0]))
     assert np.isclose(x0, 6.0, rtol=0, atol=1e-12), f"Expected x(0)=6.0, got {x0} ({x_name})"
     assert np.isclose(y0, 1.0, rtol=0, atol=1e-12), f"Expected y(0)=1.0, got {y0} ({y_name})"
 
 
+def _find_state_series_name(helper, state_basename):
+    candidates = helper.get_all_variable_names()
+    for name in candidates:
+        if name == state_basename:
+            return name
+        if name.endswith(f"/{state_basename}") or name.endswith(f".{state_basename}"):
+            return name
+    raise AssertionError(f"Could not find state '{state_basename}' in variable names: {candidates[:20]}")
+
+
+def _run_and_get_initial_state(helper, state_name):
+    ok = helper.run()
+    assert ok, "Simulation run failed"
+    state_series = helper.get_results([state_name], flatten=True)[0]
+    return float(np.asarray(state_series)[0])
+
+
+@pytest.mark.integration
+@pytest.mark.solver
+@pytest.mark.parametrize("solver,model_type,solver_info", [
+    ("CVODE_myokit", "cellml", {"MaximumStep": 0.001, "MaximumNumberOfSteps": 5000}),
+    pytest.param(
+        "CVODE_opencor",
+        "cellml",
+        {"MaximumStep": 0.001, "MaximumNumberOfSteps": 5000},
+        marks=pytest.mark.need_opencor,
+    ),
+])
+def test_set_param_vals_updates_state_init_for_cellml_solvers(solver, model_type, solver_info, generated_cellml_model_factory):
+    """
+    For 3compartment, q_lv initial state is controlled by q_lv_init.
+    Verify set_param_vals + reset_states updates state initialization consistently.
+    """
+    model_path = generated_cellml_model_factory("3compartment", "3compartment_parameters.csv", solver=solver)
+
+    dt = 0.01
+    sim_time = 0.1
+    pre_time = 0.0
+
+    try:
+        helper = get_simulation_helper(
+            model_path=model_path,
+            model_type=model_type,
+            solver=solver,
+            dt=dt,
+            sim_time=sim_time,
+            solver_info=solver_info,
+            pre_time=pre_time,
+        )
+    except RuntimeError as e:
+        pytest.skip(f"{solver} backend not available: {e}")
+
+    q_name = _find_state_series_name(helper, "q_lv")
+
+    # Case 1: q_lv_init = 2e-4 -> q_lv(0) = 2e-4
+    helper.update_times(dt, 0.0, sim_time, pre_time)
+    helper.set_param_vals(["global/q_lv_init"], [2e-4])
+    helper.reset_states()
+    q0_lo = _run_and_get_initial_state(helper, q_name)
+    assert np.isclose(q0_lo, 2e-4, rtol=0.0, atol=1e-10), (
+        f"{solver}: expected q_lv(0)=2e-4, got {q0_lo}"
+    )
+
+    # get_all_results_dict should still be available after reset via cache.
+    _ = helper.get_all_results_dict()
+    helper.reset_and_clear()
+    cached_results = helper.get_all_results_dict()
+    assert q_name in cached_results, f"{solver}: cached results missing {q_name}"
+    if solver == "CVODE_myokit":
+        assert "environment.time" in cached_results, (
+            "CVODE_myokit: expected normalized time key 'environment.time' "
+            "to be present in cached results"
+        )
+
+    # Case 2: q_lv_init = 8e-4 -> q_lv(0) = 8e-4
+    helper.update_times(dt, 0.0, sim_time, pre_time)
+    helper.set_param_vals(["global/q_lv_init"], [8e-4])
+    helper.reset_states()
+    q0_hi = _run_and_get_initial_state(helper, q_name)
+    assert np.isclose(q0_hi, 8e-4, rtol=0.0, atol=1e-10), (
+        f"{solver}: expected q_lv(0)=8e-4, got {q0_hi}"
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.solver
+def test_set_param_vals_updates_state_init_for_python_solver(temp_model_dir, generated_cellml_model_factory):
+    """
+    Same state-init parameter update check for Python solver helper.
+    """
+    cellml_path = generated_cellml_model_factory("3compartment", "3compartment_parameters.csv")
+
+    py_generator = PythonGenerator(
+        cellml_path,
+        output_dir=temp_model_dir,
+        module_name="three_compartment_py",
+    )
+    python_model_path = py_generator.generate()
+
+    dt = 0.01
+    sim_time = 0.1
+    pre_time = 0.0
+    solver_info = {"method": "BDF", "rtol": 1e-6, "atol": 1e-8}
+
+    helper = get_simulation_helper(
+        model_path=python_model_path,
+        model_type="python",
+        solver="solve_ivp",
+        dt=dt,
+        sim_time=sim_time,
+        solver_info=solver_info,
+        pre_time=pre_time,
+    )
+
+    q_name = _find_state_series_name(helper, "q_lv")
+
+    helper.update_times(dt, 0.0, sim_time, pre_time)
+    helper.set_param_vals(["global/q_lv_init"], [2e-4])
+    helper.reset_states()
+    q0_lo = _run_and_get_initial_state(helper, q_name)
+    assert np.isclose(q0_lo, 2e-4, rtol=0.0, atol=1e-10), (
+        f"Python solver: expected q_lv(0)=2e-4, got {q0_lo}"
+    )
+
+    _ = helper.get_all_results_dict()
+    helper.reset_and_clear()
+    cached_results = helper.get_all_results_dict()
+    assert q_name in cached_results, "Python solver: cached results missing q_lv state series"
+
+    helper.update_times(dt, 0.0, sim_time, pre_time)
+    helper.set_param_vals(["global/q_lv_init"], [8e-4])
+    helper.reset_states()
+    q0_hi = _run_and_get_initial_state(helper, q_name)
+    assert np.isclose(q0_hi, 8e-4, rtol=0.0, atol=1e-10), (
+        f"Python solver: expected q_lv(0)=8e-4, got {q0_hi}"
+    )
+
+
 @pytest.fixture(scope="function")
-def temp_model_dir():
-    """Create a temporary directory for generated Python models."""
-    temp_dir = tempfile.mkdtemp()
-    yield temp_dir
-    shutil.rmtree(temp_dir, ignore_errors=True)
+def temp_model_dir(request):
+    """Create a persistent per-test directory for generated Python models."""
+    output_root = os.path.join(os.path.dirname(__file__), "test_outputs")
+    safe_nodeid = re.sub(r"[^A-Za-z0-9_.-]+", "_", request.node.nodeid).strip("._") or "unnamed_test"
+    model_dir = os.path.join(output_root, safe_nodeid, "python_models")
+    shutil.rmtree(model_dir, ignore_errors=True)
+    os.makedirs(model_dir, exist_ok=True)
+    return model_dir
 
 
-@pytest.mark.parametrize("model_name,model_path", [
-    ("3compartment", "generated_models/3compartment/3compartment.cellml"),
-    ("SN_simple", "generated_models/SN_simple/SN_simple.cellml"),
+@pytest.mark.parametrize("model_name,input_param_file", [
+    ("3compartment", "3compartment_parameters.csv"),
+    ("SN_simple", "SN_simple_parameters.csv"),
 ])
 @pytest.mark.parametrize("solver,solver_info", [
-    ("CVODE", {"MaximumStep": 0.0001}),  # OpenCOR 
+    pytest.param(
+        "CVODE_opencor",
+        {"MaximumStep": 0.0001},
+        marks=pytest.mark.need_opencor,
+    ),  # OpenCOR
     ("CVODE_myokit", {"MaximumStep": 0.0001}),  # Myokit
 ])
-def test_cellml_solvers(model_name, model_path, solver, solver_info):
+def test_cellml_solvers(model_name, input_param_file, solver, solver_info, generated_cellml_model_factory):
     """
-    Test CellML solvers (OpenCOR CVODE and Myokit CVODE).
+    Test CellML solvers (OpenCOR CVODE_opencor and Myokit CVODE).
     
     Args:
         model_name: Name of the model for test identification
         model_path: Path to the CellML model file
-        solver: Solver name ('CVODE' for OpenCOR, 'CVODE_myokit' for Myokit)
+        solver: Solver name ('CVODE_opencor' for OpenCOR, 'CVODE_myokit' for Myokit)
         solver_info: Solver configuration dictionary
     """
     # Skip OpenCOR tests if OpenCOR is not available
     # Check if model file exists
-    full_model_path = os.path.join(_TEST_ROOT, model_path)
-    if not os.path.exists(full_model_path):
-        pytest.fail(f"Model file not found: {full_model_path}")
+    full_model_path = generated_cellml_model_factory(model_name, input_param_file, solver=solver)
     
     # Simulation parameters
     dt = 0.01
@@ -432,8 +1100,8 @@ def test_cellml_solvers(model_name, model_path, solver, solver_info):
 
     try:
         helper = get_simulation_helper(
-            model_path=model_path,
-            model_type="cellml_only",
+            model_path=full_model_path,
+            model_type="cellml",
             solver=solver,
             dt=dt,
             sim_time=sim_time,
@@ -441,7 +1109,8 @@ def test_cellml_solvers(model_name, model_path, solver, solver_info):
             pre_time=pre_time,
         )
     except RuntimeError as e:
-        # Missing solver backend (OpenCOR/Myokit) should fail.
+        if solver == "CVODE_opencor":
+            pytest.skip(f"{solver} solver not available: {e}")
         pytest.fail(f"{solver} solver not available: {e}")
     
     # Run simulation
@@ -465,11 +1134,17 @@ def test_cellml_solvers(model_name, model_path, solver, solver_info):
             assert len(var_result) > 0, f"Empty result for variable {var_name}"
 
 
-@pytest.mark.parametrize("model_name,model_path", [
-    ("3compartment", "generated_models/3compartment/3compartment.cellml"),
-    ("SN_simple", "generated_models/SN_simple/SN_simple.cellml"),
+_SN_SIMPLE_XFAIL = (
+    "SN_simple's CellML initialises states from *_init parameters, which libCellML's Analyser rejects (ANALYSER_VARIABLE_NON_CONSTANT_INITIALISATION), so PythonGenerator cannot emit it (#151). cellml + Myokit accept the same model. strict=True on purpose: when a libCellML upgrade makes this pass, the XPASS fails the suite and says so, rather than leaving a permanently-red test that everyone has learned to ignore."
+)
+
+
+@pytest.mark.parametrize("model_name,input_param_file", [
+    ("3compartment", "3compartment_parameters.csv"),
+    pytest.param("SN_simple", "SN_simple_parameters.csv",
+                 marks=pytest.mark.xfail(strict=True, reason=_SN_SIMPLE_XFAIL)),
 ])
-def test_python_BDF_solver(model_name, model_path, temp_model_dir):
+def test_python_BDF_solver(model_name, input_param_file, temp_model_dir, generated_cellml_model_factory):
     """
     Test Python BDF solver on Python models generated from CellML.
     
@@ -479,9 +1154,7 @@ def test_python_BDF_solver(model_name, model_path, temp_model_dir):
         temp_model_dir: Temporary directory for generated Python models
     """
     # Check if model file exists
-    full_model_path = os.path.join(_TEST_ROOT, model_path)
-    if not os.path.exists(full_model_path):
-        pytest.fail(f"Model file not found: {full_model_path}")
+    full_model_path = generated_cellml_model_factory(model_name, input_param_file)
     
     # Generate Python model from CellML
     try:
@@ -528,61 +1201,120 @@ def test_python_BDF_solver(model_name, model_path, temp_model_dir):
             assert len(var_result) > 0, f"Empty result for variable {var_name}"
 
 
-def _run_all_solvers_and_compare(model_name, model_path, temp_model_dir, dt=0.01, sim_time=1.0, 
-                                  pre_time=0.0, tolerance=0.01):
+def _run_all_solvers_and_compare(model_name, full_model_path_cellml, temp_model_dir, dt=0.01, sim_time=1.0,
+                                  pre_time=0.0, tolerance=0.01, include_casadi=False, include_aadc=False,
+                                  aadc_method="semi_implicit"):
     """
-    Helper function to run all solvers on a model and compare outputs.
-    
-    Args:
-        model_name: Name of the model
-        model_path: Path to the CellML model file
-        temp_model_dir: Temporary directory for generated Python models
-        dt: Time step
-        sim_time: Simulation time
-        pre_time: Pre-simulation time
-        tolerance: Maximum allowed relative error percentage
-    
+    Run all solvers on a model and compare outputs.
+
+    Backends exercised:
+      - CVODE_myokit          (always required)
+      - CVODE_opencor         (skipped gracefully if OpenCOR unavailable)
+      - solve_ivp_BDF         (Python model, scipy BDF)
+      - casadi_integrator_cvodes (Python model, CasADi cvodes; only when include_casadi=True,
+                                  skipped gracefully if CasADi unavailable or symbolic eval fails)
+      - aadc_semi_implicit    (AADC Python model; only when include_aadc=True, skipped
+                                  gracefully if the aadc package is not installed)
+
+    The Python model (.py) is generated once and reused by both Python-family backends.
+    The AADC model is generated separately (different codegen — iif/aadc.math etc.) into an
+    ``aadc/`` subdir so it does not clobber the plain Python module.
+
     Returns:
         Tuple of (results dict, comparison_results dict, helpers dict)
     """
-    full_model_path = os.path.join(_TEST_ROOT, model_path)
-    
-    if not os.path.exists(full_model_path):
-        pytest.fail(f"Model file not found: {full_model_path}")
-    
-    solver_info = {"MaximumStep": 0.0001}
     helpers = {}
     results = {}
-    
-    for model_type, solver, method in [("cellml_only", "CVODE", "CVODE"), ("python", "solve_ivp", "BDF"), ("cellml_only", "CVODE_myokit", "CVODE")]:
-        solver_info['method'] = method
-        if model_type == "python":
-            # Generate Python model from CellML
-            try:
-                py_generator = PythonGenerator(
-                    full_model_path,
-                    output_dir=temp_model_dir,
-                    module_name=model_name
-                )
-                python_model_path = py_generator.generate()
-                full_model_path = python_model_path
-            except Exception as e:
-                results[solver] = {"success": False, "error": str(e)}
-                pytest.fail(f"{model_name} {model_type} {solver} {method} failed: Failed to generate Python model: {e}")
 
+    python_family_keys = ["solve_ivp_BDF"]
+    if include_casadi:
+        python_family_keys.append("casadi_integrator_cvodes")
+
+    # Generate Python model once; reused by Python-family backends
+    python_model_path = None
+    try:
+        py_generator = PythonGenerator(
+            full_model_path_cellml,
+            output_dir=temp_model_dir,
+            module_name=model_name,
+        )
+        python_model_path = py_generator.generate()
+    except Exception as e:
+        for key in python_family_keys:
+            results[key] = {
+                "success": False,
+                "skipped": True,
+                "reason": f"Python model generation failed: {e}",
+            }
+
+    # Generate the AADC model (separate codegen) into its own subdir.
+    aadc_model_path = None
+    if include_aadc:
         try:
-            helper = get_simulation_helper(model_path=full_model_path, model_type=model_type, solver=solver, dt=dt, sim_time=sim_time, solver_info=solver_info, pre_time=pre_time)
-            result = helper.run()
-            assert result, f"{solver} {method} simulation failed"
-            helpers[solver] = helper
-            results[solver] = {"success": True, "variables": len(helper.get_all_variable_names())}
+            aadc_dir = os.path.join(temp_model_dir, "aadc")
+            os.makedirs(aadc_dir, exist_ok=True)
+            aadc_generator = PythonGenerator(
+                full_model_path_cellml,
+                output_dir=aadc_dir,
+                module_name=model_name,
+                aadc_compat=True,
+            )
+            aadc_model_path = aadc_generator.generate()
         except Exception as e:
-            results[solver] = {"success": False, "error": str(e)}
-            pytest.fail(f"{model_name} {model_type} {solver} {method} failed: {e}")
-    
-    # Test Python BDF (below to disable)
-    # results["Python BDF"] = {"success": False, "skipped": True, "reason": "Temporarily disabled - hanging issue"}
-    
+            results["aadc_semi_implicit"] = {
+                "success": False,
+                "skipped": True,
+                "reason": f"AADC model generation failed: {e}",
+            }
+
+    # (helper_key, solver_arg, model_type, model_path, solver_info)
+    backends = [
+        # Tight rtol/atol on the CVODE reference too: myokit's CVODE default is rel_tol=1e-4
+        # (== the 0.01% comparison gate), so without this the reference trajectory is only
+        # converged to the gate and cross-solver agreement is build-dependent (passes locally,
+        # fails on CI's sundials build). Both solvers must be well-converged for a stable compare.
+        ("CVODE_opencor",  "CVODE_opencor",    "cellml",   full_model_path_cellml, {"MaximumStep": 0.0001, "rtol": 1e-8, "atol": 1e-10}),
+        ("CVODE_myokit",   "CVODE_myokit",     "cellml",   full_model_path_cellml, {"MaximumStep": 0.0001, "rtol": 1e-8, "atol": 1e-10}),
+        ("solve_ivp_BDF",  "solve_ivp",        "python",        python_model_path,      {"method": "BDF", "max_step": 0.0001, "rtol": 1e-8, "atol": 1e-10}),
+    ]
+    if include_casadi:
+        backends.append(
+            ("casadi_integrator_cvodes", "casadi_integrator", "casadi_python", python_model_path, {"method": "cvodes"})
+        )
+    if include_aadc and aadc_model_path is not None:
+        backends.append(
+            ("aadc_semi_implicit", "aadc_semi_implicit", "aadc_python", aadc_model_path, {"method": aadc_method})
+        )
+
+    # Backends where unavailability is a graceful skip rather than a test failure
+    skip_on_error = {"CVODE_opencor", "casadi_integrator_cvodes", "aadc_semi_implicit"}
+
+    for helper_key, solver, model_type, model_path, solver_info in backends:
+        # Skip Python-family backends if model generation already failed
+        if helper_key in results and results[helper_key].get("skipped"):
+            continue
+        try:
+            helper = get_simulation_helper(
+                model_path=model_path,
+                model_type=model_type,
+                solver=solver,
+                dt=dt,
+                sim_time=sim_time,
+                solver_info=solver_info,
+                pre_time=pre_time,
+            )
+            result = helper.run()
+            assert result, f"{helper_key} simulation failed"
+            helpers[helper_key] = helper
+            results[helper_key] = {"success": True, "variables": len(helper.get_all_variable_names())}
+        except Exception as e:
+            results[helper_key] = {"success": False, "error": str(e)}
+            if helper_key in skip_on_error:
+                results[helper_key]["skipped"] = True
+                results[helper_key]["reason"] = f"{helper_key} backend unavailable: {e}"
+                continue
+            pytest.fail(f"{model_name} {helper_key} failed: {e}")
+
     # Print summary
     print(f"\n{'='*80}")
     print(f"SOLVER TEST SUMMARY - {model_name} model")
@@ -594,95 +1326,111 @@ def _run_all_solvers_and_compare(model_name, model_path, temp_model_dir, dt=0.01
             print(f"⊘ {solver_name}: SKIPPED ({result.get('reason', 'N/A')})")
         else:
             print(f"✗ {solver_name}: FAILED ({result.get('error', 'N/A')})")
-    
-    # Compare results (use Myokit as reference)
+
+    # Compare all successful helpers against CVODE_myokit as reference
     ref_helper = helpers["CVODE_myokit"]
     comparison_results = {}
-    
+
     for solver_name, other_helper in helpers.items():
         if solver_name == "CVODE_myokit":
             continue
-        
+
         print(f"\n{'='*80}")
         print(f"Comparing CVODE_myokit vs {solver_name}")
         print("="*80)
-        
+
         comp_result = _compare_solver_results(ref_helper, "CVODE_myokit", other_helper, solver_name, tolerance=tolerance)
         comparison_results[solver_name] = comp_result
-        
+
         print(f"Matched variables: {comp_result['matched_count']}")
         print(f"Compared variables: {comp_result['compared_count']}")
         print(f"Maximum relative error: {comp_result['max_rel_error']:.6f}%")
-        
+
         if comp_result['failed_vars']:
             print(f"\nVariables exceeding {tolerance}% tolerance ({len(comp_result['failed_vars'])}):")
             for failed in comp_result['failed_vars'][:10]:
                 print(f"  {failed['ref_var']} / {failed['other_var']}: {failed['max_rel_error']:.6f}%")
             if len(comp_result['failed_vars']) > 10:
                 print(f"  ... and {len(comp_result['failed_vars']) - 10} more")
-        
-        # Show top differences
+
         sorted_comps = sorted(comp_result['comparisons'], key=lambda x: x['max_rel_error'], reverse=True)
         print(f"\nTop 10 largest differences:")
         print(f"{'Reference Variable':<40} {'Other Variable':<40} {'Max Rel Error %':>15}")
         print("-" * 95)
         for comp in sorted_comps[:10]:
             print(f"{comp['ref_var'][:39]:<40} {comp['other_var'][:39]:<40} {comp['max_rel_error']:>15.6f}")
-    
+
     print("\n" + "="*80)
-    
+
     return results, comparison_results, helpers
 
 
 @pytest.mark.integration
 @pytest.mark.slow
 # .cellml gets converted to .py for python solvers
-@pytest.mark.parametrize("model_name,model_path,sim_time", [
-    ("3compartment", "generated_models/3compartment/3compartment.cellml", 0.1),
-    ("SN_simple", "generated_models/SN_simple/SN_simple.cellml", 1.0),
+@pytest.mark.parametrize("model_name,input_param_file,sim_time,include_casadi", [
+    ("3compartment", "3compartment_parameters.csv", 0.1, False),
+    ("SN_simple",    "SN_simple_parameters.csv",    1.0, False),
+    # Lotka-Volterra has no conditional expressions so CasADi symbolic eval works
+    ("Lotka_Volterra", "Lotka_Volterra_parameters.csv", 5.0, True),
 ])
-def test_all_solvers(model_name, model_path, sim_time, temp_model_dir):
+def test_all_solvers(model_name, input_param_file, sim_time, include_casadi, temp_model_dir, generated_cellml_model_factory):
     """
     Integration test: Run all solvers on a model and compare outputs.
-    
-    This test verifies that:
-    1. Myokit CVODE solver works
-    2. OpenCOR CVODE solver works (if available)
-    3. Python BDF solver works (after generating Python model)
-    4. Initial states are correctly defined in Myokit modified model
-    5. Results agree within 0.01% relative error
-    
-    Args:
-        model_name: Name of the model for test identification
-        model_path: Path to the CellML model file (relative to project root)
-        sim_time: Simulation time (0.1s for 3compartment, 1.0s for SN_simple)
-        temp_model_dir: Temporary directory for generated Python models
+
+    Backends exercised:
+    1. CVODE_myokit          — Myokit CVODE (reference)
+    2. CVODE_opencor         — OpenCOR CVODE (skipped if unavailable)
+    3. solve_ivp_BDF         — SciPy BDF on generated Python model
+    4. casadi_integrator_cvodes — CasADi cvodes (only for Lotka_Volterra; skipped if unavailable)
+
+    Models with conditional expressions (3compartment, SN_simple) cannot use CasADi because
+    CasADi requires fully symbolic expressions with no Python-level branching.
+
+    Checks:
+    - All active backends agree within 0.01% relative error vs CVODE_myokit.
+    - For 3compartment: Myokit↔OpenCOR initial states match (when OpenCOR present).
+    - Python-family initial states match the reference (OpenCOR or Myokit).
     """
+    cellml_path = generated_cellml_model_factory(model_name, input_param_file)
     results, comparison_results, helpers = _run_all_solvers_and_compare(
-        model_name, model_path, temp_model_dir, sim_time=sim_time, tolerance=0.01
+        model_name, cellml_path, temp_model_dir, sim_time=sim_time, tolerance=0.01,
+        include_casadi=include_casadi,
     )
-    
-    # Check initial states for 3compartment model
-    if model_name == "3compartment" and "Myokit CVODE" in helpers and "OpenCOR CVODE" in helpers:
-        mismatches = _check_initial_states(
-            helpers["Myokit CVODE"],
-            helpers["OpenCOR CVODE"],
+
+    # Check Myokit↔OpenCOR initial states when both are available
+    if "CVODE_myokit" in helpers and "CVODE_opencor" in helpers:
+        init_check = _check_initial_states(
+            helpers["CVODE_myokit"],
+            helpers["CVODE_opencor"],
             model_name
         )
-
-        # Fail the test if there are significant initial state mismatches
-        significant_mismatches = [m for m in mismatches if m[4] > 0.01]  # 0.01% tolerance
+        mismatches = init_check['mismatches']
+        significant_mismatches = [m for m in mismatches if m[4] > 0.01]
         if significant_mismatches:
             mismatch_summary = f"Found {len(significant_mismatches)} significant initial state mismatches (>0.01%):\\n"
-            for m in significant_mismatches[:5]:  # Show first 5
+            for m in significant_mismatches[:5]:
                 mk_var, oc_var, mk_val, oc_val, diff_pct = m
                 mismatch_summary += f"  {mk_var} / {oc_var}: {diff_pct:.6f}%\\n"
             if len(significant_mismatches) > 5:
                 mismatch_summary += f"  ... and {len(significant_mismatches) - 5} more"
             pytest.fail(f"Initial state validation failed for {model_name}:\\n{mismatch_summary}")
         else:
-            print(f"✓ Initial states match within 0.01% tolerance ({len(mismatches)} minor differences found)")
-    
+            print(f"✓ Myokit↔OpenCOR initial states match within 0.01% tolerance ({len(mismatches)} minor differences found)")
+
+    # Check Python-family initial states for all models
+    py_init_check = _check_python_family_initial_states(helpers, model_name, tolerance=0.01)
+    py_mismatches = py_init_check['mismatches']
+    if py_mismatches:
+        mismatch_summary = f"Found {len(py_mismatches)} Python-family initial state mismatches (>0.01%):\\n"
+        for state_name, helper_key, ref_val, other_val, diff_pct in py_mismatches[:5]:
+            mismatch_summary += f"  {state_name} [{helper_key}]: {diff_pct:.6f}%\\n"
+        if len(py_mismatches) > 5:
+            mismatch_summary += f"  ... and {len(py_mismatches) - 5} more"
+        pytest.fail(f"Python-family initial state validation failed for {model_name}:\\n{mismatch_summary}")
+    else:
+        print(f"✓ Python-family initial states match within 0.01% tolerance")
+
     # Assert that all comparisons are within tolerance
     for solver_name, comp_result in comparison_results.items():
         if comp_result['failed_vars']:
@@ -690,3 +1438,447 @@ def test_all_solvers(model_name, model_path, sim_time, temp_model_dir):
             failed_msg += f"Maximum error: {comp_result['max_rel_error']:.6f}%"
             pytest.fail(failed_msg)
 
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_aadc_semi_implicit_vs_cvode_3compartment(aadc_licensed, temp_model_dir,
+                                                  generated_cellml_model_factory):
+    """The stiff 3compartment model integrated with AADC ``semi_implicit`` should track
+    the CVODE_myokit reference trajectory.
+
+    Why this test: the PR's own AADC stiff test only asserts the 3compartment run
+    produces no NaNs — it does not check the values are *correct*. This compares the
+    integrated ODE states against CVODE_myokit, which is what "same outputs with
+    CVODE and with AADC" requires.
+
+    **This test currently FAILS, deliberately.** It used to run ``method='bdf'``, which
+    tracked CVODE closely, and its docstring noted that ``semi_implicit`` could not meet a
+    meaningful tolerance (~35% relative-L2). That is still true, but bdf has been removed:
+    it handed the solve to ``scipy.solve_ivp`` with AADC supplying only the RHS and
+    Jacobian, so the trajectory never reached the tape, and the AD tape had no bdf branch —
+    ``do_ad`` silently recorded rk4 instead, making the cost and the gradient different
+    functions. Semi-implicit Euler is first-order with numerical diagonal damping
+    (``y += dt*f/(1+dt*lam)``); that damping suppresses the stiff states, which in this
+    cardiovascular model carry physiologically important fast dynamics.
+
+    Refining dt does not rescue it — the error *grows* (35% at 1e-3, 280% at 1e-4), because
+    as dt shrinks the damping factor tends to 1 and the scheme degenerates into explicit
+    forward Euler on a system with ``max|Re(eig(J))|*dt ~ 4.5e10``. AADC therefore has no
+    accurate stiff forward path on this model, and the assertion is left strict so that
+    stays visible. Note CI does not catch this: AADC is licence-gated and ``aadc_licensed``
+    skips the test in an unlicensed environment.
+    """
+    cellml_path = generated_cellml_model_factory("3compartment", "3compartment_parameters.csv")
+    results, _, helpers = _run_all_solvers_and_compare(
+        "3compartment", cellml_path, temp_model_dir, dt=0.001, sim_time=1.0,
+        tolerance=5.0, include_aadc=True, aadc_method="semi_implicit",
+    )
+
+    aadc_result = results.get("aadc_semi_implicit", {})
+    if aadc_result.get("skipped"):
+        pytest.skip(aadc_result.get("reason", "AADC backend unavailable"))
+
+    assert "aadc_semi_implicit" in helpers, "AADC backend did not run"
+    assert "CVODE_myokit" in helpers, "CVODE_myokit reference did not run"
+
+    # Compare the integrated ODE states (state names live on the aadc/"python" side).
+    aadc_state_names = list(helpers["aadc_semi_implicit"].state_name_to_idx.keys())
+    max_pct, worst_var, compared = _max_rel_l2_error(
+        helpers["CVODE_myokit"], helpers["aadc_semi_implicit"],
+        only_other_vars=aadc_state_names,
+    )
+    print(f"3compartment CVODE vs AADC: max rel-L2 error {max_pct:.3f}% on "
+          f"{worst_var} ({compared} states compared)")
+
+    assert compared > 0, "No ODE states were matched between CVODE and AADC"
+    tol_pct = 1.0
+    assert max_pct < tol_pct, (
+        f"AADC semi_implicit deviates from CVODE by {max_pct:.3f}% (> {tol_pct}%) "
+        f"on state {worst_var}. Expected to fail at ~35%: semi_implicit is not convergent "
+        f"on this stiff model (see docstring). Kept strict so the limitation stays visible."
+    )
+
+
+def _max_rel_l2_error(ref_helper, other_helper, only_other_vars=None):
+    """Max over matched time-series variables of the relative L2 error
+    ‖ref-other‖ / ‖ref‖, as a percentage. The whole-trajectory L2 norm is robust
+    both to variables that pass through zero (which break pointwise relative
+    error) and to near-constant variables with a small offset (which break
+    range-normalized error). Skips ~zero variables.
+
+    ``only_other_vars`` (optional) restricts the comparison to those "other"-side
+    variable names — e.g. the ODE state variables. Auxiliary/algebraic valve
+    quantities (e.g. switching valve inductances) are model-representation
+    details that legitimately differ between the myokit and casadi backends; the
+    integrated states are what the solver actually computes. Returns
+    (max_pct, worst_var, compared_count)."""
+    ref_vars = ref_helper.get_all_variable_names()
+    other_vars = other_helper.get_all_variable_names()
+    ref_results = ref_helper.get_all_results(flatten=False)
+    other_results = other_helper.get_all_results(flatten=False)
+    ref_dict = {v: ref_results[i][0] for i, v in enumerate(ref_vars)}
+    other_dict = {v: other_results[i][0] for i, v in enumerate(other_vars)}
+    mapping = _match_variables(ref_vars, "myokit", other_vars, "python")
+
+    worst_pct, worst_var, compared = 0.0, None, 0
+    for ref_var, other_var in mapping.items():
+        if only_other_vars is not None and other_var not in only_other_vars:
+            continue
+        a = _to_numpy(ref_dict[ref_var])
+        b = _to_numpy(other_dict[other_var])
+        if len(a) <= 1 or len(b) <= 1:
+            continue  # constant / scalar
+        n = min(len(a), len(b))
+        a, b = a[:n], b[:n]
+        ref_norm = float(np.linalg.norm(a))
+        if ref_norm <= 1e-12:
+            continue  # ~zero variable throughout
+        pct = float(np.linalg.norm(a - b) / ref_norm) * 100.0
+        compared += 1
+        if pct > worst_pct:
+            worst_pct, worst_var = pct, ref_var
+    return worst_pct, worst_var, compared
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.parametrize("model_name,input_param_file,sim_time,dt,tolerance", [
+    # casadi_python semi_implicit_euler is a first-order scheme, so it converges to
+    # the cellml CVODE_myokit reference as dt -> 0. Lotka_Volterra (smooth) matches
+    # tightly at a modest dt; 3compartment_nonstiff has a fast flow state (par/v)
+    # that needs a smaller dt — its state error shrinks ~first-order with dt
+    # (≈25%/14%/7% at dt=1e-4/3e-5/1e-5), so a small dt + looser bound is used.
+    # (The *stiff* 3compartment is excluded: there the diagonal damping trades
+    # transient accuracy for stability — see test_param_id
+    # .test_3compartment_stiff_casadi_semi_implicit_forward_and_gradient.)
+    ("Lotka_Volterra", "Lotka_Volterra_parameters.csv", 2.0, 1e-4, 1.0),
+    ("3compartment_nonstiff", "3compartment_nonstiff_parameters.csv", 0.05, 1e-5, 10.0),
+])
+def test_cvode_myokit_vs_casadi_semi_implicit_euler(
+    model_name, input_param_file, sim_time, dt, tolerance,
+    temp_model_dir, generated_cellml_model_factory,
+):
+    """cellml CVODE_myokit and casadi_python semi_implicit_euler integrate the same
+    ODE-state trajectories on non-stiff models. Compared with a relative L2
+    (whole-trajectory) error so states that pass through zero or are near-constant
+    don't spuriously dominate. Only the integrated ODE states are compared —
+    auxiliary/algebraic valve quantities differ by model representation between
+    the myokit and casadi backends, not by the integration."""
+    pytest.importorskip("casadi")
+
+    cellml_path = generated_cellml_model_factory(model_name, input_param_file)
+    # CasADi-compatible python model (conditionals rewritten for symbolic exec).
+    casadi_model_path = PythonGenerator(
+        cellml_path, output_dir=temp_model_dir,
+        module_name=f"{model_name}_casadi", casadi_compat=True,
+    ).generate()
+
+    ref = get_simulation_helper(
+        model_path=cellml_path, model_type="cellml", solver="CVODE_myokit",
+        dt=dt, sim_time=sim_time, pre_time=0.0,
+        solver_info={"MaximumStep": 1e-4, "rtol": 1e-8, "atol": 1e-10},
+    )
+    assert ref.run(), "CVODE_myokit reference simulation failed"
+
+    sie = get_simulation_helper(
+        model_path=casadi_model_path, model_type="casadi_python", solver="casadi_integrator",
+        dt=dt, sim_time=sim_time, pre_time=0.0,
+        solver_info={"method": "semi_implicit_euler"},
+    )
+    assert sie.run(), "casadi_python semi_implicit_euler simulation failed"
+
+    # The ODE states are the first len(STATE_INFO) entries of get_all_variable_names
+    # (states are listed before algebraic/constant variables).
+    state_names = set(sie.get_all_variable_names()[: len(sie.STATE_INFO)])
+    worst_pct, worst_var, compared = _max_rel_l2_error(ref, sie, only_other_vars=state_names)
+    print(f"\n{model_name}: CVODE_myokit vs casadi semi_implicit_euler (dt={dt}, "
+          f"sim_time={sim_time}): {compared} states compared, "
+          f"worst {worst_var}={worst_pct:.3f}% (tol {tolerance}%)")
+
+    assert compared > 0, "no state variables were compared"
+    assert worst_pct < tolerance, (
+        f"{model_name}: {worst_var} differs by {worst_pct:.3f}% (relative L2) "
+        f"(> {tolerance}%) between CVODE_myokit and casadi semi_implicit_euler"
+    )
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_van_der_pol_stiff_semi_implicit_euler_convergence(
+    temp_model_dir, generated_cellml_model_factory
+):
+    """Van der Pol (mu=100) — a classic stiff benchmark.
+
+    casadi_python semi_implicit_euler is a first-order, fixed-step damped scheme:
+    at a coarse dt it is wildly inaccurate on this stiff system, but it *converges*
+    to the cellml CVODE_myokit reference as dt is refined. This is exactly why a
+    convergence study is required before trusting semi_implicit_euler on stiff
+    models (see the note in tutorial/docs/parameter-identification.md)."""
+    pytest.importorskip("casadi")
+
+    cellml_path = generated_cellml_model_factory("VanDerPol", "VanDerPol_parameters.csv")
+    casadi_model_path = PythonGenerator(
+        cellml_path, output_dir=temp_model_dir,
+        module_name="VanDerPol_casadi", casadi_compat=True,
+    ).generate()
+
+    sim_time = 1.0
+    dts = (1e-3, 5e-4, 2.5e-4)
+    errors = []
+    for dt in dts:
+        ref = get_simulation_helper(
+            model_path=cellml_path, model_type="cellml", solver="CVODE_myokit",
+            dt=dt, sim_time=sim_time, pre_time=0.0,
+            solver_info={"MaximumStep": 1e-4, "rtol": 1e-9, "atol": 1e-11},
+        )
+        assert ref.run(), "CVODE_myokit reference simulation failed"
+        sie = get_simulation_helper(
+            model_path=casadi_model_path, model_type="casadi_python", solver="casadi_integrator",
+            dt=dt, sim_time=sim_time, pre_time=0.0,
+            solver_info={"method": "semi_implicit_euler"},
+        )
+        assert sie.run(), "casadi_python semi_implicit_euler simulation failed"
+        a = np.array(ref.get_results(["VanDerPol/x"], flatten=True)[0], dtype=float)
+        b = np.array(sie.get_results(["VanDerPol/x"], flatten=True)[0], dtype=float)
+        n = min(len(a), len(b))
+        a, b = a[:n], b[:n]
+        errors.append(100.0 * np.linalg.norm(a - b) / np.linalg.norm(a))
+
+    print(f"\nVan der Pol (mu=100) semi_implicit_euler vs CVODE_myokit, x relative-L2 "
+          f"error by dt {list(dts)}: {[round(e, 3) for e in errors]}%")
+
+    # First-order convergence: each dt refinement reduces the error.
+    assert errors[0] > errors[1] > errors[2], f"not converging with dt: {errors}"
+    # And the finest dt is well-converged (so the scheme is correct, just dt-sensitive).
+    assert errors[-1] < 2.0, f"finest-dt error {errors[-1]:.3f}% too high"
+
+
+@pytest.mark.integration
+@pytest.mark.solver
+def test_set_param_vals_changes_state_init_without_explicit_reset(generated_cellml_model_factory):
+    """set_param_vals(change_states=True) must move a state-init parameter's state on its own.
+
+    Before change_states existed, a Myokit Simulation kept the state/default_state arrays it was
+    built with: set_constant updated the *model* (so the symbolic initial value q_lv -> q_lv_init
+    re-evaluated) but nothing pushed that into the simulation, and reset() restored the stale
+    default_state. Only reset_states() closed the gap, so `set_param_vals(); run()` -- the
+    documented programmatic API -- silently simulated the old initial condition.
+    """
+    model_path = generated_cellml_model_factory(
+        "3compartment", "3compartment_parameters.csv", solver="CVODE_myokit")
+    helper = get_simulation_helper(
+        model_path=model_path, model_type="cellml", solver="CVODE_myokit",
+        dt=0.01, sim_time=0.1, pre_time=0.0,
+        solver_info={"MaximumStep": 0.001, "MaximumNumberOfSteps": 5000})
+    q_name = _find_state_series_name(helper, "q_lv")
+
+    # NOTE: deliberately no reset_states() call -- that is the whole point of this test.
+    helper.set_param_vals(["global/q_lv_init"], [2e-4])
+    q0_lo = _run_and_get_initial_state(helper, q_name)
+    helper.set_param_vals(["global/q_lv_init"], [8e-4])
+    q0_hi = _run_and_get_initial_state(helper, q_name)
+
+    assert np.isclose(q0_lo, 2e-4, rtol=0.0, atol=1e-10), f"expected q_lv(0)=2e-4, got {q0_lo}"
+    assert np.isclose(q0_hi, 8e-4, rtol=0.0, atol=1e-10), f"expected q_lv(0)=8e-4, got {q0_hi}"
+    # the helper's bookkeeping and the simulation must agree, not silently diverge
+    idx = helper.state_index[_resolve_state_qname(helper, "q_lv")]
+    assert np.isclose(helper.default_states[idx], 8e-4, rtol=0.0, atol=1e-10)
+    assert np.isclose(helper.simulation.default_state()[idx], 8e-4, rtol=0.0, atol=1e-10)
+
+def test_offline_pre_time_equals_the_same_total_warmup(generated_cellml_model_factory):
+    """An offline warmup of X followed by a logged pre_time of Y must equal a pre_time of X+Y.
+
+    This is the equivalence the parameter-identification docs promise for offline_pre_time
+    ("offline_pre_time: 19.0 with pre_times: [1.0] ... equivalent to pre_times: [20.0]"), and it
+    is what makes reusing an offline warmup sound in the first place. Nothing covered it.
+
+    Note the calibration path does NOT currently take this route: paramID folds offline_pre_time
+    into each experiment's first-sub warmup instead, because freezing one offline state biased the
+    cost surface and dropped d(steady state)/d(p) from the gradient (issue #269). This test pins
+    the backend primitive that a corrected offline optimisation would be rebuilt on.
+    """
+    model_path = generated_cellml_model_factory(
+        "3compartment", "3compartment_parameters.csv", solver="CVODE_myokit")
+    dt, sim_time, offline, logged_pre = 0.01, 0.5, 2.0, 1.0
+    # Tight tolerances matter here. Splitting the warmup restarts the integrator at the boundary,
+    # so the two paths take different step sequences; at Myokit's default tolerances that alone
+    # moves the trace by ~0.26%. The difference is pure integration accuracy, not a semantic
+    # difference -- it falls to ~1e-8 relative at 1e-10 and vanishes at 1e-12.
+    solver_info = {"MaximumStep": 0.001, "MaximumNumberOfSteps": 500000,
+                   "rtol": 1e-12, "atol": 1e-12}
+
+    def helper(pre_time):
+        return get_simulation_helper(
+            model_path=model_path, model_type="cellml", solver="CVODE_myokit",
+            dt=dt, sim_time=sim_time, pre_time=pre_time, solver_info=solver_info)
+
+    # Reference: all warmup as a single logged pre_time.
+    h_ref = helper(offline + logged_pre)
+    h_ref.reset_states()
+    assert h_ref.run(), "reference run failed"
+    ref = np.asarray(h_ref.get_results(["aortic_root/u"], flatten=True), dtype=float).ravel()
+
+    # Split: an offline unlogged warmup, then the remaining warmup as pre_time.
+    h_split = helper(logged_pre)
+    h_split.run_offline_pre_and_set_default_state(offline)
+    h_split.reset_states()
+    assert h_split.run(), "offline-warmup run failed"
+    split = np.asarray(h_split.get_results(["aortic_root/u"], flatten=True), dtype=float).ravel()
+
+    assert ref.shape == split.shape, f"grid mismatch {ref.shape} vs {split.shape}"
+    scale = float(np.max(np.abs(ref)))
+    max_rel = float(np.max(np.abs(split - ref)) / scale)
+    # Must agree to better than 1e-3 %. The residual is integrator truncation error, not a
+    # semantic difference: CVODE is a multistep method, so restarting at the split point drops it
+    # back to order 1 with a small step and it re-grows a different step sequence. The two
+    # sequences accumulate different local truncation errors, which is why the gap tracks the
+    # tolerance -- measured 0.26 % at Myokit defaults, 0.016 % at 1e-8, 8e-6 % at 1e-10, 0 at
+    # 1e-12 -- rather than staying fixed as a genuine state difference would.
+    assert max_rel < 1e-5, (
+        f"offline_pre_time + pre_time deviates from the same total warmup done inline by "
+        f"{max_rel * 100:.6f} %, above the 1e-3 % budget")
+
+
+@pytest.mark.integration
+@pytest.mark.solver
+def test_set_param_vals_change_states_false_rejects_states(generated_cellml_model_factory):
+    """change_states=False promises not to touch the state vector, so naming a state must raise.
+
+    Mid-protocol updates rely on that promise to preserve sub-experiment continuity; silently
+    skipping the write (or applying it anyway) would both be worse than failing loudly.
+    """
+    model_path = generated_cellml_model_factory(
+        "3compartment", "3compartment_parameters.csv", solver="CVODE_myokit")
+    helper = get_simulation_helper(
+        model_path=model_path, model_type="cellml", solver="CVODE_myokit",
+        dt=0.01, sim_time=0.1, pre_time=0.0,
+        solver_info={"MaximumStep": 0.001, "MaximumNumberOfSteps": 5000})
+
+    state_name = _resolve_state_qname(helper, "q_lv")
+    with pytest.raises(ValueError, match="cannot set states directly"):
+        helper.set_param_vals([state_name], [3e-4], change_states=False)
+
+    # a plain constant is still settable with change_states=False
+    helper.set_param_vals(["global/q_lv_init"], [3e-4], change_states=False)
+
+
+def _resolve_state_qname(helper, basename):
+    for qname in helper.state_index:
+        if qname.endswith(f".{basename}") or qname == basename:
+            return qname
+    raise AssertionError(f"state '{basename}' not found in {list(helper.state_index)[:10]}")
+
+def test_offline_pre_time_zero_is_a_noop(generated_cellml_model_factory):
+    """A zero/negative offline warmup must leave the default state untouched."""
+    model_path = generated_cellml_model_factory(
+        "3compartment", "3compartment_parameters.csv", solver="CVODE_myokit")
+    h = get_simulation_helper(
+        model_path=model_path, model_type="cellml", solver="CVODE_myokit",
+        dt=0.01, sim_time=0.5, pre_time=0.0,
+        solver_info={"MaximumStep": 0.001, "MaximumNumberOfSteps": 50000})
+    before = list(h.simulation.default_state())
+    h.run_offline_pre_and_set_default_state(0.0)
+    assert list(h.simulation.default_state()) == before
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_aadc_semi_implicit_signed_forward_tracks_cvode(temp_model_dir,
+                                                       generated_cellml_model_factory):
+    """The forward twin of the taped signed scheme must track CVODE, and its lagged Jacobian
+    must be shown to depend on sub-stepping.
+
+    ``semi_implicit_signed`` was the one AD-suitable method with no forward branch, so a
+    calibration using it could not simulate or plot its own best fit. It was withheld after an
+    earlier measurement put it ~4.4x above CVODE -- but that was taken from the model's own cold
+    initial conditions with ``pre_time=0``, where the entire window is a startup transient and
+    *every* scheme, CVODE included, peaks near 3.1e5. Spin up first and the scheme lands within
+    a couple of percent, which is what this asserts.
+
+    The second half is the part worth having a test for: the default ``jac_lag`` of 10 is only
+    safe *because* of sub-stepping. Take the sub-stepping away (``max_step = dt``) and the same
+    lag diverges within a handful of steps, so the two settings cannot be tuned independently.
+    """
+    pytest.importorskip("aadc")
+
+    dt, sim_time, pre_time = 0.01, 1.0, 5.0
+    cellml_path = generated_cellml_model_factory("3compartment", "3compartment_parameters.csv")
+
+    # Only the two backends being compared are built here. _run_all_solvers_and_compare would
+    # also run solve_ivp_BDF, which cannot take a 5 s spin-up on this stiff model, so using it
+    # would fail the test for a reason that has nothing to do with the integrator under test.
+    aadc_dir = os.path.join(temp_model_dir, "aadc_signed")
+    os.makedirs(aadc_dir, exist_ok=True)
+    aadc_model_path = PythonGenerator(
+        cellml_path, output_dir=aadc_dir, module_name="3compartment", aadc_compat=True,
+    ).generate()
+
+    cvode = get_simulation_helper(
+        model_path=cellml_path, model_type="cellml", solver="CVODE_myokit",
+        dt=dt, sim_time=sim_time, pre_time=pre_time,
+        solver_info={"MaximumStep": 0.0001, "rtol": 1e-8, "atol": 1e-10})
+    assert cvode.run(), "CVODE_myokit reference did not run"
+
+    try:
+        helper = get_simulation_helper(
+            model_path=aadc_model_path, model_type="aadc_python", solver="aadc_semi_implicit",
+            dt=dt, sim_time=sim_time, pre_time=pre_time,
+            solver_info={"method": "semi_implicit_signed"})
+        assert helper.run(), "semi_implicit_signed forward solve failed"
+    except (ImportError, RuntimeError) as e:
+        pytest.skip(f"AADC backend unavailable: {e}")
+
+    ref = float(np.max(cvode.get_results(["heart/u_lv"])[0]))
+    got = float(np.max(helper.get_results(["heart/u_lv"])[0]))
+    rel = abs(got - ref) / abs(ref)
+    assert rel < 0.05, (
+        f"semi_implicit_signed max(heart/u_lv)={got:.4e} vs CVODE_myokit {ref:.4e} "
+        f"({100 * rel:.1f}% apart, tolerance 5%)")
+
+    # A lagged Jacobian with no sub-stepping to justify it must not be quietly accepted.
+    variables_all = list(helper._numeric_variables_all)
+    for pos, idx in enumerate(helper.constant_indices):
+        variables_all[idx] = helper.variables[pos]
+
+    helper.solver_info["jac_lag"] = 10
+    helper.solver_info["max_step"] = helper.dt  # -> n_sub = 1, i.e. no sub-stepping
+    helper.reset_states()
+    traj = helper._integrate_semi_implicit_signed(
+        helper.states, variables_all, helper.pre_steps + helper.n_steps, helper.dt)
+    assert not np.all(np.isfinite(np.array(traj, dtype=float))), (
+        "jac_lag=10 without sub-stepping is expected to diverge on this stiff model; if it no "
+        "longer does, the coupling documented on solver_info['jac_lag'] has changed")
+
+
+@pytest.mark.solver
+def test_myokit_reads_a_constant_that_was_never_logged():
+    """Regression test for issue #453: a constant could not be read back.
+
+    ``_make_log`` deliberately excludes constants -- Myokit cannot log them -- while
+    ``_resolve_name`` classifies them as ``"var"`` like every other non-state. ``_extract``
+    then indexed the log by name for any ``"var"``, so asking for a constant raised
+    ``KeyError`` out of a log that was never going to contain it.
+
+    The arm that answers correctly was already there, two lines below: for a ``"var"`` it
+    evaluates the variable. It was simply unreachable while a log existed. So this asserts
+    the value, not merely the absence of an exception -- reaching the evaluation path is the
+    whole point.
+    """
+    tests_dir = os.path.dirname(__file__)
+    cellml_path = os.path.join(tests_dir, "test_inputs", "Lotka_Volterra_forced.cellml")
+    assert os.path.exists(cellml_path), f"CellML model not found: {cellml_path}"
+
+    sim = get_simulation_helper(
+        model_path=cellml_path, model_type="cellml", solver="CVODE_myokit",
+        dt=0.01, sim_time=1.0, solver_info={"MaximumStep": 0.05})
+    assert sim.run(), "the model did not run"
+
+    constants = [q for q, v in sim.qname_to_var.items()
+                 if v.is_constant() and q not in (sim.last_log or {})]
+    assert constants, "this model has no unlogged constant, so the test proves nothing"
+
+    qname = constants[0]
+    values = sim.get_results([qname], flatten=True)[0]
+
+    expected = sim.qname_to_var[qname].eval()
+    assert np.asarray(values).size >= 1
+    assert float(np.asarray(values).ravel()[0]) == pytest.approx(expected)

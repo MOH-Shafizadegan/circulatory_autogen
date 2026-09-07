@@ -45,6 +45,7 @@ P_ws,J_per_m3,6266.15,WestPulmonaryPhysiology2008
 flag_RR_control_lung,dimensionless,1,Albanese2016
 flag_P_mus_control_lung,dimensionless,1,Albanese2016
 P_mus_min_lung,J_per_m3,-980,Albanese2016_-980_in_this_formulation_is_-490_in_Albanese
+alpha_P_mus_lung,J_per_m3,1.0,TO_BE_COUPLED_TO_CONTROL
 P_plEE_lung,J_per_m3,-490,WestPulmonaryPhysiology2008
 q_l_us_lung,m3,0.0000344,YasuhiroFukui1972
 q_t_us_lung,m3,0.00000663,YasuhiroFukui1972
@@ -67,6 +68,7 @@ T_resp_min_lung,second,1,user_defined_TODO_refine
 IE_ratio_lung,dimensionless,0.6,Bizotto2022
 Delta_P_mus_lung,J_per_m3,0,small_chosen
 Delta_RR_resp_lung,per_s,0,small_chosen
+u_intraThor_heart,J_per_m3,0.0,TO_BE_COUPLED_TO_RESP
 P_m,J_per_m3,0,known
 R_pvn,Js_per_m6,1333000,Blanco_2013_Table_8
 C_pvn,m6_per_J,0.0000000060015,to_be_identified

@@ -5,9 +5,55 @@ This file sets up the test environment to work with OpenCOR's Python shell.
 It provides fixtures for test data, configuration, and deterministic randomness.
 """
 import os
+import re
 import sys
+
+
+def _validate_aadc_license():
+    """Record a throwaway AADC tape to force the licence check, and report whether
+    it succeeded.
+
+    This MUST run before ``mpi4py.MPI`` is imported. AADC validates its licence over
+    the network via LicenseSpring/libcurl, and once MPI is loaded into the process the
+    curl TLS backend can no longer be initialised ("Could not initialize curl TLS
+    backend"), so every subsequent ``start_recording()`` raises ``RuntimeError: AADC
+    License check failed`` — even with a perfectly valid licence. Validating here caches
+    the licence while curl still works, and it stays usable for the rest of the session.
+    """
+    try:
+        import aadc
+        import numpy
+
+        funcs = aadc.Functions()
+        funcs.start_recording()
+        x = aadc.idouble(2.0)
+        x_arg = x.mark_as_input()
+        y = x * x
+        y_res = y.mark_as_output()
+        funcs.stop_recording()
+        aadc.evaluate(funcs, {y_res: [x_arg]}, {x_arg: numpy.array([3.0])},
+                      aadc.ThreadPool(1))
+        return True
+    except ImportError:
+        # aadc simply isn't installed -- the ordinary case on CI and for most contributors.
+        return False
+    except RuntimeError as exc:
+        # Only an actual licence failure means "skip". Anything else raised by
+        # start_recording/mark_as_input/evaluate is a genuine regression in the AADC tape
+        # path, and swallowing it here would report the entire AADC suite as "skipped, no
+        # Matlogica licence" with the run still green -- hiding exactly the breakage these
+        # tests exist to catch.
+        if 'License' in str(exc) or 'licence' in str(exc).lower():
+            return False
+        raise
+
+
+# Whether AADC is installed *and* licensed. AADC's forward solves run unlicensed, but
+# anything that records a tape (the gradients) does not, so licence-gated tests skip
+# rather than fail. See the `aadc_licensed` fixture.
+AADC_LICENSE_AVAILABLE = _validate_aadc_license()
+
 import yaml
-import tempfile
 import shutil
 import pytest
 import numpy as np
@@ -18,27 +64,53 @@ import contextlib
 import time
 from mpi4py import MPI
 
-# Ensure src is on sys.path before importing project modules
+# Put this worktree's src/ first on sys.path so the suite exercises the libcuflynx in
+# this tree rather than a copy pip happens to have installed elsewhere. This is the
+# only sys.path surgery the package itself needs.
 _TEST_ROOT = os.path.join(os.path.dirname(__file__), '..')
 _SRC_DIR = os.path.join(_TEST_ROOT, 'src')
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
+# Also put the repo root on sys.path so top-level packages (e.g. `benchmarks`, which
+# test_param_id imports for the shared FitzHugh-Nagumo benchmark) are importable regardless of
+# how pytest was invoked. Without this, `pytest tests/` in CI fails to even collect
+# test_param_id with `ModuleNotFoundError: No module named 'benchmarks'`.
+_ROOT_DIR = os.path.abspath(_TEST_ROOT)
+if _ROOT_DIR not in sys.path:
+    sys.path.insert(0, _ROOT_DIR)
 
-from scripts.script_generate_with_new_architecture import generate_with_new_architecture
+from libcuflynx.scripts.script_generate_with_new_architecture import generate_with_new_architecture
 
 # Store pytest config for hooks that need plugin access (xdist reports lack config)
 _PYTEST_CONFIG = None
 _AUTOGEN_RESULTS_FILE = os.path.join(os.path.dirname(__file__), "..", ".pytest_one_rank_results")
+# Must match the autogen_status_file fixture: the completion counter that
+# wait_for_autogen_if_needed blocks on.
+_AUTOGEN_STATUS_FILE = os.path.join(os.path.dirname(__file__), "..", ".pytest_autogen_status")
+_MISC_RESULTS_FILE = os.path.join(os.path.dirname(__file__), "..", ".pytest_misc_results")
 _SOLVER_RESULTS_FILE = os.path.join(os.path.dirname(__file__), "..", ".pytest_solver_results")
 _SESSION_START = None
 _PARAM_ID_RESULTS_FILE = os.path.join(os.path.dirname(__file__), "..", ".pytest_param_id_results")
+_TEST_OUTPUT_ROOT = os.path.join(os.path.dirname(__file__), "test_outputs")
 # _AUTOGEN_CONFIGS = [
-#     {"file_prefix": "3compartment", "input_param_file": "3compartment_parameters.csv", "model_type": "cellml_only", "solver": "CVODE"},
-#     {"file_prefix": "simple_physiological", "input_param_file": "simple_physiological_parameters.csv", "model_type": "cellml_only", "solver": "CVODE"},
-#     {"file_prefix": "test_fft", "input_param_file": "test_fft_parameters.csv", "model_type": "cellml_only", "solver": "CVODE"},
+#     {"file_prefix": "3compartment", "input_param_file": "3compartment_parameters.csv", "model_type": "cellml", "solver": "CVODE"},
+#     {"file_prefix": "simple_physiological", "input_param_file": "simple_physiological_parameters.csv", "model_type": "cellml", "solver": "CVODE"},
+#     {"file_prefix": "test_fft", "input_param_file": "test_fft_parameters.csv", "model_type": "cellml", "solver": "CVODE"},
 # ]
 _LOCK_FILE = os.path.realpath(os.path.join(_TEST_ROOT, ".pytest_param_id_lock"))
-_PARAM_ID_TRIGGERS = ("test_param_id", "compare_optimisers", "test_sensitivity_analysis")
+_PARAM_ID_TRIGGERS = ("test_param_id", "compare_optimisers", "test_sensitivity_analysis",
+                      "test_UQ")
+
+
+def _is_autogen_like_nodeid(nodeid: str) -> bool:
+    return (
+        "test_autogeneration" in nodeid
+        or "interactive_tests/test_interactive_tutorial_notebooks" in nodeid
+    )
+
+
+def _is_misc_nodeid(nodeid: str) -> bool:
+    return "test_omex_analysis_pipeline" in nodeid
 
 
 def _mpi_rank_size():
@@ -48,6 +120,42 @@ def _mpi_rank_size():
         return comm.Get_rank(), comm.Get_size()
     except Exception:
         return 0, 1
+
+
+def _sanitize_nodeid(nodeid: str) -> str:
+    """Convert a pytest nodeid into a stable filesystem-safe name."""
+    sanitized = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(nodeid)).strip("._")
+    return sanitized or "unnamed_test"
+
+
+def _is_one_rank_task(request) -> bool:
+    return "one_rank_task" in getattr(request.node, "keywords", {})
+
+
+def _prepare_persistent_test_dir(request):
+    """
+    Prepare a persistent per-test output directory.
+
+    One-rank-distributed tests must not use global MPI barriers here because
+    different ranks may be executing different tests at the same time. In that
+    case the executing rank prepares its own directory locally. True all-rank
+    MPI tests still use rank 0 plus a barrier so all ranks see the same path.
+    """
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+
+    test_dir = os.path.join(_TEST_OUTPUT_ROOT, _sanitize_nodeid(request.node.nodeid))
+    use_local_setup = _is_one_rank_task(request)
+    setup_rank = rank if use_local_setup else 0
+
+    if rank == setup_rank:
+        os.makedirs(_TEST_OUTPUT_ROOT, exist_ok=True)
+        shutil.rmtree(test_dir, ignore_errors=True)
+        os.makedirs(test_dir, exist_ok=True)
+
+    if not use_local_setup:
+        comm.Barrier()
+    return test_dir
 
 
 def _silence_non_root_output():
@@ -86,7 +194,7 @@ def _load_base_inputs(user_inputs_dir):
 
     # Remove user_input entries so they aren't passed to the generation script,
     # this ensures the default dirs are used
-    for key in ['user_inputs_path_override', 'resources_dir', 'generated_models_dir', 'param_id_output_dir']:
+    for key in ['user_inputs_path_override', 'resources_dir', 'generated_models_dir', 'param_id_output_dir', 'param_id_obs_path']:
         if key in inp_data_dict:
             del inp_data_dict[key]
 
@@ -98,6 +206,14 @@ def _get_assigned_one_rank_rank(request):
         if key == "one_rank_rank":
             return val
     return 0
+
+
+def pytest_addoption(parser):
+    parser.addoption(
+        '--run-manual', action='store_true', default=False,
+        help='also run the tests marked "manual" -- ones too slow for CI or for a normal local '
+             'run, kept because they check something a faster test only approximates (e.g. the '
+             'full-model UQ posterior recovery, ~80 min, whose emulated equivalents run in ~5).')
 
 
 def pytest_configure(config):
@@ -118,15 +234,13 @@ def pytest_configure(config):
         # Prevent later re-registration and suppress header/footer hooks
         config.pluginmanager.set_blocked("terminalreporter")
 
-    # Add src directory to path if not already there
-    root_dir = os.path.join(os.path.dirname(__file__), '..')
-    src_dir = os.path.join(root_dir, 'src')
-    if src_dir not in sys.path:
-        sys.path.insert(0, src_dir)
-
+    # Keep runtime marker registration aligned with pyproject strict markers.
+    config.addinivalue_line("markers", "need_opencor: tests requiring OpenCOR backend")
+    config.addinivalue_line("markers", "solver: solver-focused tests")
     # Ensure pytest-xdist group marker is registered (also in pyproject for strict markers)
     config.addinivalue_line("markers", "xdist_group(name): serialize a group of tests under pytest-xdist")
     config.addinivalue_line("markers", "one_rank_rank(idx): rank assigned to run an autogeneration test")
+    config.addinivalue_line("markers", "misc_task: marks a one-rank miscellaneous integration test")
 
 
 def pytest_sessionstart(session):
@@ -138,6 +252,11 @@ def pytest_sessionstart(session):
     if rank == 0 and os.path.exists(_AUTOGEN_RESULTS_FILE):
         try:
             os.remove(_AUTOGEN_RESULTS_FILE)
+        except OSError:
+            pass
+    if rank == 0 and os.path.exists(_MISC_RESULTS_FILE):
+        try:
+            os.remove(_MISC_RESULTS_FILE)
         except OSError:
             pass
     if rank == 0 and os.path.exists(_SOLVER_RESULTS_FILE):
@@ -198,7 +317,26 @@ def pytest_runtest_logreport(report):
     Some runners/plugins keep capture enabled; this surfaces the comparison output.
     """
     if report.when != "call":
-        return
+        # A test that is skipped or errors during setup -- by a fixture (e.g. aadc_licensed),
+        # a skipif marker, or a broken fixture -- never reaches the "call" phase, so it would
+        # never be written to the results file. It is still counted in the expected totals set
+        # by pytest_collection_modifyitems, so pytest_terminal_summary would then block on
+        # _wait_for_expected_result_count for its full 1800 s timeout waiting for a line that
+        # can never arrive. Record it here instead.
+        if not (report.when == "setup" and (report.skipped or report.failed)):
+            return
+
+        # The same applies to the autogen completion counter. track_autogen_completion is a
+        # yield fixture, so a test skipped during setup never runs its teardown and never
+        # appends its "done" line -- but it is still counted in ONE_RANK_TOTAL. That leaves
+        # wait_for_autogen_if_needed short by one line, and its loop is unbounded, so the run
+        # hangs forever. Write the line here for tests whose teardown won't.
+        if "autogen_task" in getattr(report, "keywords", {}):
+            try:
+                with open(_AUTOGEN_STATUS_FILE, "a") as f:
+                    f.write("done\n")
+            except OSError:
+                pass
 
     # Collect autogen outcomes for cross-rank aggregation
     if "one_rank_task" in getattr(report, "keywords", {}):
@@ -221,6 +359,12 @@ def pytest_runtest_logreport(report):
         try:
             if "solver_task" in getattr(report, "keywords", {}):
                 with open(_SOLVER_RESULTS_FILE, "a") as f:
+                    if msg:
+                        f.write(f"{report.nodeid}|{report.outcome}|{assigned_rank}|call|{msg}\n")
+                    else:
+                        f.write(f"{report.nodeid}|{report.outcome}|{assigned_rank}\n")
+            elif "misc_task" in getattr(report, "keywords", {}):
+                with open(_MISC_RESULTS_FILE, "a") as f:
                     if msg:
                         f.write(f"{report.nodeid}|{report.outcome}|{assigned_rank}|call|{msg}\n")
                     else:
@@ -380,7 +524,7 @@ def opencor_python_path():
     Returns None if the path cannot be determined.
     """
     root_dir = os.path.join(os.path.dirname(__file__), '..')
-    opencor_path_file = os.path.join(root_dir, 'user_run_files', 'opencor_pythonshell_path.sh')
+    opencor_path_file = os.path.join(root_dir, 'user_run_files', 'python_path.sh')
     
     if os.path.exists(opencor_path_file):
         try:
@@ -389,9 +533,9 @@ def opencor_python_path():
                 for line in f:
                     line = line.strip()
                     # Skip comments and empty lines
-                    if line and not line.startswith('#') and 'opencor_pythonshell_path=' in line:
+                    if line and not line.startswith('#') and 'python_path=' in line:
                         # Extract the path value
-                        path = line.split('opencor_pythonshell_path=', 1)[1].strip()
+                        path = line.split('python_path=', 1)[1].strip()
                         # Remove quotes if present
                         path = path.strip('"\'')
                         if os.path.exists(path):
@@ -414,6 +558,25 @@ def resources_dir(project_root):
     return os.path.join(project_root, 'resources')
 
 
+@pytest.fixture(scope="session")
+def aadc_licensed():
+    """Skip a test unless AADC is installed *and* licensed.
+
+    AADC's forward solves run with a bare ``pip install aadc``, but anything that
+    records a tape — the gradients, and the on-tape damping in ``method='semi_implicit'``
+    — needs a Matlogica licence and otherwise raises ``RuntimeError: AADC License check
+    failed``. Those tests skip rather than fail so an unlicensed environment (including
+    CI) stays green.
+    """
+    pytest.importorskip("aadc")
+    if not AADC_LICENSE_AVAILABLE:
+        pytest.skip(
+            "AADC is installed but not licensed: recording a tape raises 'AADC License "
+            "check failed'. A Matlogica licence is needed to exercise the AADC gradient "
+            "and tape-recording solve paths."
+        )
+
+
 @pytest.fixture(scope="function")
 def base_user_inputs(user_inputs_dir):
     """
@@ -424,16 +587,81 @@ def base_user_inputs(user_inputs_dir):
 
 
 @pytest.fixture(scope="function")
-def temp_output_dir():
+def temp_output_dir(request):
     """
-    Fixture that creates a temporary directory for test outputs.
-    Automatically cleans up after the test.
+    Fixture that provides a persistent per-test output directory under tests/.
     """
-    temp_dir = tempfile.mkdtemp(prefix='circulatory_autogen_test_')
-    yield temp_dir
-    # Cleanup
-    if os.path.exists(temp_dir):
-        shutil.rmtree(temp_dir, ignore_errors=True)
+    return _prepare_persistent_test_dir(request)
+
+
+@pytest.fixture(scope="function")
+def temp_generated_models_dir(request, temp_output_dir):
+    """
+    Fixture that provides a persistent generated-models directory under tests/.
+    """
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+    generated_dir = os.path.join(temp_output_dir, "generated_models")
+    use_local_setup = _is_one_rank_task(request)
+    setup_rank = rank if use_local_setup else 0
+    if rank == setup_rank:
+        os.makedirs(generated_dir, exist_ok=True)
+    if not use_local_setup:
+        comm.Barrier()
+    return generated_dir
+
+
+# Default parameters CSV per model prefix, used by generated_cellml_model_factory
+# when the caller doesn't pass input_param_file explicitly.
+_MODEL_INPUT_FILES = {
+    "3compartment": "3compartment_parameters.csv",
+    "SN_simple": "SN_simple_parameters.csv",
+    "test_init_states": "test_init_states_parameters.csv",
+}
+
+
+@pytest.fixture(scope="function")
+def generated_cellml_model_factory(base_user_inputs, resources_dir, temp_generated_models_dir):
+    """Generate (or copy a committed) CellML model into an isolated per-test directory.
+
+    Shared by test_solvers.py and test_protocol_state_continuity.py. Copies from
+    tests/generated_models/<prefix> when a committed model exists, otherwise runs
+    autogeneration.
+    """
+
+    def _generate(file_prefix, input_param_file=None, solver="CVODE"):
+        source_dir = os.path.join(_TEST_ROOT, "generated_models", file_prefix)
+        target_dir = os.path.join(temp_generated_models_dir, file_prefix)
+        source_cellml = os.path.join(source_dir, f"{file_prefix}.cellml")
+        target_cellml = os.path.join(target_dir, f"{file_prefix}.cellml")
+
+        if os.path.exists(source_cellml):
+            shutil.copytree(source_dir, target_dir, dirs_exist_ok=True)
+            return target_cellml
+
+        input_param_file = input_param_file or _MODEL_INPUT_FILES[file_prefix]
+        config = base_user_inputs.copy()
+        config.update({
+            "DEBUG": True,
+            "file_prefix": file_prefix,
+            "input_param_file": input_param_file,
+            "model_type": "cellml",
+            "solver": solver,
+            "pre_time": 0.0,
+            "sim_time": 0.1,
+            "dt": 0.01,
+            "plot_predictions": False,
+            "do_uq": False,
+            "resources_dir": resources_dir,
+            "generated_models_dir": temp_generated_models_dir,
+            "solver_info": {"MaximumStep": 0.001, "MaximumNumberOfSteps": 5000},
+        })
+        ok = generate_with_new_architecture(False, config)
+        assert ok, f"Autogeneration failed for {file_prefix}"
+        assert os.path.exists(target_cellml), f"Generated model not found: {target_cellml}"
+        return target_cellml
+
+    return _generate
 
 
 @pytest.fixture(scope="function", autouse=True)
@@ -457,36 +685,60 @@ def test_model_configs():
     """
     return [
         # CellML models
-        ('ports_test', 'ports_test_parameters.csv', 'cellml_only', 'CVODE'),
-        ('3compartment', '3compartment_parameters.csv', 'cellml_only', 'CVODE'),
-        ('simple_physiological', 'simple_physiological_parameters.csv', 'cellml_only', 'CVODE'),
-        ('parasympathetic_model', 'parasympathetic_model_parameters.csv', 'cellml_only', 'CVODE'),
-        ('test_fft', 'test_fft_parameters.csv', 'cellml_only', 'CVODE'),
-        ('neonatal', 'neonatal_parameters.csv', 'cellml_only', 'CVODE'),
-        ('generic_junction_test_closed_loop', 'generic_junction_test_closed_loop_parameters.csv', 'cellml_only', 'CVODE'),
-        ('generic_junction_test2_closed_loop', 'generic_junction_test_closed_loop_parameters.csv', 'cellml_only', 'CVODE'),
-        ('generic_junction_test_open_loop', 'generic_junction_test_open_loop_parameters.csv', 'cellml_only', 'CVODE'),
-        ('generic_junction_test2_open_loop', 'generic_junction_test_open_loop_parameters.csv', 'cellml_only', 'CVODE'),
-        ('SN_simple', 'SN_simple_parameters.csv', 'cellml_only', 'CVODE'),
-        ('physiological', 'physiological_parameters.csv', 'cellml_only', 'CVODE'),
-        ('control_phys', 'control_phys_parameters.csv', 'cellml_only', 'CVODE'),
+        ('ports_test', 'ports_test_parameters.csv', 'cellml', 'CVODE'),
+        ('3compartment', '3compartment_parameters.csv', 'cellml', 'CVODE'),
+        ('simple_physiological', 'simple_physiological_parameters.csv', 'cellml', 'CVODE'),
+        ('parasympathetic_model', 'parasympathetic_model_parameters.csv', 'cellml', 'CVODE'),
+        ('test_fft', 'test_fft_parameters.csv', 'cellml', 'CVODE'),
+        ('neonatal', 'neonatal_parameters.csv', 'cellml', 'CVODE'),
+        ('generic_junction_test_closed_loop', 'generic_junction_test_closed_loop_parameters.csv', 'cellml', 'CVODE'),
+        ('generic_junction_test2_closed_loop', 'generic_junction_test_closed_loop_parameters.csv', 'cellml', 'CVODE'),
+        ('generic_junction_test_open_loop', 'generic_junction_test_open_loop_parameters.csv', 'cellml', 'CVODE'),
+        ('generic_junction_test2_open_loop', 'generic_junction_test_open_loop_parameters.csv', 'cellml', 'CVODE'),
+        ('SN_simple', 'SN_simple_parameters.csv', 'cellml', 'CVODE'),
+        ('physiological', 'physiological_parameters.csv', 'cellml', 'CVODE'),
+        ('control_phys', 'control_phys_parameters.csv', 'cellml', 'CVODE'),
         # CPP models
         ('aortic_bif_1d', 'aortic_bif_1d_parameters.csv', 'cpp', 'RK4'),
     ]
 
 
-def pytest_collection_modifyitems(items):
+def drop_manual_tests(config, items):
+    """Deselect the ``manual`` tests unless ``--run-manual`` was passed.
+
+    Deselected rather than skipped so they leave the rank-assignment bookkeeping untouched --
+    and because a permanently-skipped test in every run's summary is noise that stops being read.
+
+    A module-level function rather than inline in the hook so it can be tested directly. Testing
+    it by launching a nested pytest is not an option: ``pytest_configure`` deletes the shared
+    ``.pytest_*_results`` files at session start, so an inner session wipes the outer run's
+    accumulated results and the outer run then blocks in ``_wait_for_expected_result_count``
+    for its full 1800 s timeout.
+    """
+    if config.getoption('--run-manual'):
+        return
+    manual = [item for item in items if 'manual' in item.keywords]
+    if manual:
+        items[:] = [item for item in items if item not in manual]
+        config.hook.pytest_deselected(items=manual)
+
+
+def pytest_collection_modifyitems(config, items):
     """
     Ensure autogeneration tests run before param_id tests, which in turn run before others.
     This is useful when running the full suite so that generated assets exist before
     parameter ID tests execute.
     """
     import os
-    autogen_items = [item for item in items if "test_autogeneration" in item.nodeid]
+
+    drop_manual_tests(config, items)
+
+    autogen_items = [item for item in items if _is_autogen_like_nodeid(item.nodeid)]
+    misc_items = [item for item in items if _is_misc_nodeid(item.nodeid)]
     solver_items = [item for item in items if "test_solvers" in item.nodeid]
-    one_rank_items = autogen_items + solver_items
+    one_rank_items = autogen_items + solver_items + misc_items
     
-    os.environ["ONE_RANK_TOTAL"] = str(len(one_rank_items))
+    _set_expected_summary_totals(len(autogen_items), len(misc_items), len(solver_items))
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
     size = comm.Get_size()
@@ -506,7 +758,9 @@ def pytest_collection_modifyitems(items):
     def sort_key(item):
         nodeid = item.nodeid
         # Highest priority: autogeneration tests
-        if "test_autogeneration" in nodeid:
+        if _is_autogen_like_nodeid(nodeid):
+            return (0, nodeid)
+        if _is_misc_nodeid(nodeid):
             return (0, nodeid)
         if "test_solvers" in nodeid:
             return (1, nodeid)
@@ -543,7 +797,13 @@ def pytest_collection_modifyitems(items):
     for idx, item in enumerate(one_rank_items):
         assigned_rank = idx % max(size, 1)
         assigned_counts[assigned_rank] = assigned_counts.get(assigned_rank, 0) + 1
-        item.add_marker(pytest.mark.autogen_task)
+        if "test_solvers" in item.nodeid:
+            item.add_marker(pytest.mark.solver_task)
+            item.add_marker(pytest.mark.autogen_task)
+        elif _is_misc_nodeid(item.nodeid):
+            item.add_marker(pytest.mark.misc_task)
+        else:
+            item.add_marker(pytest.mark.autogen_task)
         item.add_marker(pytest.mark.one_rank_task)
         item.add_marker(pytest.mark.one_rank_rank(assigned_rank))
         # Store for runtime lookup
@@ -561,6 +821,25 @@ def pytest_collection_modifyitems(items):
             for r in range(size)
         )
         print(f"[AUTOGEN] Distribution -> {summary}")
+
+
+def pytest_deselected(items):
+    """
+    Keep summary wait totals aligned with pytest deselection (for example -k/-m
+    filtering). Without this, rank 0 can wait for result-file entries from tests
+    that never actually ran.
+    """
+    if not items:
+        return
+
+    autogen_deselected = sum(1 for item in items if _is_autogen_like_nodeid(item.nodeid))
+    misc_deselected = sum(1 for item in items if _is_misc_nodeid(item.nodeid))
+    solver_deselected = sum(1 for item in items if "test_solvers" in item.nodeid)
+
+    autogen_total = max(0, int(os.environ.get("AUTOGEN_SUMMARY_TOTAL", "0")) - autogen_deselected)
+    misc_total = max(0, int(os.environ.get("MISC_SUMMARY_TOTAL", "0")) - misc_deselected)
+    solver_total = max(0, int(os.environ.get("SOLVER_SUMMARY_TOTAL", "0")) - solver_deselected)
+    _set_expected_summary_totals(autogen_total, misc_total, solver_total)
 
 
 @pytest.fixture(scope="session")
@@ -606,8 +885,14 @@ def wait_for_autogen_if_needed(request, autogen_status_file):
         # No autogen tests collected; nothing to wait for
         return
 
+    # Bounded: this loop used to be `while True`, so a single missing completion line hung the
+    # whole run forever (on CI that means the 6 hour job timeout, with no diagnostic). Time out
+    # loudly instead -- the tests that follow will fail on their own if the models really are
+    # missing, which is far easier to debug than a silent hang.
+    deadline = time.time() + 600.0
+    count = 0
     waited = 0.0
-    while True:
+    while time.time() < deadline:
         if os.path.exists(autogen_status_file):
             try:
                 with open(autogen_status_file, "r") as f:
@@ -625,6 +910,21 @@ def wait_for_autogen_if_needed(request, autogen_status_file):
         if abs(waited - round(waited, 1)) < 1e-6 and int(waited) % 10 == 0 and waited > 0:
             print(f"Waiting for autogeneration to finish... ({waited:.1f}s)")
 
+    print(
+        f"ERROR: timed out after {waited:.0f}s waiting for autogeneration to finish "
+        f"({count} of {total} completion lines in {autogen_status_file}). "
+        f"A one-rank test was counted but never recorded its completion."
+    )
+    # Fail rather than continue. The tests that follow consume temp_generated_models_dir,
+    # which is *persistent* (not tmp_path), so on a warm checkout they would happily run
+    # against models generated by an earlier commit and report passed -- turning a missed
+    # autogeneration into a green run. Absent models would have failed loudly; stale ones
+    # do not, so the timeout itself has to be the failure.
+    raise RuntimeError(
+        f"Timed out after {waited:.0f}s waiting for autogeneration "
+        f"({count} of {total} completion lines in {autogen_status_file}). Refusing to "
+        f"continue: downstream tests would silently run against stale generated models.")
+
 
 @pytest.fixture(scope="function", autouse=True)
 def one_rank_rank_gate(request):
@@ -636,6 +936,9 @@ def one_rank_rank_gate(request):
     if 'solver_task' in request.node.keywords:
         task_message_caps = "SOLVER"
         task_message_low = "solver"
+    elif 'misc_task' in request.node.keywords:
+        task_message_caps = "MISC"
+        task_message_low = "misc"
     else:
         task_message_caps = "AUTOGEN"
         task_message_low = "autogen"
@@ -672,6 +975,9 @@ def one_rank_output_buffer(request):
     if 'solver_task' in request.node.keywords:
         task_message_caps = "SOLVER"
         task_message_low = "solver"
+    elif 'misc_task' in request.node.keywords:
+        task_message_caps = "MISC"
+        task_message_low = "misc"
     else:
         task_message_caps = "AUTOGEN"
         task_message_low = "autogen"
@@ -706,6 +1012,18 @@ def pytest_report_teststatus(report, config):
     Suppress the verbose word for autogen passes on rank 0 so pytest only shows
     the progress percent (no extra 'PASSED' from the root rank).
     """
+    if report.when == "call" and "misc_task" in getattr(report, "keywords", {}):
+        try:
+            rank = MPI.COMM_WORLD.Get_rank()
+        except Exception:
+            rank = 0
+        if rank == 0:
+            nodeid = getattr(report, "nodeid", "")
+            if report.outcome == "passed":
+                return report.outcome, "P", f"PASSED[MISC] {nodeid} PASSED on rank {rank}"
+            if report.outcome == "skipped":
+                return report.outcome, "S", f"SKIPPED[MISC] {nodeid} SKIPPED on rank {rank}"
+            return report.outcome, "F", f"FAILED[MISC] {nodeid} FAILED on rank {rank}"
     if report.when == "call" and "autogen_task" in getattr(report, "keywords", {}):
         try:
             rank = MPI.COMM_WORLD.Get_rank()
@@ -766,6 +1084,41 @@ def _read_results(path):
     return results
 
 
+def _wait_for_expected_result_count(path, expected_count, timeout_seconds=1800.0):
+    if expected_count <= 0:
+        return
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        if len(_read_results(path)) >= expected_count:
+            return
+        time.sleep(0.1)
+
+
+def _set_expected_summary_totals(autogen_count: int, misc_count: int, solver_count: int):
+    os.environ["ONE_RANK_TOTAL"] = str(autogen_count + solver_count)
+    os.environ["AUTOGEN_SUMMARY_TOTAL"] = str(autogen_count)
+    os.environ["MISC_SUMMARY_TOTAL"] = str(misc_count)
+    os.environ["SOLVER_SUMMARY_TOTAL"] = str(solver_count)
+
+
+def _should_wait_for_result_files(exitstatus, terminalreporter, config) -> bool:
+    """
+    Only wait for one-rank result files when pytest completed normal test
+    execution. Collection/import/internal errors never produce those files and
+    would otherwise stall the summary for the full timeout.
+
+    ``--collect-only`` is the same trap wearing a clean exit status: collection
+    still counts the one-rank tests into the *_SUMMARY_TOTAL environment
+    variables, but no test runs, so nothing ever appends to the result files and
+    the summary blocks for 1800 s per file -- 90 minutes to list the suite.
+    """
+    if config.getoption("collectonly", False):
+        return False
+    if terminalreporter.stats.get("error"):
+        return False
+    return exitstatus in (0, 1)
+
+
 def _augment_terminal_stats(terminalreporter):
     class _DummyPassReport:
         def __init__(self, nodeid):
@@ -794,6 +1147,15 @@ def _augment_terminal_stats(terminalreporter):
             msg = self.longrepr or self.nodeid
             tw.line(str(msg))
 
+    class _DummySkipReport:
+        def __init__(self, nodeid):
+            self.nodeid = nodeid
+            self.when = "call"
+            self.outcome = "skipped"
+            self.passed = False
+            self.failed = False
+            self.skipped = True
+
     existing = set()
     for key in ("passed", "failed", "skipped", "error", "xfailed", "xpassed"):
         for rep in terminalreporter.stats.get(key, []):
@@ -803,6 +1165,7 @@ def _augment_terminal_stats(terminalreporter):
 
     aggregated = []
     aggregated += _read_results(_AUTOGEN_RESULTS_FILE)
+    aggregated += _read_results(_MISC_RESULTS_FILE)
     aggregated += _read_results(_SOLVER_RESULTS_FILE)
     aggregated += _read_results(_PARAM_ID_RESULTS_FILE)
 
@@ -811,6 +1174,8 @@ def _augment_terminal_stats(terminalreporter):
             continue
         if status == "passed":
             terminalreporter.stats.setdefault("passed", []).append(_DummyPassReport(nodeid))
+        elif status == "skipped":
+            terminalreporter.stats.setdefault("skipped", []).append(_DummySkipReport(nodeid))
         else:
             terminalreporter.stats.setdefault("failed", []).append(_DummyFailReport(nodeid))
         existing.add(nodeid)
@@ -831,6 +1196,20 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
 
     if rank != 0:
         return
+
+    if _should_wait_for_result_files(exitstatus, terminalreporter, config):
+        _wait_for_expected_result_count(
+            _AUTOGEN_RESULTS_FILE,
+            int(os.environ.get("AUTOGEN_SUMMARY_TOTAL", "0")),
+        )
+        _wait_for_expected_result_count(
+            _MISC_RESULTS_FILE,
+            int(os.environ.get("MISC_SUMMARY_TOTAL", "0")),
+        )
+        _wait_for_expected_result_count(
+            _SOLVER_RESULTS_FILE,
+            int(os.environ.get("SOLVER_SUMMARY_TOTAL", "0")),
+        )
 
     duration = time.time() - (_SESSION_START or time.time())
 
@@ -854,7 +1233,8 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     if autogen_results:
         autogen_results.sort(key=lambda r: r["nodeid"])
         passed = sum(1 for r in autogen_results if r["status"] == "passed")
-        failed = [r for r in autogen_results if r["status"] != "passed"]
+        skipped = sum(1 for r in autogen_results if r["status"] == "skipped")
+        failed = [r for r in autogen_results if r["status"] not in {"passed", "skipped"}]
         total = len(autogen_results)
 
         terminalreporter.write_line("")
@@ -867,9 +1247,47 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
                 terminalreporter.write_line(f"[AUTOGEN OUTPUT] {res['message']}")
 
         terminalreporter.write_line(
-            f"[AUTOGEN] Summary: {passed}/{total} passed, {len(failed)} failed in {duration:.2f}s"
+            f"[AUTOGEN] Summary: {passed}/{total} passed, {skipped} skipped, {len(failed)} failed in {duration:.2f}s"
         )
-        footer_line = f"{passed} passed, {len(failed)} failed in {duration:.2f}s across ranks"
+        footer_line = f"{passed} passed, {skipped} skipped, {len(failed)} failed in {duration:.2f}s across ranks"
+        terminalreporter.write_sep("=", footer_line)
+
+    # --- MISC summary ---
+    misc_results = []
+    if os.path.exists(_MISC_RESULTS_FILE):
+        try:
+            with open(_MISC_RESULTS_FILE, "r") as f:
+                for line in f:
+                    parts = line.strip().split("|")
+                    if len(parts) == 3:
+                        nodeid, status, r = parts
+                        misc_results.append({"nodeid": nodeid, "status": status, "rank": int(r)})
+                    elif len(parts) >= 5:
+                        nodeid, status, r, phase, msg = parts[0], parts[1], parts[2], parts[3], "|".join(parts[4:])
+                        misc_results.append({"nodeid": nodeid, "status": status, "rank": int(r), "phase": phase, "message": msg})
+        except OSError:
+            pass
+
+    if misc_results:
+        misc_results.sort(key=lambda r: r["nodeid"])
+        passed = sum(1 for r in misc_results if r["status"] == "passed")
+        skipped = sum(1 for r in misc_results if r["status"] == "skipped")
+        failed = [r for r in misc_results if r["status"] not in {"passed", "skipped"}]
+        total = len(misc_results)
+
+        terminalreporter.write_line("")
+        for res in misc_results:
+            line = f"[MISC] {res['nodeid']} {res['status'].upper()} on rank {res['rank']}"
+            if "phase" in res:
+                line += f" ({res['phase']})"
+            terminalreporter.write_line(line)
+            if res.get("message"):
+                terminalreporter.write_line(f"[MISC OUTPUT] {res['message']}")
+
+        terminalreporter.write_line(
+            f"[MISC] Summary: {passed}/{total} passed, {skipped} skipped, {len(failed)} failed in {duration:.2f}s"
+        )
+        footer_line = f"{passed} passed, {skipped} skipped, {len(failed)} failed in {duration:.2f}s across ranks"
         terminalreporter.write_sep("=", footer_line)
 
     # --- SOLVER summary ---
@@ -891,7 +1309,8 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     if solver_results:
         solver_results.sort(key=lambda r: r["nodeid"])
         passed = sum(1 for r in solver_results if r["status"] == "passed")
-        failed = [r for r in solver_results if r["status"] != "passed"]
+        skipped = sum(1 for r in solver_results if r["status"] == "skipped")
+        failed = [r for r in solver_results if r["status"] not in {"passed", "skipped"}]
         total = len(solver_results)
 
         terminalreporter.write_line("")
@@ -904,9 +1323,9 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
                 terminalreporter.write_line(f"[SOLVER OUTPUT] {res['message']}")
 
         terminalreporter.write_line(
-            f"[SOLVER] Summary: {passed}/{total} passed, {len(failed)} failed in {duration:.2f}s"
+            f"[SOLVER] Summary: {passed}/{total} passed, {skipped} skipped, {len(failed)} failed in {duration:.2f}s"
         )
-        footer_line = f"{passed} passed, {len(failed)} failed in {duration:.2f}s across ranks"
+        footer_line = f"{passed} passed, {skipped} skipped, {len(failed)} failed in {duration:.2f}s across ranks"
         terminalreporter.write_sep("=", footer_line)
 
     # --- PARAM_ID summary ---
@@ -928,7 +1347,8 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     if param_results:
         param_results.sort(key=lambda r: r["nodeid"])
         passed = sum(1 for r in param_results if r["status"] == "passed")
-        failed = [r for r in param_results if r["status"] != "passed"]
+        skipped = sum(1 for r in param_results if r["status"] == "skipped")
+        failed = [r for r in param_results if r["status"] not in {"passed", "skipped"}]
         total = len(param_results)
 
         terminalreporter.write_line("")
@@ -943,9 +1363,9 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
                 terminalreporter.write_line(f"[PARAM_ID OUTPUT] {first_line[:300]}")
 
         terminalreporter.write_line(
-            f"[PARAM_ID] Summary: {passed}/{total} passed, {len(failed)} failed in {duration:.2f}s"
+            f"[PARAM_ID] Summary: {passed}/{total} passed, {skipped} skipped, {len(failed)} failed in {duration:.2f}s"
         )
-        footer_line = f"{passed} passed, {len(failed)} failed in {duration:.2f}s (param_id/comparison/SA)"
+        footer_line = f"{passed} passed, {skipped} skipped, {len(failed)} failed in {duration:.2f}s (param_id/comparison/SA)"
         terminalreporter.write_sep("=", footer_line)
 
 
@@ -988,14 +1408,14 @@ def minimal_param_id_config(base_user_inputs, resources_dir, temp_output_dir):
     """
     config = base_user_inputs.copy()
     config.update({
-        'model_type': 'cellml_only',
+        'model_type': 'cellml',
         'solver': 'CVODE',
         'param_id_method': 'genetic_algorithm',
         'pre_time': 1,
         'sim_time': 1,
         'dt': 0.01,
         'DEBUG': True,
-        'do_mcmc': False,
+        'do_uq': False,
         'plot_predictions': False,
         'solver_info': {
             'MaximumStep': 0.001,

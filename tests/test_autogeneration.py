@@ -5,29 +5,34 @@ These tests verify that models can be generated correctly from parameter files.
 """
 import os
 import pytest
+import yaml
 
-from scripts.script_generate_with_new_architecture import generate_with_new_architecture
+import libcuflynx.parsers.PrimitiveParsers as primitive_parsers
+from libcuflynx.scripts.script_generate_with_new_architecture import generate_with_new_architecture
 
 
 @pytest.mark.integration
 @pytest.mark.slow
 @pytest.mark.parametrize("file_prefix,input_param_file,model_type,solver", [
-    ('ports_test', 'ports_test_parameters.csv', 'cellml_only', 'CVODE'),
-    ('test_init_states', 'test_init_states_parameters.csv', 'cellml_only', 'CVODE'),
-    ('3compartment', '3compartment_parameters.csv', 'cellml_only', 'CVODE'),
-    ('simple_physiological', 'simple_physiological_parameters.csv', 'cellml_only', 'CVODE'),
-    ('parasympathetic_model', 'parasympathetic_model_parameters.csv', 'cellml_only', 'CVODE'),
-    ('test_fft', 'test_fft_parameters.csv', 'cellml_only', 'CVODE'),
-    ('neonatal', 'neonatal_parameters.csv', 'cellml_only', 'CVODE'),
-    ('generic_junction_test_closed_loop', 'generic_junction_test_closed_loop_parameters.csv', 'cellml_only', 'CVODE'),
-    ('generic_junction_test2_closed_loop', 'generic_junction_test_closed_loop_parameters.csv', 'cellml_only', 'CVODE'),
-    ('generic_junction_test_open_loop', 'generic_junction_test_open_loop_parameters.csv', 'cellml_only', 'CVODE'),
-    ('generic_junction_test2_open_loop', 'generic_junction_test_open_loop_parameters.csv', 'cellml_only', 'CVODE'),
-    ('SN_simple', 'SN_simple_parameters.csv', 'cellml_only', 'CVODE'),
-    ('physiological', 'physiological_parameters.csv', 'cellml_only', 'CVODE'),
-    ('control_phys', 'control_phys_parameters.csv', 'cellml_only', 'CVODE'),
+    ('ports_test', 'ports_test_parameters.csv', 'cellml', 'CVODE'),
+    ('test_init_states', 'test_init_states_parameters.csv', 'cellml', 'CVODE'),
+    ('3compartment', '3compartment_parameters.csv', 'cellml', 'CVODE'),
+    ('3compartment_extra_ops', '3compartment_extra_ops_parameters.csv', 'cellml', 'CVODE'),
+    ('simple_physiological', 'simple_physiological_parameters.csv', 'cellml', 'CVODE'),
+    ('parasympathetic_model', 'parasympathetic_model_parameters.csv', 'cellml', 'CVODE'),
+    ('test_fft', 'test_fft_parameters.csv', 'cellml', 'CVODE'),
+    ('neonatal', 'neonatal_parameters.csv', 'cellml', 'CVODE'),
+    ('generic_junction_test_closed_loop', 'generic_junction_test_closed_loop_parameters.csv', 'cellml', 'CVODE'),
+    ('generic_junction_test2_closed_loop', 'generic_junction_test_closed_loop_parameters.csv', 'cellml', 'CVODE'),
+    ('generic_junction_test_open_loop', 'generic_junction_test_open_loop_parameters.csv', 'cellml', 'CVODE'),
+    ('generic_junction_test2_open_loop', 'generic_junction_test_open_loop_parameters.csv', 'cellml', 'CVODE'),
+    ('SN_simple', 'SN_simple_parameters.csv', 'cellml', 'CVODE'),
+    ('physiological', 'physiological_parameters.csv', 'cellml', 'CVODE'),
+    ('control_phys', 'control_phys_parameters.csv', 'cellml', 'CVODE'),
+    ('control_parasymp', 'control_parasymp_parameters.csv', 'cellml', 'CVODE'),
+    ('control_phys_asd', 'control_phys_asd_parameters.csv', 'cellml', 'CVODE'),
 ])
-def test_generate_cellml_model_succeeds(file_prefix, input_param_file, model_type, solver, base_user_inputs, resources_dir):
+def test_generate_cellml_model_succeeds(file_prefix, input_param_file, model_type, solver, base_user_inputs, resources_dir, temp_generated_models_dir):
     """
     Test that CellML model generation succeeds for various model configurations.
     
@@ -46,6 +51,7 @@ def test_generate_cellml_model_succeeds(file_prefix, input_param_file, model_typ
         'input_param_file': input_param_file,
         'model_type': model_type,
         'solver': solver,
+        'generated_models_dir': temp_generated_models_dir,
     })
     
     # Verify parameter file exists
@@ -59,17 +65,26 @@ def test_generate_cellml_model_succeeds(file_prefix, input_param_file, model_typ
     assert success, f"Model generation failed for {file_prefix} with {input_param_file}"
 
 
+_SN_SIMPLE_XFAIL = (
+    "SN_simple's CellML initialises states from *_init parameters, which libCellML's Analyser rejects (ANALYSER_VARIABLE_NON_CONSTANT_INITIALISATION), so PythonGenerator cannot emit it (#151). cellml + Myokit accept the same model. strict=True on purpose: when a libCellML upgrade makes this pass, the XPASS fails the suite and says so, rather than leaving a permanently-red test that everyone has learned to ignore."
+)
+
+
 @pytest.mark.integration
 @pytest.mark.slow
 @pytest.mark.parametrize(
     "file_prefix,input_param_file,model_type,solver",
     [
         ('3compartment', '3compartment_parameters.csv', 'python', 'solve_ivp'),
-        ('SN_simple', 'SN_simple_parameters.csv', 'python', 'solve_ivp'),
+        pytest.param('SN_simple', 'SN_simple_parameters.csv', 'python', 'solve_ivp',
+                     marks=pytest.mark.xfail(strict=True, reason=_SN_SIMPLE_XFAIL)),
         ('pid_control', 'pid_control_parameters.csv', 'python', 'solve_ivp'),
+        ('Lotka_Volterra', 'Lotka_Volterra_parameters.csv', 'casadi_python', 'casadi_integrator'),
+        ('3compartment', '3compartment_parameters.csv', 'casadi_python', 'casadi_integrator'),
+        ('3compartment_nonstiff', '3compartment_nonstiff_parameters.csv', 'casadi_python', 'casadi_integrator'),
     ],
 )
-def test_generate_python_model_succeeds(file_prefix, input_param_file, model_type, solver, base_user_inputs, resources_dir):
+def test_generate_python_model_succeeds(file_prefix, input_param_file, model_type, solver, base_user_inputs, resources_dir, temp_generated_models_dir):
     """
     Test that Python model generation succeeds for selected configurations.
     """
@@ -79,7 +94,21 @@ def test_generate_python_model_succeeds(file_prefix, input_param_file, model_typ
         'input_param_file': input_param_file,
         'model_type': model_type,
         'solver': solver,
+        'generated_models_dir': temp_generated_models_dir,
     })
+    if model_type == 'casadi_python':
+        config['solver_info'] = {
+            'method': 'cvodes',
+            'max_step_size': 0.001,
+            'max_num_steps': 5000,
+        }
+    elif model_type == 'python':
+        config['solver_info'] = {
+            'method': 'RK45',
+            'max_step': 0.001,
+            'rtol': 1e-8,
+            'atol': 1e-8,
+        }
 
     param_file_path = os.path.join(resources_dir, input_param_file)
     assert os.path.exists(param_file_path), f"Parameter file not found: {param_file_path}"
@@ -87,10 +116,139 @@ def test_generate_python_model_succeeds(file_prefix, input_param_file, model_typ
     success = generate_with_new_architecture(False, config)
     assert success, f"Python model generation failed for {file_prefix} with {input_param_file}"
 
+    if file_prefix == '3compartment_nonstiff':
+        model_path = os.path.join(
+            temp_generated_models_dir, file_prefix, f'{file_prefix}.py'
+        )
+        with open(model_path) as f:
+            source = f.read()
+        assert 'heart_module_r_lin_trv' in source, "heart_nonstiff linear valve resistance should be in generated model"
+        assert 'heart_module_r_lin_trv * state.heart_module_v_trv' in source
+        assert 'heart_module_b_trv * state.heart_module_v_trv * fabs(state.heart_module_v_trv)' not in source
+
 
 @pytest.mark.integration
 @pytest.mark.slow
-def test_generate_cpp_model_succeeds(base_user_inputs, resources_dir, temp_output_dir):
+def test_generate_python_model_is_human_readable_by_default(base_user_inputs, resources_dir, temp_generated_models_dir):
+    """
+    Test that default Python generation adds the debug-friendly readability layer.
+    """
+    config = base_user_inputs.copy()
+    config.update({
+        'file_prefix': '3compartment',
+        'input_param_file': '3compartment_parameters.csv',
+        'model_type': 'python',
+        'solver': 'solve_ivp',
+        'generated_models_dir': temp_generated_models_dir,
+        'solver_info': {
+            'method': 'RK45',
+            'max_step': 0.001,
+            'rtol': 1e-8,
+            'atol': 1e-8,
+        },
+    })
+
+    param_file_path = os.path.join(resources_dir, '3compartment_parameters.csv')
+    assert os.path.exists(param_file_path), f"Parameter file not found: {param_file_path}"
+
+    success = generate_with_new_architecture(False, config)
+    assert success, "Python model generation failed for 3compartment"
+
+    model_path = os.path.join(temp_generated_models_dir, '3compartment', '3compartment.py')
+    utilities_path = os.path.join(temp_generated_models_dir, '3compartment', '3compartment_utilities.py')
+    assert os.path.exists(model_path), f"Generated Python model not found: {model_path}"
+    assert os.path.exists(utilities_path), f"Generated Python utilities not found: {utilities_path}"
+
+    with open(model_path, 'r', encoding='utf-8') as fh:
+        generated_code = fh.read()
+    with open(utilities_path, 'r', encoding='utf-8') as fh:
+        utilities_code = fh.read()
+
+    assert "state = StateView(states)" in generated_code
+    assert "var = VarView(variables)" in generated_code
+    assert "rate = RateView(rates)" in generated_code
+    assert "def initialise_variables(states, rates, variables):" in generated_code
+    assert "var.pvn_module_q_c = state.pvn_module_q_c_change" in generated_code
+    assert "var.heart_module_u_lv" in generated_code
+    assert "class VarView(_ArrayView):" in utilities_code
+    assert "def initialise_variables(states, rates, variables):" not in utilities_code
+    assert "def describe_variables(variables):" in utilities_code
+
+
+def _assert_original_python_code_generated(generated_models_dir, file_prefix):
+    model_path = os.path.join(generated_models_dir, file_prefix, f'{file_prefix}.py')
+    utilities_path = os.path.join(generated_models_dir, file_prefix, f'{file_prefix}_utilities.py')
+
+    assert os.path.exists(model_path), f"Generated Python model not found: {model_path}"
+    assert not os.path.exists(utilities_path), (
+        "Original Python generation should not emit a utilities helper module."
+    )
+
+    with open(model_path, 'r', encoding='utf-8') as fh:
+        generated_code = fh.read()
+
+    assert "_UTILITIES_PATH = Path(__file__).with_name(" not in generated_code
+    assert "StateView" not in generated_code
+    assert "VarView" not in generated_code
+    assert "RateView" not in generated_code
+    assert "states[" in generated_code
+    assert "rates[" in generated_code
+    assert "variables[" in generated_code
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.parametrize("config_source", ["inp_data_dict", "user_inputs_yaml"])
+def test_generate_python_model_uses_original_code_when_human_readable_disabled(
+    config_source,
+    base_user_inputs,
+    resources_dir,
+    temp_generated_models_dir,
+    temp_output_dir,
+    monkeypatch,
+):
+    """
+    Test that disabling human_readable preserves the original indexed Python code
+    for both direct config dictionaries and user_inputs.yaml loading.
+    """
+    config = base_user_inputs.copy()
+    config.update({
+        'file_prefix': '3compartment',
+        'input_param_file': '3compartment_parameters.csv',
+        'model_type': 'python',
+        'solver': 'solve_ivp',
+        'generated_models_dir': temp_generated_models_dir,
+        'human_readable': False,
+        'solver_info': {
+            'method': 'RK45',
+            'max_step': 0.001,
+            'rtol': 1e-8,
+            'atol': 1e-8,
+        },
+    })
+
+    param_file_path = os.path.join(resources_dir, '3compartment_parameters.csv')
+    assert os.path.exists(param_file_path), f"Parameter file not found: {param_file_path}"
+
+    if config_source == "inp_data_dict":
+        success = generate_with_new_architecture(False, config)
+    else:
+        temp_user_inputs_dir = os.path.join(temp_output_dir, "user_inputs")
+        os.makedirs(temp_user_inputs_dir, exist_ok=True)
+        user_inputs_path = os.path.join(temp_user_inputs_dir, "user_inputs.yaml")
+        with open(user_inputs_path, 'w', encoding='utf-8') as fh:
+            yaml.safe_dump(config, fh)
+
+        monkeypatch.setattr(primitive_parsers, "user_inputs_dir", temp_user_inputs_dir)
+        success = generate_with_new_architecture(False, None)
+
+    assert success, f"Python model generation failed for config source {config_source}"
+    _assert_original_python_code_generated(temp_generated_models_dir, '3compartment')
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_generate_cpp_model_succeeds(base_user_inputs, resources_dir, temp_output_dir, temp_generated_models_dir):
     """
     Test that CPP model generation succeeds for aortic_bif_1d model.
     
@@ -107,6 +265,7 @@ def test_generate_cpp_model_succeeds(base_user_inputs, resources_dir, temp_outpu
         'model_type': 'cpp',
         'solver': 'RK4',
         'couple_to_1d': True,
+        'generated_models_dir': temp_generated_models_dir,
         'cpp_generated_models_dir': temp_output_dir,
         'cpp_1d_model_config_path': None,
     })
@@ -124,7 +283,7 @@ def test_generate_cpp_model_succeeds(base_user_inputs, resources_dir, temp_outpu
 
 @pytest.mark.integration
 @pytest.mark.slow
-def test_generate_model_with_invalid_parameters_fails(base_user_inputs, resources_dir):
+def test_generate_model_with_invalid_parameters_fails(base_user_inputs, resources_dir, temp_generated_models_dir):
     """
     Test that model generation fails gracefully with invalid parameters.
     
@@ -140,12 +299,52 @@ def test_generate_model_with_invalid_parameters_fails(base_user_inputs, resource
     config.update({
         'file_prefix': 'nonexistent_model',
         'input_param_file': 'nonexistent_parameters.csv',
-        'model_type': 'cellml_only',
+        'model_type': 'cellml',
         'solver': 'CVODE',
+        'generated_models_dir': temp_generated_models_dir,
     })
     
     # Attempt to generate model - should raise FileNotFoundError
     # The function doesn't catch exceptions, so missing files will raise an error
     with pytest.raises(FileNotFoundError, match="No such file or directory"):
         generate_with_new_architecture(False, config)
+
+
+def test_casadi_if_else_transform_replaces_ternaries():
+    """Unit test: Python ternary expressions become ca.if_else in casadi_compat mode."""
+    from libcuflynx.generators.PythonGenerator import PythonGenerator
+
+    source = (
+        "def compute_rates(voi, states, rates, variables):\n"
+        "    rate.x = 1.0 if a > b else 2.0\n"
+        "    rate.y = 3.0 if c > d else 4.0 if e > f else 5.0\n"
+    )
+    transformed = PythonGenerator._apply_casadi_if_else_transform(source)
+    assert "if " not in transformed.split("def compute_rates")[1]
+    assert "ca.if_else" in transformed
+    assert transformed.count("ca.if_else") == 3
+
+
+def test_casadi_division_guard_wraps_denominators():
+    """Unit test: divisions become guarded with ca.fmax(fabs(denom), 1e-300) in casadi_compat mode."""
+    from libcuflynx.generators.PythonGenerator import PythonGenerator
+
+    source = (
+        "def compute_rates(voi, states, rates, variables):\n"
+        "    rate.x = numerator / denominator\n"
+    )
+    transformed = PythonGenerator._apply_casadi_if_else_transform(source)
+    assert "ca.fmax" in transformed
+    assert "fabs(denominator)" in transformed
+
+
+def test_casadi_compat_utilities_use_if_else_helpers():
+    """Unit test: casadi_compat utilities emit ca.if_else comparison helpers."""
+    from libcuflynx.generators.PythonGenerator import PythonGenerator
+
+    lines = PythonGenerator._comparison_helper_lines(casadi_compat=True)
+    code = "\n".join(lines)
+    assert "import casadi" not in code
+    assert "ca.if_else" in code
+    assert "bool(x)" not in code
 
