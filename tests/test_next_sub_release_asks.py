@@ -11,10 +11,10 @@ import os
 import numpy as np
 import pytest
 
-from param_id.run_history import (BOUNDS_FILE, HISTORY_FILES, clear_run_history,
+from libcuflynx.param_id.run_history import (BOUNDS_FILE, HISTORY_FILES, clear_run_history,
                                   find_run_dir, read_run_history, save_param_bounds)
-from parsers.PrimitiveParsers import model_qname_candidates, param_name_for_gen
-from utilities.obs_data_helpers import (DEFAULT_COST_TYPE, PREVIOUS_DEFAULT_COST_TYPE,
+from libcuflynx.parsers.PrimitiveParsers import model_qname_candidates, param_name_for_gen
+from libcuflynx.utilities.obs_data_helpers import (DEFAULT_COST_TYPE, PREVIOUS_DEFAULT_COST_TYPE,
                                         get_default_cost_type)
 
 
@@ -37,7 +37,7 @@ def test_every_default_cost_type_site_reads_the_constant():
     the three answers happened. Checked against the source, because a value that merely
     *happens* to agree today would pass any behavioural test."""
     import inspect
-    from parsers import OMEXParsers, PrimitiveParsers
+    from libcuflynx.parsers import OMEXParsers, PrimitiveParsers
 
     src = inspect.getsource(PrimitiveParsers)
     marker = '"cost_type": {"types": (str,), "default":'
@@ -55,12 +55,12 @@ def test_a_data_item_without_a_cost_type_warns_that_the_default_changed(tmp_path
     import warnings as _warnings
 
     import pandas as pd
-    from parsers.PrimitiveParsers import ObsAndParamDataParser
+    from libcuflynx.parsers.PrimitiveParsers import ObsAndParamDataParser
 
-    gt_df = pd.DataFrame([{'variable': 'x', 'data_type': 'constant', 'operation': 'mean',
+    gt_df = pd.DataFrame([{'data_item_name': 'x', 'data_type': 'constant', 'operation': 'mean',
                            'operands': ['a/x'], 'weight': 1.0, 'value': 1.0, 'std': 0.1,
                            'experiment_idx': 0, 'subexperiment_idx': 0, 'unit': 'dimensionless',
-                           'name_for_plotting': 'x', 'plot_type': 'horizontal'}])
+                           'trace_name_for_plotting': 'x', 'plot_type': 'horizontal'}])
     parser = ObsAndParamDataParser()
     with _warnings.catch_warnings(record=True) as caught:
         _warnings.simplefilter('always')
@@ -87,7 +87,7 @@ def test_the_builder_uses_param_name_for_gen_rather_than_restating_it():
     kept the old one, it would resolve to a *different variable* and seed the wrong slider.
     That only holds while CA itself has one copy."""
     import inspect
-    from parsers.PrimitiveParsers import ObsAndParamDataParser
+    from libcuflynx.parsers.PrimitiveParsers import ObsAndParamDataParser
 
     src = inspect.getsource(ObsAndParamDataParser._build_param_id_info_from_entries)
     assert 'param_name_for_gen(vessel, param)' in src
@@ -119,7 +119,7 @@ def test_the_naming_functions_import_without_scipy_heavy_machinery():
     in PrimitiveParsers (already imported in its unit tier) precisely because importing
     solver_wrappers.name_resolver drags in solver_wrappers/__init__ and scipy."""
     import inspect
-    import parsers.PrimitiveParsers as pp
+    import libcuflynx.parsers.PrimitiveParsers as pp
 
     for func in (pp.param_name_for_gen, pp.model_qname_candidates):
         # the *body*, with the docstring stripped -- the prose legitimately discusses imports
@@ -265,13 +265,13 @@ def test_clear_run_history_removes_the_transient_files_and_keeps_the_results(tmp
 
 @pytest.mark.unit
 def test_run_UQ_exists_and_run_mcmc_is_kept_as_an_alias():
-    from param_id.paramID import CVS0DParamID, OpencorMCMC
+    from libcuflynx.param_id.paramID import CVS0DParamID, MCMC
 
     assert callable(CVS0DParamID.run_UQ)
     assert callable(CVS0DParamID.run_mcmc)
     # the behavioural half of the ask: UQ can adopt an already-built engine
-    assert callable(OpencorMCMC.from_param_id)
-    assert callable(OpencorMCMC._init_mcmc)
+    assert callable(MCMC.from_param_id)
+    assert callable(MCMC._init_mcmc)
 
 
 @pytest.mark.unit
@@ -279,7 +279,7 @@ def test_from_param_id_adopts_the_engine_instead_of_building_a_second_one():
     """The ask is behavioural, not a rename: mcmc_instead selects the inner class at
     construction, so UQ after a calibration used to build a second CVS0DParamID and recompile
     the model. Adopting the engine must reuse its simulation helper, not make another."""
-    from param_id.paramID import OpencorMCMC
+    from libcuflynx.param_id.paramID import MCMC
 
     sentinel_helper = object()
 
@@ -293,12 +293,12 @@ def test_from_param_id_adopts_the_engine_instead_of_building_a_second_one():
         'best_param_vals': np.array([1.0, 2.0]),
     })
 
-    import param_id.paramID as paramID
+    import libcuflynx.param_id.paramID as paramID
     calls = []
     original = paramID.assert_mle_cost_for_bayesian
     paramID.assert_mle_cost_for_bayesian = lambda *a, **k: calls.append(a)
     try:
-        uq = OpencorMCMC.from_param_id(engine, {'num_steps': 7, 'num_walkers': 4})
+        uq = MCMC.from_param_id(engine, {'num_steps': 7, 'num_walkers': 4})
     finally:
         paramID.assert_mle_cost_for_bayesian = original
 
@@ -316,7 +316,7 @@ def test_the_sobol_helper_is_built_lazily():
     unused half free."""
     import inspect
 
-    from sensitivity_analysis.sobolSA import sobol_SA
+    from libcuflynx.sensitivity_analysis.sobolSA import sobol_SA
 
     assert isinstance(sobol_SA.sim_helper, property)
     assert callable(sobol_SA.has_built_sim_helper)

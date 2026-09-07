@@ -9,11 +9,11 @@ import os
 import numpy as np
 import pytest
 
-from param_id.paramID import CVS0DParamID, integrate_trapezoid
+from libcuflynx.param_id.paramID import CVS0DParamID, integrate_trapezoid
 
 
 class _StubEngine:
-    """An OpencorParamID stand-in: returns canned observables and records resets."""
+    """An ParamID stand-in: returns canned observables and records resets."""
 
     def __init__(self, values_by_call, param_id_info=None, best_param_vals=None):
         self._values = values_by_call
@@ -58,7 +58,7 @@ def _plotter(tmp_path, engine, names=('x',), data_types=('constant',), units=('d
     obj.plot_dir = str(tmp_path)
     obj.output_dir = str(tmp_path)
     obj.obs_info = {
-        'names_for_plotting': list(names),
+        'item_names_for_plotting': list(names),
         'data_types': list(data_types),
         'units': list(units),
         'experiment_idxs': [0] * len(names),

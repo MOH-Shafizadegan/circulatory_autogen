@@ -12,14 +12,15 @@ import textwrap
 import numpy as np
 import pytest
 
-from param_id.operation_funcs import (
+from libcuflynx.param_id.operation_funcs import (
     RESERVED_OPERATION_KWARGS,
     check_operation_kwargs,
     get_operation_kwarg_spec,
     resolve_operation_kwargs,
     validate_operation_kwargs,
 )
-from parsers.PrimitiveParsers import ObsAndParamDataParser, scriptFunctionParser
+from libcuflynx.utilities.obs_data_helpers import obs_item_names
+from libcuflynx.parsers.PrimitiveParsers import ObsAndParamDataParser, scriptFunctionParser
 
 
 # ---------------------------------------------------------------------------
@@ -47,7 +48,14 @@ def op_two_operands(x1, x2, scale=1.0):
 
 
 def op_var_kwargs(x=None, series_output=False, **kwargs):
-    """``**kwargs`` op (like ``calculate_two_observable_difference``): accepts any key."""
+    """A ``**kwargs`` op: accepts any key, so nothing can enumerate what it takes.
+
+    No shipped operation is written this way any more --
+    ``calculate_two_observable_difference`` declares ``subtract_from``/
+    ``subtract_this`` in its
+    signature -- but a user's own operation func may be, and the contract still has
+    to hold for it.
+    """
     if series_output:
         return x
     return kwargs["pred2"] - kwargs["pred1"]
@@ -277,7 +285,7 @@ def test_bools_and_other_types_are_not_coerced():
 
 def _obs_info(operations, operands, operation_kwargs, names):
     return {'operations': operations, 'operands': operands,
-            'operation_kwargs': operation_kwargs, 'names_for_plotting': names}
+            'operation_kwargs': operation_kwargs, 'data_item_names': names}
 
 
 @pytest.mark.unit
@@ -333,9 +341,9 @@ def test_contract_helpers_are_not_registered_as_operations():
 # ---------------------------------------------------------------------------
 
 _EXTERNAL_OPS = textwrap.dedent('''
-    from param_id.operation_funcs import series_to_constant
-    from param_id.differentiable import differentiable
-    from param_id.math_backend import make_math_backend
+    from libcuflynx.param_id.operation_funcs import series_to_constant
+    from libcuflynx.param_id.differentiable import differentiable
+    from libcuflynx.param_id.math_backend import make_math_backend
     mb = make_math_backend("numpy")
 
     @differentiable
@@ -351,10 +359,10 @@ def _obs_data_json(operation_kwargs_for_second_item):
     return {
         "protocol_info": {"pre_times": [0.0], "sim_times": [[1.0]], "params_to_change": {}},
         "data_items": [
-            {"variable": "x", "name_for_plotting": "x_{plain}", "data_type": "constant",
+            {"data_item_name": "x plain", "trace_name_for_plotting": "x_{plain}", "data_type": "constant",
              "operation": "scaled_mean", "operands": ["main/x"], "unit": "dimensionless",
              "weight": 1.0, "value": 1.0, "std": 0.1},
-            {"variable": "x", "name_for_plotting": "x_{scaled}", "data_type": "constant",
+            {"data_item_name": "x scaled", "trace_name_for_plotting": "x_{scaled}", "data_type": "constant",
              "operation": "scaled_mean", "operands": ["main/x"], "unit": "dimensionless",
              "operation_kwargs": operation_kwargs_for_second_item,
              "weight": 1.0, "value": 1.0, "std": 0.1},
@@ -393,7 +401,7 @@ def test_external_user_op_receives_operation_kwargs_from_obs_data_json(tmp_path)
         kwargs = resolve_operation_kwargs(
             obs_info["operation_kwargs"][idx], func,
             operation_name=obs_info["operations"][idx],
-            data_item_name=obs_info["names_for_plotting"][idx],
+            data_item_name=obs_item_names(obs_info)[idx],
             temp_results={}, num_operands=1)
         results.append(func(x, **kwargs))
     assert results[0] == pytest.approx(2.0)
@@ -411,7 +419,7 @@ def test_stale_operation_kwargs_in_obs_data_json_fails_with_a_clear_error(tmp_pa
     with pytest.raises(ValueError) as excinfo:
         validate_operation_kwargs(obs_info, ops)
     msg = str(excinfo.value)
-    assert 'scaling' in msg and 'scaled_mean' in msg and 'x_{scaled}' in msg
+    assert 'scaling' in msg and 'scaled_mean' in msg and 'x scaled' in msg
     assert 'scale' in msg
 
 
@@ -434,3 +442,65 @@ def test_shipped_extra_ops_obs_data_json_still_validates(tmp_path):
 def test_check_operation_kwargs_is_a_noop_for_empty_kwargs():
     check_operation_kwargs({}, op_windowed, 'op_windowed')
     check_operation_kwargs(None, op_windowed, 'op_windowed')
+
+
+@pytest.mark.unit
+def test_the_two_observable_difference_declares_its_inputs_in_its_signature():
+    """They are the function's arguments, so the signature is where they belong.
+
+    Written as ``**kwargs`` they were invisible to everything that introspects an
+    operation: ``get_operation_kwarg_spec`` could only answer "accepts anything",
+    so a form built from it had nothing to offer and a misspelled key reached the
+    body as a silently missing value. Declared, they are ordinary keyword
+    arguments and the existing checks cover them.
+    """
+    from libcuflynx.funcs.operation_funcs_user import calculate_two_observable_difference
+
+    accepted, from_operands, accepts_any = get_operation_kwarg_spec(
+        calculate_two_observable_difference)
+
+    assert 'subtract_from' in accepted and 'subtract_this' in accepted
+    assert not accepts_any, "no **kwargs, so the accepted set is the whole story"
+    # Both have defaults, which is what makes them keyword arguments rather than
+    # operands: an operand is a parameter with no default, filled positionally from
+    # the data_item's `operands`. This item has none -- its inputs are named.
+    assert from_operands == []
+
+
+@pytest.mark.unit
+def test_the_two_observable_difference_subtracts_this_from_that():
+    from libcuflynx.funcs.operation_funcs_user import calculate_two_observable_difference
+
+    assert calculate_two_observable_difference(
+        subtract_from=5.0, subtract_this=2.0) == pytest.approx(3.0)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('missing', ['subtract_from', 'subtract_this'])
+def test_the_two_observable_difference_names_the_input_it_was_not_given(missing):
+    """A default of None is not a value to subtract; say which one is absent."""
+    from libcuflynx.funcs.operation_funcs_user import calculate_two_observable_difference
+
+    kwargs = {'subtract_from': 2.0, 'subtract_this': 1.0}
+    del kwargs[missing]
+    with pytest.raises(RuntimeError, match=missing):
+        calculate_two_observable_difference(**kwargs)
+
+
+@pytest.mark.unit
+def test_the_old_pred_keys_are_refused_rather_than_quietly_ignored():
+    """An obs_data written against `pred1`/`pred2` must fail loudly.
+
+    This is the whole reason declaring the inputs matters. While the func took
+    `**kwargs` any key was accepted, so after a rename the old ones would have been
+    passed through and the new ones left unset -- a subtraction against a default
+    rather than an error. Now the ordinary unknown-key check refuses them and names
+    the func.
+    """
+    from libcuflynx.funcs.operation_funcs_user import calculate_two_observable_difference
+
+    with pytest.raises(ValueError, match='pred1'):
+        check_operation_kwargs(
+            {'pred1': 'a', 'pred2': 'b'},
+            calculate_two_observable_difference,
+            'calculate_two_observable_difference')

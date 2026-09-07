@@ -13,7 +13,7 @@ import os
 
 import numpy as np
 
-from scripts.script_generate_with_new_architecture import generate_with_new_architecture
+from libcuflynx.scripts.script_generate_with_new_architecture import generate_with_new_architecture
 from benchmarks.compare_optimisers import OptimiserComparison
 from benchmarks.docs_results import BenchmarkResult, BenchmarkRow
 from benchmarks.registry import BENCHMARK_CI
@@ -178,7 +178,11 @@ def run_fitzhugh_nagumo(base_config, resources_dir, output_dir, generated_models
                 cost=float(comparison.results[method]['cost']),
                 time_s=float(comparison.runtimes[method]),
                 param_err=max_relative_param_err(params, FHN_TRUE_PARAMS),
-                params=[float(p) for p in params]))
+                params=[float(p) for p in params],
+                # What the run actually did, so a reader can tell a genuine fast
+                # convergence from a search that gave up (#344). None when the optimiser
+                # does not track one -- the multi-start variants do not.
+                evals=comparison.load_eval_count(comparison.get_output_dir(method))))
         if not include_aadc:
             result.rows.append(BenchmarkRow(
                 method='multi_start (AADC AD)',
@@ -256,7 +260,7 @@ def _write_three_compartment_synthetic_obs(config, model_path, template_path, ou
 
     Returns the ground-truth parameter vector actually used.
     """
-    from solver_wrappers import get_simulation_helper
+    from libcuflynx.solver_wrappers import get_simulation_helper
 
     with open(template_path) as f:
         items = json.load(f)
@@ -424,7 +428,11 @@ def run_three_compartment(base_config, resources_dir, output_dir, generated_mode
                 cost=float(comparison.results[method]['cost']),
                 time_s=float(comparison.runtimes[method]),
                 param_err=max_relative_param_err(params, THREE_COMPARTMENT_TRUE_PARAMS),
-                params=[float(p) for p in params]))
+                params=[float(p) for p in params],
+                # What the run actually did, so a reader can tell a genuine fast
+                # convergence from a search that gave up (#344). None when the optimiser
+                # does not track one -- the multi-start variants do not.
+                evals=comparison.load_eval_count(comparison.get_output_dir(method))))
         for method, reason in skipped.items():
             result.rows.append(BenchmarkRow(method=method, skipped_reason=reason))
     result._comparison = comparison
@@ -482,7 +490,7 @@ def _generate_casadi_from_external_cellml(resources_dir, generated_models_dir, f
     stricter than the non-strict parse the Myokit path uses. The vendored PMR files were sanitised
     for exactly that (see resources/modifications.txt).
     """
-    from generators.PythonGenerator import PythonGenerator
+    from libcuflynx.generators.PythonGenerator import PythonGenerator
     dest_dir = os.path.join(generated_models_dir, file_prefix)
     _place_external_cellml(resources_dir, generated_models_dir, file_prefix)
     PythonGenerator(os.path.join(dest_dir, f'{file_prefix}.cellml'), output_dir=dest_dir,
@@ -595,7 +603,11 @@ def run_goodwin(base_config, resources_dir, output_dir, generated_models_dir,
                 cost=float(comparison.results[method]['cost']),
                 time_s=float(comparison.runtimes[method]),
                 param_err=max_relative_param_err(params, GOODWIN_TRUE_PARAMS),
-                params=[float(p) for p in params]))
+                params=[float(p) for p in params],
+                # What the run actually did, so a reader can tell a genuine fast
+                # convergence from a search that gave up (#344). None when the optimiser
+                # does not track one -- the multi-start variants do not.
+                evals=comparison.load_eval_count(comparison.get_output_dir(method))))
     result._comparison = comparison
     return result
 
@@ -743,7 +755,11 @@ def run_teusink(base_config, resources_dir, output_dir, generated_models_dir,
                 cost=float(comparison.results[method]['cost']),
                 time_s=float(comparison.runtimes[method]),
                 param_err=max_relative_param_err(params, TEUSINK_TRUE_PARAMS),
-                params=[float(p) for p in params]))
+                params=[float(p) for p in params],
+                # What the run actually did, so a reader can tell a genuine fast
+                # convergence from a search that gave up (#344). None when the optimiser
+                # does not track one -- the multi-start variants do not.
+                evals=comparison.load_eval_count(comparison.get_output_dir(method))))
     result._comparison = comparison
     return result
 

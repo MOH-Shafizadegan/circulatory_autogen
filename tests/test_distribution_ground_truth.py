@@ -17,10 +17,10 @@ import json
 import numpy as np
 import pytest
 
-from funcs_user import cost_funcs_user
-from param_id.cost_kwargs import call_cost_func, ground_truth_param_name
-from parsers.PrimitiveParsers import ObsAndParamDataParser
-from utilities.obs_data_helpers import VALID_DATA_TYPES
+from libcuflynx.funcs import cost_funcs_user
+from libcuflynx.param_id.cost_kwargs import call_cost_func, ground_truth_param_name
+from libcuflynx.parsers.PrimitiveParsers import ObsAndParamDataParser
+from libcuflynx.utilities.obs_data_helpers import VALID_DATA_TYPES
 
 
 DATA_POINTS = [1.05, 0.99, 1.10, 0.95, 1.02, 3.95, 4.10, 4.02, 3.90, 4.08]
@@ -36,8 +36,8 @@ def _obs_data(items):
 
 def _kde_item(**overrides):
     item = {
-        "variable": "benchmark/x",
-        "name_for_plotting": "x_{SS}",
+        "data_item_name": "benchmark/x",
+        "trace_name_for_plotting": "x_{SS}",
         "data_type": "constant",
         "operation": "steady_state_avg",
         "operands": ["benchmark/x"],
@@ -52,8 +52,8 @@ def _kde_item(**overrides):
 
 def _gaussian_item(**overrides):
     item = {
-        "variable": "benchmark/y",
-        "name_for_plotting": "y_{SS}",
+        "data_item_name": "benchmark/y",
+        "trace_name_for_plotting": "y_{SS}",
         "data_type": "constant",
         "operation": "steady_state_avg",
         "operands": ["benchmark/y"],
@@ -141,7 +141,7 @@ def test_an_item_with_neither_a_value_nor_a_distribution_is_rejected(tmp_path):
     with pytest.raises(ValueError) as excinfo:
         _parse([_gaussian_item(value=None, std=None)], tmp_path)
     message = str(excinfo.value)
-    assert "y_{SS}" in message
+    assert "benchmark/y" in message
     assert "prob_dist_params" in message
 
 
@@ -238,8 +238,8 @@ def test_cost_calc_scores_a_distribution_item_in_the_constant_loop(tmp_path):
     """End to end through the cost, mixing both ground truth shapes in one obs_data: the KDE
     item must be scored, and scored against its samples rather than against the nan standing in
     for the value it does not have."""
-    from param_id.paramID import OpencorParamID
-    from parsers.PrimitiveParsers import ObsAndParamDataParser, scriptFunctionParser
+    from libcuflynx.param_id.paramID import ParamID
+    from libcuflynx.parsers.PrimitiveParsers import ObsAndParamDataParser, scriptFunctionParser
 
     parser = ObsAndParamDataParser()
     parsed = parser.parse_obs_data_json(
@@ -249,7 +249,7 @@ def test_cost_calc_scores_a_distribution_item_in_the_constant_loop(tmp_path):
     protocol_info = parser.process_protocol_and_weights(
         gt_df=parsed["gt_df"], protocol_info=parsed["protocol_info"], dt=0.01)
 
-    pid = OpencorParamID.__new__(OpencorParamID)
+    pid = ParamID.__new__(ParamID)
     pid.obs_info = obs_info
     pid.protocol_info = protocol_info
     pid.cost_type = obs_info["cost_type"]
@@ -271,8 +271,8 @@ def test_a_distribution_cost_cannot_be_differentiated_symbolically(tmp_path):
     """Its density is built from numbers -- scipy's gaussian_kde cannot take a symbol. Silently
     returning something would be worse than raising: the nan standing in for `value` would
     propagate into a gradient that looks like a failed solve."""
-    from param_id.paramID import OpencorParamID
-    from parsers.PrimitiveParsers import ObsAndParamDataParser, scriptFunctionParser
+    from libcuflynx.param_id.paramID import ParamID
+    from libcuflynx.parsers.PrimitiveParsers import ObsAndParamDataParser, scriptFunctionParser
 
     ca = pytest.importorskip('casadi')
 
@@ -283,7 +283,7 @@ def test_a_distribution_cost_cannot_be_differentiated_symbolically(tmp_path):
     protocol_info = parser.process_protocol_and_weights(
         gt_df=parsed["gt_df"], protocol_info=parsed["protocol_info"], dt=0.01)
 
-    pid = OpencorParamID.__new__(OpencorParamID)
+    pid = ParamID.__new__(ParamID)
     pid.obs_info = obs_info
     pid.protocol_info = protocol_info
     pid.cost_type = obs_info["cost_type"]
@@ -300,7 +300,7 @@ def test_a_distribution_cost_cannot_be_differentiated_symbolically(tmp_path):
 @pytest.mark.unit
 def test_an_unknown_cost_kwarg_is_rejected(tmp_path):
     obs_info = _parse([_kde_item(cost_kwargs={"bandwith": 0.1})], tmp_path)
-    from param_id.cost_kwargs import validate_cost_kwargs
+    from libcuflynx.param_id.cost_kwargs import validate_cost_kwargs
 
     funcs = cost_funcs_user.get_cost_funcs_dict_for_mode("numpy")
     with pytest.raises(ValueError, match="bandwith"):

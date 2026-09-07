@@ -14,11 +14,11 @@ the dispatch, not the solver.
 import numpy as np
 import pytest
 
-from param_id import fd_backend
+from libcuflynx.param_id import fd_backend
 
 
 class _Pid:
-    """Enough of OpencorParamID for the FD arm: parameter metadata, observable
+    """Enough of ParamID for the FD arm: parameter metadata, observable
     labels, and a feature function of the parameter vector."""
 
     def __init__(self, feature_fn, names=("a/x", "b/y"), mins=(0.0, 0.0), maxs=(10.0, 10.0),
@@ -50,7 +50,7 @@ class _Pid:
             return 0.0, [None], []
         return 0.0, [np.asarray(param_vals, dtype=float)], []
 
-    def get_obs_output_dict(self, operands):
+    def get_obs_output_dict(self, operands, **kwargs):
         return {"const": [self._feature_fn(operands)]}
 
 
@@ -127,9 +127,9 @@ def test_a_failed_nominal_run_raises():
 # Dispatch: opt-in, never silent
 # ---------------------------------------------------------------------------
 def test_fd_is_selected_by_name():
-    from param_id.paramID import OpencorParamID
+    from libcuflynx.param_id.paramID import ParamID
 
-    pid = OpencorParamID.__new__(OpencorParamID)
+    pid = ParamID.__new__(ParamID)
     stub = _Pid(lambda p: 3.0 * p[0])
     for attr in ("param_id_info", "obs_info", "protocol_info"):
         setattr(pid, attr, getattr(stub, attr))
@@ -145,27 +145,27 @@ def test_fd_is_selected_by_name():
 def test_without_fd_an_analytic_less_backend_still_raises():
     """The default must not quietly become FD: a result computed a different way,
     at a different cost and accuracy, is not the same result."""
-    from param_id.paramID import OpencorParamID
+    from libcuflynx.param_id.paramID import ParamID
 
-    pid = OpencorParamID.__new__(OpencorParamID)
+    pid = ParamID.__new__(ParamID)
     pid.model_type = "aadc_python"
     with pytest.raises(NotImplementedError, match="AADC"):
         pid.get_observable_sensitivities([1.0])
 
 
 def test_the_aadc_message_now_points_at_fd():
-    from param_id.paramID import OpencorParamID
+    from libcuflynx.param_id.paramID import ParamID
 
-    pid = OpencorParamID.__new__(OpencorParamID)
+    pid = ParamID.__new__(ParamID)
     pid.model_type = "aadc_python"
     with pytest.raises(NotImplementedError, match="gradient_method 'FD'"):
         pid.get_observable_sensitivities([1.0])
 
 
 def test_an_unknown_gradient_method_is_rejected():
-    from param_id.paramID import OpencorParamID
+    from libcuflynx.param_id.paramID import ParamID
 
-    pid = OpencorParamID.__new__(OpencorParamID)
+    pid = ParamID.__new__(ParamID)
     pid.model_type = "casadi_python"
     with pytest.raises(ValueError, match="unknown gradient_method 'central'"):
         pid.get_observable_sensitivities([1.0], gradient_method="central")
@@ -173,9 +173,9 @@ def test_an_unknown_gradient_method_is_rejected():
 
 @pytest.mark.parametrize("alias", [None, "", "analytic", "AUTO"])
 def test_the_analytic_aliases_do_not_divert_to_fd(alias):
-    from param_id.paramID import OpencorParamID
+    from libcuflynx.param_id.paramID import ParamID
 
-    pid = OpencorParamID.__new__(OpencorParamID)
+    pid = ParamID.__new__(ParamID)
     pid.model_type = "aadc_python"
     with pytest.raises(NotImplementedError):
         pid.get_observable_sensitivities([1.0], gradient_method=alias)
@@ -189,7 +189,7 @@ def test_gradient_method_is_in_the_analysis_schema():
     gradient_source -- because only an explicit name can be offered, disabled, or reported back
     by a UI. 'analytic' is still accepted in code as a legacy spelling of 'auto', but is no
     longer advertised."""
-    from parsers.PrimitiveParsers import ANALYSIS_OPTIONS
+    from libcuflynx.parsers.PrimitiveParsers import ANALYSIS_OPTIONS
 
     opts = {o["name"]: o for o in ANALYSIS_OPTIONS["sensitivity_analysis"]["options"]}
     assert "gradient_method" in opts
@@ -203,9 +203,9 @@ def test_gradient_method_is_in_the_analysis_schema():
 # silently got something else cannot check what ran).
 # ---------------------------------------------------------------------------
 def test_ad_reaches_the_casadi_arm(monkeypatch):
-    from param_id import paramID
+    from libcuflynx.param_id import paramID
 
-    pid = paramID.OpencorParamID.__new__(paramID.OpencorParamID)
+    pid = paramID.ParamID.__new__(paramID.ParamID)
     pid.model_type = "casadi_python"
     pid.param_id_info = {"param_names": [["a/x"]]}
     called = []
@@ -216,13 +216,13 @@ def test_ad_reaches_the_casadi_arm(monkeypatch):
 
 
 def test_fsa_reaches_the_myokit_arm(monkeypatch):
-    from param_id import paramID
+    from libcuflynx.param_id import paramID
 
     class _FsaHelper:
         def enable_fsa(self, deps, indeps):
             return []
 
-    pid = paramID.OpencorParamID.__new__(paramID.OpencorParamID)
+    pid = paramID.ParamID.__new__(paramID.ParamID)
     pid.model_type = "cellml"
     pid.do_ad = True
     pid.sim_helper = _FsaHelper()
@@ -234,9 +234,9 @@ def test_fsa_reaches_the_myokit_arm(monkeypatch):
 
 
 def test_ad_on_a_myokit_run_raises_naming_the_mismatch():
-    from param_id.paramID import OpencorParamID
+    from libcuflynx.param_id.paramID import ParamID
 
-    pid = OpencorParamID.__new__(OpencorParamID)
+    pid = ParamID.__new__(ParamID)
     pid.model_type = "cellml"
     pid.solver_info = {"solver": "CVODE_myokit"}
     with pytest.raises(ValueError, match="'AD' needs model_type 'casadi_python'"):
@@ -244,9 +244,9 @@ def test_ad_on_a_myokit_run_raises_naming_the_mismatch():
 
 
 def test_fsa_on_a_casadi_run_raises_naming_whats_missing():
-    from param_id.paramID import OpencorParamID
+    from libcuflynx.param_id.paramID import ParamID
 
-    pid = OpencorParamID.__new__(OpencorParamID)
+    pid = ParamID.__new__(ParamID)
     pid.model_type = "casadi_python"
     pid.solver_info = {"solver": "casadi_integrator"}
     pid.sim_helper = object()   # no enable_fsa
@@ -259,13 +259,13 @@ def test_fsa_on_a_casadi_run_raises_naming_whats_missing():
 
 
 def test_fsa_without_do_ad_names_the_missing_flag():
-    from param_id.paramID import OpencorParamID
+    from libcuflynx.param_id.paramID import ParamID
 
     class _FsaHelper:
         def enable_fsa(self, deps, indeps):
             return []
 
-    pid = OpencorParamID.__new__(OpencorParamID)
+    pid = ParamID.__new__(ParamID)
     pid.model_type = "cellml"
     pid.solver_info = {"solver": "CVODE_myokit"}
     pid.sim_helper = _FsaHelper()
@@ -300,7 +300,7 @@ def test_the_step_size_reaches_the_backend():
 
 
 def test_the_accessor_forwards_the_step():
-    from param_id.paramID import OpencorParamID
+    from libcuflynx.param_id.paramID import ParamID
 
     seen = []
 
@@ -310,7 +310,7 @@ def test_the_accessor_forwards_the_step():
             return super().get_cost_obs_and_pred_from_params(param_vals, reset, only_one_exp)
 
     stub = _Recording(lambda p: p[0], names=("a/x",), mins=(0.0,), maxs=(10.0,))
-    pid = OpencorParamID.__new__(OpencorParamID)
+    pid = ParamID.__new__(ParamID)
     pid.param_id_info, pid.obs_info = stub.param_id_info, stub.obs_info
     pid.protocol_info = stub.protocol_info
     pid._observable_label = stub._observable_label
@@ -323,7 +323,7 @@ def test_the_accessor_forwards_the_step():
 
 
 def test_omitting_the_step_keeps_the_backend_default():
-    from param_id.paramID import OpencorParamID
+    from libcuflynx.param_id.paramID import ParamID
 
     seen = []
 
@@ -333,7 +333,7 @@ def test_omitting_the_step_keeps_the_backend_default():
             return super().get_cost_obs_and_pred_from_params(param_vals, reset, only_one_exp)
 
     stub = _Recording(lambda p: p[0], names=("a/x",), mins=(0.0,), maxs=(10.0,))
-    pid = OpencorParamID.__new__(OpencorParamID)
+    pid = ParamID.__new__(ParamID)
     pid.param_id_info, pid.obs_info = stub.param_id_info, stub.obs_info
     pid.protocol_info = stub.protocol_info
     pid._observable_label = stub._observable_label
@@ -346,7 +346,7 @@ def test_omitting_the_step_keeps_the_backend_default():
 
 
 def test_fd_rel_step_is_in_the_analysis_schema():
-    from parsers.PrimitiveParsers import ANALYSIS_OPTIONS
+    from libcuflynx.parsers.PrimitiveParsers import ANALYSIS_OPTIONS
 
     opts = {o["name"]: o for o in ANALYSIS_OPTIONS["sensitivity_analysis"]["options"]}
     assert opts["fd_rel_step"]["default"] == 1e-3
@@ -383,7 +383,7 @@ class _MultiExpPid(_Pid):
             return 0.0, [("exp0", x), None], []
         return 0.0, [("exp0", x), ("exp1", x)], []
 
-    def get_obs_output_dict(self, operands):
+    def get_obs_output_dict(self, operands, **kwargs):
         tag, x = operands
         # Experiment 1 responds ten times as strongly as experiment 0.
         return {"const": [x, 10.0 * x] if tag == "exp1" else [x, x]}
@@ -416,11 +416,12 @@ def test_all_experiments_are_run():
 # Labels identify one observable each
 # ---------------------------------------------------------------------------
 def _labeller(names, ops, operands, exps, subs):
-    from param_id.paramID import OpencorParamID
+    from libcuflynx.param_id.paramID import ParamID
 
-    pid = OpencorParamID.__new__(OpencorParamID)
+    pid = ParamID.__new__(ParamID)
     pid.obs_info = {
-        "names_for_plotting": names, "operations": ops, "operands": operands,
+        # since #466 the item states its own label, and it already carries the operation
+        "item_names_for_plotting": names, "operations": ops, "operands": operands,
         "experiment_idxs": exps, "subexperiment_idxs": subs, "num_obs": len(names),
     }
     return pid
@@ -436,12 +437,18 @@ def test_two_experiments_measuring_the_same_feature_get_distinct_labels():
 
 
 def test_an_unambiguous_label_is_left_alone():
-    """A single-experiment study keeps the spelling it already had."""
+    """The item's own label is used as-is. Before #466 this composed `name (op operand)` out of
+    the parts, because `name_for_plotting` named the trace and could not tell two features of
+    one trace apart. `item_name_for_plotting` already does -- it defaults to
+    `<trace> (<operation>)` -- so composing again would spell the operation twice."""
     pid = _labeller(["V_max", "V_mean"], ["max", "mean"], [["a/V"], ["a/V"]], [0, 0], [0, 0])
-    assert pid._observable_label(0) == "V_max (max a/V)"
+    assert pid._observable_label(0) == "V_max"
+    assert pid._observable_label(1) == "V_mean"
 
 
-def test_the_operation_still_disambiguates_before_the_experiment():
+def test_a_repeated_item_label_is_disambiguated_by_experiment_and_subexperiment():
+    """Two items may still share a label across experiments -- one feature measured twice --
+    and these labels key the returned sensitivity dict, so they must stay distinct."""
     pid = _labeller(["V", "V"], ["max", "mean"], [["a/V"], ["a/V"]], [0, 1], [0, 0])
-    assert pid._observable_label(0) == "V (max a/V)"
-    assert pid._observable_label(1) == "V (mean a/V)"
+    assert pid._observable_label(0) == "V [exp 0, sub 0]"
+    assert pid._observable_label(1) == "V [exp 1, sub 0]"

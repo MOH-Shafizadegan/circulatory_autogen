@@ -15,6 +15,9 @@ plugins:
   - mkdocstrings:
       handlers:
         python:
+          # The package root is src/, so griffe finds `libcuflynx` under it. Every `:::`
+          # identifier in docs/api/*.md is therefore spelled from the top of the package
+          # (`libcuflynx.param_id.paramID.CVS0DParamID`); an unprefixed name does not resolve.
           paths: [../src]
           options:
             docstring_style: google
@@ -32,6 +35,7 @@ nav:
   - Model Generation and Simulation: model-generation-simulation.md
   - Designing a model: design-model.md
   - External Python Solvers: external-python-solvers.md
+  - Importing other model formats: model-formats.md
   - Parameter Identification: parameter-identification.md
   - Sensitivity Analysis: sensitivity-analysis.md
   - Identifiability Analysis: identifiability-analysis.md

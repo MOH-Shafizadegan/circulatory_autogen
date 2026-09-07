@@ -10,10 +10,25 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # Runs 13-31 minutes depending on the apt weather. This is a backstop, not a budget:
+    # without one, `test (3.11)` sat in the apt step for 45 minutes and had to be cancelled
+    # by hand, because the job would otherwise have run to GitHub's 360-minute default.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9", "3.10", "3.11"]
+        # 3.9 is gone: numpy, scipy, matplotlib, scikit-learn and numdifftools all declare
+        # requires-python >=3.10, so a 3.9 job either resolved older pins than any real user
+        # gets or failed to resolve at all -- testing a configuration the dependency tree no
+        # longer supports (#459).
+        #
+        # 3.12 is the top because that is where the wheels stop being universal, not because of
+        # requires-python: libcellml 0.6.3 (what `<0.7.0` resolves to) has wheels to cp313, but
+        # autoemulate declares `<3.13`, so the [emulation] extra cannot go past 3.12. If this
+        # ever reaches 3.13, the emulator jobs have to stay behind -- see the note on them below,
+        # and tests/test_python_matrix.py, which asserts it rather than leaving it to be
+        # rediscovered as a resolution failure.
+        python-version: ["3.10", "3.11", "3.12"]
     
     steps:
     - uses: actions/checkout@v4
@@ -28,10 +43,7 @@ jobs:
         python -m pip install --upgrade pip
         pip install -e ".[dev]"
     
-    - name: Install MPI
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libopenmpi-dev openmpi-bin libsundials-dev build-essential
+    - uses: ./.github/actions/install-system-deps
     
     - name: Run tests (Myokit-first, skip OpenCOR-only)
       id: pytest
@@ -144,10 +156,7 @@ jobs:
         python -m pip install --upgrade pip
         pip install -e ".[dev]"
 
-    - name: Install MPI and Myokit build dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libopenmpi-dev openmpi-bin libsundials-dev build-essential
+    - uses: ./.github/actions/install-system-deps
 
     - name: Run the full-scale model calibration with MPI
       run: |
@@ -170,10 +179,7 @@ jobs:
         python -m pip install --upgrade pip
         pip install -e ".[dev]"
 
-    - name: Install MPI and Myokit build dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libopenmpi-dev openmpi-bin libsundials-dev build-essential
+    - uses: ./.github/actions/install-system-deps
 
     - name: Run param_id and sensitivity analysis tests with MPI
       run: |
@@ -198,10 +204,7 @@ jobs:
         python -m pip install --upgrade pip
         pip install -e ".[dev]"
 
-    - name: Install MPI and Myokit build dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libopenmpi-dev openmpi-bin libsundials-dev build-essential
+    - uses: ./.github/actions/install-system-deps
 
     - name: Run the full-scale model calibration in serial mode
       run: |
@@ -224,10 +227,7 @@ jobs:
         python -m pip install --upgrade pip
         pip install -e ".[dev]"
 
-    - name: Install MPI and Myokit build dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libopenmpi-dev openmpi-bin libsundials-dev build-essential
+    - uses: ./.github/actions/install-system-deps
 
     - name: Run param_id and sensitivity analysis tests in serial mode
       run: |
@@ -274,6 +274,8 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
+        # Pinned, and cannot follow the matrix past 3.12: autoemulate declares
+        # requires-python <3.13, so [emulation] stops there (#459).
         python-version: "3.10"
 
     - name: Install dependencies
@@ -282,12 +284,12 @@ jobs:
         # [uq] brings pymc/pytensor and [emulation] brings autoemulate. Without them the
         # corresponding tests skip, and those code paths go unexercised in CI -- which is how
         # the pyMC backend stayed unproven for as long as it did.
-        pip install -e ".[dev,uq,emulation]"
+        # --build-constraint, not a runtime pin: [emulation] reaches harmonic, which has no
+        # cp310 wheel and so is built here. See build-constraints.txt for what it holds back.
+        pip install --build-constraint "${{ github.workspace }}/build-constraints.txt" \
+          -e ".[dev,uq,emulation]"
 
-    - name: Install MPI and Myokit build dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libopenmpi-dev openmpi-bin libsundials-dev build-essential
+    - uses: ./.github/actions/install-system-deps
 
     # Seconds, and the only place the pyMC-sampling half of these runs: without [uq] they skip,
     # which is exactly how the backend's live-chain checkpointing could regress unnoticed.
@@ -360,17 +362,18 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
+        # Pinned, and cannot follow the matrix past 3.12: autoemulate declares
+        # requires-python <3.13, so [emulation] stops there (#459).
         python-version: "3.10"
 
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -e ".[dev,uq,emulation]"
+        # See build-constraints.txt: [emulation] reaches harmonic, built from sdist on 3.10.
+        pip install --build-constraint "${{ github.workspace }}/build-constraints.txt" \
+          -e ".[dev,uq,emulation]"
 
-    - name: Install MPI and Myokit build dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libopenmpi-dev openmpi-bin libsundials-dev build-essential
+    - uses: ./.github/actions/install-system-deps
 
     - name: Run the emulator UQ tests on two ranks
       timeout-minutes: 30
@@ -441,7 +444,9 @@ jobs:
         python -m pip install --upgrade pip
         # [emulation] brings autoemulate, which the emulator round-trip test needs; without
         # it that test skips and the external backend's integration with CA goes unchecked.
-        pip install -e ".[dev,emulation]"
+        # See build-constraints.txt: autoemulate reaches harmonic, built from sdist on 3.10.
+        pip install --build-constraint "${{ github.workspace }}/build-constraints.txt" \
+          -e ".[dev,emulation]"
 
     # A skipped test is a green step, and every test in this file sits behind an
     # importorskip. If the conda environment failed to activate, or the extra failed to
@@ -456,8 +461,100 @@ jobs:
 
   # Job to run full test suite if OpenCOR is available (optional)
   # This can be enabled if OpenCOR is set up in CI environment
+  # The released CUFLynx desktop app, driven against this checkout.
+  #
+  # CUFLynx ships a frozen binary with a libcuflynx bundled inside it, frozen at whatever
+  # was current when it was released. Neither repo's CI tests the pairing: CUFLynx tests
+  # its own bundle, CA tests its own source, and "the app people have downloaded can still
+  # run this engine" is asserted nowhere. This is that assertion, from CA's side.
+  test-cuflynx-executable:
+    runs-on: ubuntu-latest
+    # The five analyses take ~10 minutes on Lotka-Volterra; the rest is the one-off 645 MB
+    # download on a cache miss. Generous enough to survive a slow release download, tight
+    # enough that a hang is reported rather than run to GitHub's 360-minute default.
+    timeout-minutes: 45
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.10"
+
+    # The cache key, and the answer to "has a new one been released": the tag of the
+    # current release. A new release is a new key, hence a miss, hence a fresh download.
+    - name: Find the current CUFLynx release
+      id: release
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        tag="$(gh api repos/physiomelinks/CUFLynx/releases/latest --jq .tag_name)"
+        echo "tag=$tag" >> "$GITHUB_OUTPUT"
+        echo "current CUFLynx release: $tag"
+
+    # No `restore-keys`, deliberately. A prefix fallback would cheerfully restore last
+    # month's binary when the key misses, which is precisely the case this job exists to
+    # catch -- the test would then pass against an executable nobody can download any more.
+    - name: Cache the executable
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/cuflynx
+        key: cuflynx-linux-x86_64-full-${{ steps.release.outputs.tag }}
+
+    # The -full asset rather than the ordinary one: it is the only build carrying
+    # autoemulate and pymc, and without them the emulator and the UQ-on-the-emulator
+    # tests have nothing to run against.
+    - name: Download the executable
+      if: steps.cache.outputs.cache-hit != 'true'
+      run: |
+        set -euo pipefail
+        mkdir -p ~/.cache/cuflynx
+        curl -fL --retry 3 --retry-all-errors -o ~/.cache/cuflynx/CUFLynx-full \
+          "https://github.com/physiomelinks/CUFLynx/releases/download/${{ steps.release.outputs.tag }}/CUFLynx-linux-x86_64-full"
+
+    # Restored from a cache, the executable bit does not survive.
+    - name: Make it executable
+      run: chmod +x ~/.cache/cuflynx/CUFLynx-full
+
+    # Only pytest is needed here: the app runs the analyses in its own bundled interpreter,
+    # and reaches this checkout through CIRCULATORY_AUTOGEN_SRC rather than through an
+    # install. Installing CA's dependencies into the runner's python would prove nothing
+    # about the bundle and would hide a missing one.
+    - name: Install pytest
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest
+
+    # --confcutdir is what makes the line above true, and the test lives in its own
+    # directory so that it can be passed. `tests/conftest.py` imports yaml, numpy, mpi4py
+    # and libcuflynx at module scope; pytest loads every conftest from the rootdir down to
+    # the test, so collecting from `tests/` killed this job with ModuleNotFoundError before
+    # a single test ran -- pytest exit code 4, no junit file, nothing driven at all.
+    # The fix has to keep that conftest out of reach rather than install its imports:
+    # installing them is exactly what this job exists not to do.
+    - name: Run the executable end-to-end tests
+      env:
+        CUFLYNX_EXECUTABLE: /home/runner/.cache/cuflynx/CUFLynx-full
+        # Turns "no binary, skip everything" into a failure. A suite that silently skips
+        # its only end-to-end coverage is indistinguishable from one that passes it.
+        CUFLYNX_EXECUTABLE_REQUIRED: "1"
+      run: |
+        python -m pytest tests/executable/test_cuflynx_executable.py -v --tb=short \
+          --confcutdir=tests/executable \
+          --junitxml=junit-cuflynx-executable.xml
+
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: cuflynx-executable-results
+        path: junit-cuflynx-executable.xml
+
   test-with-opencor:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     if: false  # Disabled by default - enable if OpenCOR is available in CI
     steps:
     - uses: actions/checkout@v4
@@ -472,10 +569,7 @@ jobs:
         python -m pip install --upgrade pip
         pip install -e ".[dev]"
     
-    - name: Install MPI
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libopenmpi-dev openmpi-bin libsundials-dev build-essential
+    - uses: ./.github/actions/install-system-deps
     
     - name: Download and setup OpenCOR
       run: |

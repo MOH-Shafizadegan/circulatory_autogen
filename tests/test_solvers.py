@@ -12,15 +12,11 @@ import pytest
 import numpy as np
 import shutil
 
-# Ensure src is on sys.path
 _TEST_ROOT = os.path.join(os.path.dirname(__file__), '..')
-_SRC_DIR = os.path.join(_TEST_ROOT, 'src')
-if _SRC_DIR not in sys.path:
-    sys.path.insert(0, _SRC_DIR)
 
-from solver_wrappers import get_simulation_helper
-from generators.PythonGenerator import PythonGenerator
-from scripts.script_generate_with_new_architecture import generate_with_new_architecture
+from libcuflynx.solver_wrappers import get_simulation_helper
+from libcuflynx.generators.PythonGenerator import PythonGenerator
+from libcuflynx.scripts.script_generate_with_new_architecture import generate_with_new_architecture
 import xml.etree.ElementTree as ET
 
 # _MODEL_INPUT_FILES and the generated_cellml_model_factory fixture now live in
@@ -1851,3 +1847,38 @@ def test_aadc_semi_implicit_signed_forward_tracks_cvode(temp_model_dir,
     assert not np.all(np.isfinite(np.array(traj, dtype=float))), (
         "jac_lag=10 without sub-stepping is expected to diverge on this stiff model; if it no "
         "longer does, the coupling documented on solver_info['jac_lag'] has changed")
+
+
+@pytest.mark.solver
+def test_myokit_reads_a_constant_that_was_never_logged():
+    """Regression test for issue #453: a constant could not be read back.
+
+    ``_make_log`` deliberately excludes constants -- Myokit cannot log them -- while
+    ``_resolve_name`` classifies them as ``"var"`` like every other non-state. ``_extract``
+    then indexed the log by name for any ``"var"``, so asking for a constant raised
+    ``KeyError`` out of a log that was never going to contain it.
+
+    The arm that answers correctly was already there, two lines below: for a ``"var"`` it
+    evaluates the variable. It was simply unreachable while a log existed. So this asserts
+    the value, not merely the absence of an exception -- reaching the evaluation path is the
+    whole point.
+    """
+    tests_dir = os.path.dirname(__file__)
+    cellml_path = os.path.join(tests_dir, "test_inputs", "Lotka_Volterra_forced.cellml")
+    assert os.path.exists(cellml_path), f"CellML model not found: {cellml_path}"
+
+    sim = get_simulation_helper(
+        model_path=cellml_path, model_type="cellml", solver="CVODE_myokit",
+        dt=0.01, sim_time=1.0, solver_info={"MaximumStep": 0.05})
+    assert sim.run(), "the model did not run"
+
+    constants = [q for q, v in sim.qname_to_var.items()
+                 if v.is_constant() and q not in (sim.last_log or {})]
+    assert constants, "this model has no unlogged constant, so the test proves nothing"
+
+    qname = constants[0]
+    values = sim.get_results([qname], flatten=True)[0]
+
+    expected = sim.qname_to_var[qname].eval()
+    assert np.asarray(values).size >= 1
+    assert float(np.asarray(values).ravel()[0]) == pytest.approx(expected)

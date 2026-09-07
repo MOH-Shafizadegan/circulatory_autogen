@@ -1,6 +1,6 @@
 """A UQ run summarises the posterior; it does not replace the calibration's best fit.
 
-``OpencorMCMC.run`` used to overwrite ``best_param_vals.npy`` / ``best_cost.npy`` with the
+``MCMC.run`` used to overwrite ``best_param_vals.npy`` / ``best_cost.npy`` with the
 posterior median whenever that median happened to score a lower cost. Two different estimators
 were being conflated -- a median summarises a distribution, a calibration best is an argmin --
 so a UQ run silently mutated the calibration's answer, and the file gave no clue which estimator
@@ -12,26 +12,33 @@ import os
 import numpy as np
 import pytest
 
-from param_id.paramID import OpencorMCMC
+from libcuflynx.param_id.paramID import MCMC
 
 
 class _StubMCMC:
-    """An OpencorMCMC with only what the statistics path touches."""
+    """An MCMC with only what the statistics path touches."""
 
     def __new__(cls, *args, **kwargs):
-        return OpencorMCMC.__new__(OpencorMCMC)
+        return MCMC.__new__(MCMC)
 
 
 def _engine(tmp_path, num_params=2, best_param_vals=None, best_cost=None,
             costs=(0.5, 0.7), UQ_options=None, names=None):
-    obj = OpencorMCMC.__new__(OpencorMCMC)
+    obj = MCMC.__new__(MCMC)
     obj.output_dir = str(tmp_path)
     obj.num_params = num_params
     obj.best_param_vals = best_param_vals
     obj.best_cost = best_cost
     obj.UQ_options = UQ_options if UQ_options is not None else {}
-    obj.param_id_info = {'param_names_for_plotting': names
-                         or [f'p_{i}' for i in range(num_params)]}
+    # Both lists, as a real run has them: `param_names` is what the parser always
+    # builds (one entry per slot, each a list of the model qnames that slot sets --
+    # a grouped or modifier row names several), and `param_names_for_plotting` is
+    # the display form beside it. A stub carrying only the latter is not an MCMC
+    # that could have run: there is no sampling without parameters to sample.
+    obj.param_id_info = {
+        'param_names_for_plotting': names or [f'p_{i}' for i in range(num_params)],
+        'param_names': [[f'vessel_{i}/p_{i}'] for i in range(num_params)],
+    }
     obj._costs = list(costs)
     obj.get_cost_and_obs_from_params = lambda vals, reset=True: (obj._costs.pop(0), None)
     return obj
