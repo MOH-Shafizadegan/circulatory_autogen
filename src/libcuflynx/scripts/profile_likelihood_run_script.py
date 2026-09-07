@@ -4,7 +4,8 @@ Script to run profile likelihood analysis independently.
 
 import sys  
 import os  
-from mpi4py import MPI  
+from libcuflynx.utilities.mpi_utils import get_MPI as _get_MPI  
+MPI = _get_MPI()
   
 root_dir = os.path.join(os.path.dirname(__file__), '../..')  
 sys.path.append(os.path.join(root_dir, 'src'))  

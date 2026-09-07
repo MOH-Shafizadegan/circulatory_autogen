@@ -1,8 +1,9 @@
 import numpy as np  
 import matplotlib.pyplot as plt  
 import os  
-from mpi4py import MPI  
+from libcuflynx.utilities.mpi_utils import get_MPI as _get_MPI  
 import json
+MPI = _get_MPI()
 
 class ProfileLikelihood:  
     """  
