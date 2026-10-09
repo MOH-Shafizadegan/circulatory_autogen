@@ -54,6 +54,11 @@ def run_param_id(inp_data_dict=None):
     # Optional external user-func files (issue #303); None when absent.
     operation_funcs_external_path = inp_data_dict.get('operation_funcs_external_path', None)
     cost_funcs_external_path = inp_data_dict.get('cost_funcs_external_path', None)
+    # Was read nowhere, so a params_for_id naming a user modifier failed in this stage only.
+    modifier_funcs_external_path = inp_data_dict.get('modifier_funcs_external_path', None)
+    # The study manifest's name, switch and source yaml (utilities/cuflynx_study.py).
+    study_kwargs = {key: inp_data_dict[key] for key in
+                    ('study_name', 'write_cuflynx_study', 'user_inputs_path') if key in inp_data_dict}
 
 
     # Resolved once, for both engines below. Neither was given these, so
@@ -88,6 +93,8 @@ def run_param_id(inp_data_dict=None):
                             param_id_output_dir=param_id_output_dir, resources_dir=resources_dir,
                             operation_funcs_external_path=operation_funcs_external_path,
                             cost_funcs_external_path=cost_funcs_external_path,
+                            modifier_funcs_external_path=modifier_funcs_external_path,
+                            **study_kwargs,
                             use_emulator=use_emulator, emulator_dir=emulator_dir,
                             emulator_settings=emulator_settings)
 
@@ -150,6 +157,8 @@ def run_param_id(inp_data_dict=None):
                                 param_id_output_dir=param_id_output_dir, resources_dir=resources_dir,
                                 operation_funcs_external_path=operation_funcs_external_path,
                                 cost_funcs_external_path=cost_funcs_external_path,
+                                modifier_funcs_external_path=modifier_funcs_external_path,
+                                **study_kwargs,
                                 use_emulator=use_emulator, emulator_dir=emulator_dir,
                                 emulator_settings=emulator_settings)
         mcmc.set_best_param_vals(best_param_vals)

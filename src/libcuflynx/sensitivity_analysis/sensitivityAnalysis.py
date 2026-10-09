@@ -19,6 +19,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.ticker as tick
 from libcuflynx.utilities import paperPlotSetup
+from libcuflynx.utilities import cuflynx_study
 paperPlotSetup.Setup_Plot(3)
 from libcuflynx.parsers.PrimitiveParsers import scriptFunctionParser
 # Not `from mpi4py import MPI`: that import initialises MPI and registers an
@@ -137,6 +138,16 @@ class SensitivityAnalysis():
         self._params_for_id = None
         self._local_engine = None
         self.local_sensitivities = None
+        # What the study manifest records about this run's config. init_from_dict replaces it
+        # with the whole parsed config, which also carries pre/sim times and the study name.
+        self._study_inp = cuflynx_study.study_inputs(
+            param_id_output_dir=param_id_output_dir, file_prefix=file_name_prefix,
+            model_path=model_path, param_id_obs_path=param_id_obs_path,
+            params_for_id_path=params_for_id_path,
+            operation_funcs_external_path=operation_funcs_external_path,
+            cost_funcs_external_path=cost_funcs_external_path,
+            modifier_funcs_external_path=modifier_funcs_external_path,
+            solver_info=solver_info, dt=dt, use_emulator=use_emulator, emulator_dir=emulator_dir)
 
     @classmethod
     def init_from_dict(cls, inp_data_dict):
@@ -175,7 +186,13 @@ class SensitivityAnalysis():
         sa = cls(**kwargs)
         # Keep the parsed config so the local method can build a param-id engine from it.
         sa._inp_data_dict = inp_data_dict
+        sa._study_inp = {**inp_data_dict, 'emulator_dir': kwargs.get('emulator_dir')}
         return sa
+
+    def _record_in_study(self, method):
+        """Declare this analysis's output directory in the study manifest (rank 0)."""
+        cuflynx_study.update_study(self._study_inp, 'sensitivity',
+                                   {'dir': self.SA_manager.output_dir, 'method': method})
 
     @classmethod
     def init_from_all_dicts(cls, inp_data_dict, obs_data_dict, params_for_id_dict, sa_options):
@@ -290,6 +307,7 @@ class SensitivityAnalysis():
             self.SA_manager.plot_sobol_first_order_idx(S1_all, ST_all)
             self.SA_manager.plot_sobol_S2_idx(S2_all)
             self.SA_manager.plot_sobol_heatmap(S1_all, ST_all)
+            self._record_in_study('sobol')
 
     def _build_local_engine(self):
         """Build (once) a param-id engine for the local method.
@@ -398,6 +416,7 @@ class SensitivityAnalysis():
                                   index=output_names, columns=param_names)
                 df.index.name = 'output'
                 df.to_csv(os.path.join(out_dir, f'local_sensitivity_{key}.csv'))
+            self._record_in_study('local')
         return self.local_sensitivities
 
     def _nominal_feature_magnitudes(self, engine, nominal, output_names):

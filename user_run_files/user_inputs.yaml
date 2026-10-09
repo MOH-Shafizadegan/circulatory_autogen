@@ -58,6 +58,13 @@ sim_time: 2
 # module_library_dirs: [/path/to/circulatory-autogen-modules/modules]  # searched recursively
 # use_builtin_modules: false  # only use external modules / module libraries
 
+# Every calibration, UQ, sensitivity analysis and emulator run from this config records itself in
+# <param_id_output_dir>/<study_name>_cuflynx_study.json: the model, obs_data, params_for_id, your
+# funcs files, the solver settings and each run's output directory. Drop that file into CUFLynx to
+# reopen the whole study. study_name defaults to file_prefix.
+# study_name: 3compartment
+# write_cuflynx_study: false  # turn the manifest off
+
 # Your own operation / cost / modifier funcs. The built-in ones ship inside the package
 # (libcuflynx.funcs) and must not be edited -- an upgrade replaces them. Write yours in a file of
 # your own and name it here; its funcs are registered alongside the built-ins with the same

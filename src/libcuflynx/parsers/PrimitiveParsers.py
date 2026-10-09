@@ -2134,11 +2134,14 @@ class YamlFileParser(object):
     
     def parse_user_inputs_file(self, inp_data_dict, obs_path_needed=False, do_generation_with_fit_parameters=False):
         
+        loaded_from = None
         if inp_data_dict is None:
-            with open(os.path.join(user_inputs_dir, 'user_inputs.yaml'), 'r') as file:
+            loaded_from = os.path.join(user_inputs_dir, 'user_inputs.yaml')
+            with open(loaded_from, 'r') as file:
                 inp_data_dict = yaml.load(file, Loader=yaml.FullLoader)
             if "user_inputs_path_override" in inp_data_dict.keys() and inp_data_dict["user_inputs_path_override"]:
                 if os.path.exists(inp_data_dict["user_inputs_path_override"]):
+                    loaded_from = inp_data_dict["user_inputs_path_override"]
                     user_files_dir = os.path.dirname(inp_data_dict["user_inputs_path_override"])
                     with open(inp_data_dict["user_inputs_path_override"], 'r') as file:
                         inp_data_dict = yaml.load(file, Loader=yaml.FullLoader)
@@ -2161,6 +2164,16 @@ class YamlFileParser(object):
             exit()
         else:
             file_prefix = inp_data_dict['file_prefix']
+
+        # The study manifest (utilities/cuflynx_study.py): every analysis run from this config
+        # records itself in <param_id_output_dir>/<study_name>_cuflynx_study.json so CUFLynx can
+        # reopen the study. A caller passing a dict can name the yaml it came from itself.
+        if not inp_data_dict.get('study_name'):
+            inp_data_dict['study_name'] = file_prefix
+        if inp_data_dict.get('write_cuflynx_study') is None:
+            inp_data_dict['write_cuflynx_study'] = True
+        if loaded_from and not inp_data_dict.get('user_inputs_path'):
+            inp_data_dict['user_inputs_path'] = os.path.abspath(loaded_from)
 
         if 'couple_to_1d' not in inp_data_dict.keys():
             inp_data_dict['couple_to_1d'] = False
