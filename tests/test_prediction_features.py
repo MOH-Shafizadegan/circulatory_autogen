@@ -393,6 +393,45 @@ def test_the_trainer_warns_about_items_without_an_operation(resources_dir, tmp_p
 
 
 @pytest.mark.unit
+def test_prediction_items_are_not_emulated_by_default(base_user_inputs, resources_dir, tmp_path):
+    """An emulator is trained on prediction items only when asked: the schema, the parser's
+    fill-in and the shipped user_inputs.yaml all leave the option off, and a trainer given the
+    parsed default settings has no prediction features, although the benchmark's prediction
+    items have operations that would make them features."""
+    import yaml
+    from libcuflynx.emulators.emulator_trainer import EmulatorTrainer
+    from libcuflynx.parsers.PrimitiveParsers import ANALYSIS_OPTIONS
+
+    for mode in ('emulation', 'sensitivity_analysis'):
+        option = next(d for d in ANALYSIS_OPTIONS[mode]['options']
+                      if d['name'] == 'include_prediction_items')
+        assert option['default'] is False, mode
+
+    shipped = os.path.join(os.path.dirname(__file__), '..', 'user_run_files', 'user_inputs.yaml')
+    with open(shipped) as f:
+        user_inputs = yaml.safe_load(f)
+    assert user_inputs['emulator_settings'].get('include_prediction_items', False) is False
+    assert user_inputs['sa_options'].get('include_prediction_items', False) is False
+
+    config = base_user_inputs.copy()
+    config.update({'resources_dir': resources_dir})
+    config.pop('emulator_settings', None)
+    parsed = YamlFileParser().parse_user_inputs_file(
+        config, obs_path_needed=False, do_generation_with_fit_parameters=False)
+    assert parsed['emulator_settings']['include_prediction_items'] is False
+
+    _, pid = _stub_trainer(resources_dir, tmp_path, include=False)
+    assert prediction_features.prediction_feature_indices(pid.prediction_info, warn=False)
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', prediction_features.PredictionFeatureWarning)
+        trainer = EmulatorTrainer(pid, parsed['emulator_settings'], comm=None)
+    assert trainer.prediction_indices == []
+    assert trainer.prediction_feature_labels == []
+    assert trainer.feature_labels == emulated_feature_labels(pid.obs_info)
+    assert 'prediction_sha256' not in trainer._fingerprint()
+
+
+@pytest.mark.unit
 def test_an_off_option_is_not_recorded_in_the_bundle_settings():
     from libcuflynx.emulators.emulator_trainer import _jsonable_settings
     assert 'include_prediction_items' not in _jsonable_settings(
@@ -829,6 +868,30 @@ def test_a_validation_only_experiment_is_not_calibrated_but_is_validated(
     t_run = np.arange(0.0, 3.0 + 1e-9, 0.05)
     assert items['x_mean_val']['model'][0] == pytest.approx(np.mean(_x_exp1(p, t_run)),
                                                             abs=2e-3)
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.mpi
+def test_calibration_without_data_items_is_refused(
+        base_user_inputs, resources_dir, temp_output_dir, temp_generated_models_dir, mpi_comm,
+        tmp_path, monkeypatch):
+    """An obs_data with prediction items but no data_items has nothing to fit: calibration
+    and UQ refuse it, naming the reason, before anything is simulated."""
+    _, doc = _validation_obs(tmp_path, resources_dir)
+    doc['data_items'] = []
+    obs_path = tmp_path / 'no_data_items_obs_data.json'
+    obs_path.write_text(json.dumps(doc))
+    config = _benchmark_config(base_user_inputs, resources_dir, temp_output_dir,
+                               temp_generated_models_dir, str(obs_path))
+    _generate(config, mpi_comm)
+    pid = CVS0DParamID.init_from_dict(config)
+    spy = _RunSpy(monkeypatch)
+    with pytest.raises(ValueError, match='no data_items, so there is nothing for calibration'):
+        pid.run()
+    with pytest.raises(ValueError, match='nothing for uncertainty quantification'):
+        pid.run_UQ()
+    assert spy.calls == []
 
 
 @pytest.mark.integration
