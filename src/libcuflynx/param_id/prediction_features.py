@@ -269,9 +269,11 @@ def feature_sensitivities(pid, param_vals, prediction_info, indices, h=1e-3):
     """d(prediction feature)/d(param) by central finite differences.
 
     ``{data_item_name: {param_label: derivative or None}}``, the shape of
-    ``ParamID.get_observable_sensitivities``. Always FD, whatever arm computed the data_item
-    sensitivities: the analytic arms differentiate the cost's observables, which prediction
-    items are not. Costs 2M extra simulations (or emulator evaluations) for M parameters.
+    ``ParamID.get_observable_sensitivities``. The finite-difference arm of local SA's
+    prediction rows: used with ``gradient_method: FD``, over an emulator, and when the analytic
+    arm cannot take the prediction features (``SensitivityAnalysis.
+    _analytic_prediction_sensitivities``). Costs 2M extra simulations (or emulator
+    evaluations) for M parameters.
     Also returns the nominal feature values, for the relative normalisation.
     """
     from libcuflynx.param_id.fd_backend import _step

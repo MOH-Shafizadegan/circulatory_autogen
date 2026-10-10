@@ -84,9 +84,11 @@ sa_options:
   `subexperiment_idx`.
 - With `method: local` they are extra rows of `local_sensitivity_absolute.csv` and
   `local_sensitivity_relative.csv`, named by `data_item_name`. `get_local_sensitivities()`
-  lists them under `prediction_feature_names`. They are always computed by central finite
-  differences with `fd_rel_step`, whatever `gradient_method` gives the data_item rows, which
-  costs 2M more simulations.
+  lists them under `prediction_feature_names`. They are computed the same way as the
+  data_item rows: by the analytic arm (CasADi, or Myokit CVODES sensitivities), or by central
+  finite differences with `fd_rel_step` (2M more simulations) when `gradient_method: FD` or over
+  an emulator. Myokit's arm needs a single sub-experiment; a prediction feature in an
+  experiment with several falls back to finite differences, with a warning.
 - `choose_most_impactful_params_sobol` ranks over every column in the CSV, prediction features
   included.
 - With `use_emulator: true` the emulator must have been trained with

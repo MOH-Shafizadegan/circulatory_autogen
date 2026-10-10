@@ -668,15 +668,21 @@ def test_sobol_sa_reports_prediction_features_end_to_end(
 @pytest.mark.integration
 @pytest.mark.slow
 @pytest.mark.mpi
+@pytest.mark.parametrize('gradient_method', ['FD', None])
 def test_local_sa_reports_prediction_features_end_to_end(
         base_user_inputs, resources_dir, temp_output_dir, temp_generated_models_dir, mpi_comm,
-        tmp_path):
-    """d(x_max)/dp -> 1 and d(y_mean_late)/dq -> 1/3 on the benchmark (closed form)."""
+        tmp_path, monkeypatch, gradient_method):
+    """d(x_max)/dp -> 1 and d(y_mean_late)/dq -> 1/3 on the benchmark (closed form), by finite
+    differences and by the analytic arm (here Myokit CVODES), which must not fall back to FD."""
     from libcuflynx.sensitivity_analysis.sensitivityAnalysis import SensitivityAnalysis
 
+    if gradient_method is None:
+        def no_fd(*args, **kwargs):
+            raise AssertionError('the analytic arm fell back to finite differences')
+        monkeypatch.setattr(prediction_features, 'feature_sensitivities', no_fd)
     obs_path, obs_doc = _benchmark_obs(tmp_path, resources_dir=resources_dir)
-    out_dir = os.path.join(temp_output_dir, 'local_sa_prediction_features')
-    sa_options = {'method': 'local', 'gradient_method': 'FD', 'num_samples': 4,
+    out_dir = os.path.join(temp_output_dir, f'local_sa_prediction_features_{gradient_method}')
+    sa_options = {'method': 'local', 'gradient_method': gradient_method, 'num_samples': 4,
                   'sample_type': 'saltelli', 'output_dir': out_dir,
                   'include_prediction_items': True}
     config = _benchmark_config(base_user_inputs, resources_dir, temp_output_dir,
@@ -702,6 +708,88 @@ def test_local_sa_reports_prediction_features_end_to_end(
         df = pd.read_csv(os.path.join(out_dir, 'local_sensitivity_absolute.csv'),
                          index_col='output')
         assert 'x_max' in df.index and 'y_mean_late' in df.index
+
+
+def _local_prediction_rows(config, obs_doc, gradient_method):
+    from libcuflynx.sensitivity_analysis.sensitivityAnalysis import SensitivityAnalysis
+    sa_options = dict(config['sa_options'], gradient_method=gradient_method)
+    sa = SensitivityAnalysis.init_from_dict(dict(config, sa_options=sa_options))
+    sa.set_ground_truth_data(obs_doc)
+    sa.set_params_for_id([
+        {'vessel_name': 'benchmark', 'param_name': 'p', 'param_type': 'const', 'min': 0, 'max': 6},
+        {'vessel_name': 'benchmark', 'param_name': 'q', 'param_type': 'const', 'min': 0, 'max': 6},
+    ])
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', prediction_features.PredictionFeatureWarning)
+        sa.run_sensitivity_analysis(sa_options)
+    local = sa.get_local_sensitivities()
+    return {row: local['raw'][row] for row in local['prediction_feature_names']}
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.mpi
+def test_local_sa_of_prediction_features_by_casadi_matches_finite_differences(
+        base_user_inputs, resources_dir, temp_output_dir, temp_generated_models_dir, mpi_comm,
+        tmp_path, monkeypatch):
+    """The CasADi arm differentiates prediction features too, without falling back to finite
+    differences. (Operations CasADi has: the benchmark's steady_state_avg is numpy-only.)"""
+    items = [{"data_item_name": "x_max", "operands": ["benchmark/x"], "unit": "dimensionless",
+              "operation": "max", "data_type": "constant"},
+             {"data_item_name": "y_mean", "operands": ["benchmark/y"], "unit": "dimensionless",
+              "operation": "mean"}]
+    obs_path, obs_doc = _benchmark_obs(tmp_path, items=items, resources_dir=resources_dir)
+    for item in obs_doc['data_items']:
+        item['operation'] = 'mean'
+    with open(obs_path, 'w') as f:
+        json.dump(obs_doc, f)
+    sa_options = {'method': 'local', 'num_samples': 4, 'sample_type': 'saltelli',
+                  'output_dir': os.path.join(temp_output_dir, 'local_casadi'),
+                  'include_prediction_items': True}
+    config = _benchmark_config(base_user_inputs, resources_dir, temp_output_dir,
+                               temp_generated_models_dir, obs_path, sa_options=sa_options,
+                               model_type='casadi_python', solver='casadi_integrator',
+                               solver_info={'method': 'bdf'})
+    _generate(config, mpi_comm)
+    fd = _local_prediction_rows(config, obs_doc, 'FD')
+    monkeypatch.setattr(prediction_features, 'feature_sensitivities',
+                        lambda *a, **k: pytest.fail('fell back to finite differences'))
+    rows = _local_prediction_rows(config, obs_doc, None)
+    assert list(rows) == ['x_max', 'y_mean'] == list(fd)
+    for name in rows:
+        for label, value in fd[name].items():
+            assert rows[name][label] == pytest.approx(value, rel=1e-3, abs=1e-6), (name, label)
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.mpi
+@pytest.mark.parametrize('exp1_sim_times, analytic', [((3.0,), True), ((1.5, 1.5), False)])
+def test_local_sa_of_a_feature_in_a_validation_only_experiment(
+        base_user_inputs, resources_dir, temp_output_dir, temp_generated_models_dir, mpi_comm,
+        tmp_path, monkeypatch, exp1_sim_times, analytic):
+    """A feature measured in a validation-only experiment: the analytic arm differentiates it
+    there and agrees with finite differences. Where the arm cannot (Myokit's needs a single
+    sub-experiment) it says so and the finite-difference numbers are used."""
+    obs_path, obs_doc = _validation_obs(tmp_path, resources_dir, exp1_sim_times=exp1_sim_times)
+    sa_options = {'method': 'local', 'num_samples': 4, 'sample_type': 'saltelli',
+                  'output_dir': os.path.join(temp_output_dir, f'local_validation_{analytic}'),
+                  'include_prediction_items': True}
+    config = _benchmark_config(base_user_inputs, resources_dir, temp_output_dir,
+                               temp_generated_models_dir, obs_path, sa_options=sa_options)
+    _generate(config, mpi_comm)
+    fd = _local_prediction_rows(config, obs_doc, 'FD')
+    if analytic:
+        monkeypatch.setattr(prediction_features, 'feature_sensitivities',
+                            lambda *a, **k: pytest.fail('fell back to finite differences'))
+        rows = _local_prediction_rows(config, obs_doc, None)
+    else:
+        with pytest.warns(UserWarning, match='finite differences instead'):
+            rows = _local_prediction_rows(config, obs_doc, None)
+    assert list(rows) == ['x_mean_val'] == list(fd)
+    for label, value in fd['x_mean_val'].items():
+        assert rows['x_mean_val'][label] == pytest.approx(value, rel=1e-3, abs=1e-6)
+    assert abs(fd['x_mean_val'][next(iter(fd['x_mean_val']))]) > 0.1
 
 
 @pytest.mark.integration
