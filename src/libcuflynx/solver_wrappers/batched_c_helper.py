@@ -19,13 +19,11 @@ solver_info keys: ``rtol`` (default 1e-4), ``atol`` (1e-8), ``MaximumStep`` (unb
 The model sees time as CVODE_myokit does: each sub-experiment's clock starts at 0 (Myokit's
 Simulation.reset()). Only blocks that read time notice; the integrator keeps one clock across sub-experiments.
 """
-import os
 import time as _time
 import warnings
 
 import numpy as np
 
-from libcuflynx.generators import kernel_ir
 from libcuflynx.generators.cpp import batched
 from libcuflynx.solver_wrappers.name_resolver import VariableNameResolver
 from libcuflynx.solver_wrappers.param_grouping import pair_names_with_values
@@ -48,22 +46,23 @@ class SimulationHelper:
         self._configure(self.solver_info)
 
         t0 = _time.perf_counter()
-        self.flat_model, self.analysed_model = kernel_ir.analyse_cellml(cellml_path)
-        self.kernel_model = kernel_ir.build_kernel_model(self.analysed_model)
-        files = batched.sources(self.analysed_model, self.kernel_model,
-                                os.path.splitext(os.path.basename(cellml_path))[0])
-        self.generation_seconds = _time.perf_counter() - t0
-        path, self.build_seconds = batched.build(files, self.solver_info.get('build_dir'))
+        self.info, path, self.build_seconds, self.cached = batched.load_or_build(
+            cellml_path, self.solver_info.get('build_dir'))
+        self.setup_seconds = _time.perf_counter() - t0
+        info = self.info
         self.library = batched.BatchedLibrary(path)
-        km = self.kernel_model
-        self.sim = batched.BatchedSimulation(
-            self.library, [{'kernel': b.kernel, 'states': b.states, 'inputs': b.inputs} for b in km.blocks],
-            km.state_count, km.variable_count)
+        self.sim = batched.BatchedSimulation(self.library, info['blocks'], info['state_count'],
+                                             info['variable_count'])
         self.sim.set_options(rtol=self.rtol, atol=self.atol, max_step=self.max_step, max_steps=self.max_steps,
                              finite_difference_jacobian=(self.jacobian == 'finite_difference'))
 
-        self.STATE_COUNT = km.state_count
-        self._build_names()
+        self.STATE_COUNT = info['state_count']
+        self.state_names = info['state_names']
+        self.variable_names = info['variable_names']
+        self.state_index = info['state_index']
+        self.var_index = info['var_index']
+        self._kind_of_var = info['variable_kinds']
+        self.state_init_ref = info['state_init_ref']
         self._init_values()
         self.clock = 0.0
         self.last_states = None
@@ -83,58 +82,10 @@ class SimulationHelper:
         if self.jacobian not in JACOBIANS:
             raise ValueError(f"solver_info jacobian must be one of {JACOBIANS}, not {self.jacobian!r}")
 
-    def _build_names(self):
-        """Every component/variable name of the flat model, mapped to its state or one-array index."""
-        km, am = self.kernel_model, self.analysed_model
-        self.state_index, self.var_index = {}, {}
-        self.state_names = [f'{s.component}/{s.name}' for s in km.states]
-        self.variable_names = [f'{v.component}/{v.name}' for v in km.variables]
-        offsets = {}
-        for kind in ('constant', 'computed_constant', 'algebraic', 'external'):
-            offsets[kind] = next((v.index for v in km.variables if v.kind == kind), None)
-        vt = kernel_ir.VT
-        kinds = {vt.CONSTANT: 'constant', vt.COMPUTED_CONSTANT: 'computed_constant',
-                 vt.ALGEBRAIC_VARIABLE: 'algebraic', vt.EXTERNAL_VARIABLE: 'external'}
-
-        def components(parent):
-            for i in range(parent.componentCount()):
-                c = parent.component(i)
-                yield c
-                yield from components(c)
-
-        for c in components(self.flat_model):
-            for i in range(c.variableCount()):
-                v = c.variable(i)
-                av = am.analyserVariable(v)
-                if av is None:
-                    continue
-                key = f'{c.name()}/{v.name()}'
-                if av.type() == vt.STATE:
-                    self.state_index[key] = av.index()
-                elif av.type() in kinds:
-                    self.var_index[key] = offsets[kinds[av.type()]] + av.index()
-        # the representatives' names first, so a name maps to the variable libCellML keeps
-        for i, name in enumerate(self.state_names):
-            self.state_index[name] = i
-        for k, name in enumerate(self.variable_names):
-            self.var_index[name] = k
-        self.voi_name = f'{km.voi.component}/{km.voi.name}'
-        self._kind_of_var = [v.kind for v in km.variables]
-        # each state's initial value: a literal (None here) or the one-array index of the variable naming it
-        self.state_init_ref = [None] * km.state_count
-        for i, s in enumerate(km.states):
-            if isinstance(s.initial, str):
-                c = self.flat_model.component(s.component, True)
-                ref = c.variable(s.initial) if c is not None else None
-                av = am.analyserVariable(ref) if ref is not None else None
-                if av is not None and av.type() in kinds:
-                    self.state_init_ref[i] = offsets[kinds[av.type()]] + av.index()
-
     def _init_values(self):
-        km = self.kernel_model
-        self.states = np.zeros(km.state_count)
-        self.variables = np.zeros(km.variable_count)
-        rates = np.zeros(km.state_count)
+        self.states = np.zeros(self.info['state_count'])
+        self.variables = np.zeros(self.info['variable_count'])
+        rates = np.zeros(self.info['state_count'])
         self.library.bk_initialise(batched.ptr(self.states), batched.ptr(rates), batched.ptr(self.variables))
         self.library.bk_compute_computed_constants(batched.ptr(self.variables))
         self._literal_initial_states = self.states.copy()
@@ -185,7 +136,7 @@ class SimulationHelper:
                                     self.threads)
         if failures:
             b, status, t = failures[0]
-            names = [self.state_names[i] for i in self.kernel_model.blocks[b].states[:3]]
+            names = [self.state_names[i] for i in self.info['blocks'][b]['states'][:3]]
             print(f'BE_batched_c simulation failed: {len(failures)} block(s); block {b} ({", ".join(names)}, ...) '
                   f'stopped at t={t:g}: {STATUS.get(status, status)}.')
             warnings.warn(f'BE_batched_c simulation failed (rtol {self.rtol:g}, atol {self.atol:g}, '
@@ -205,7 +156,7 @@ class SimulationHelper:
 
     def _rows(self):
         if self._variables_rows is None:
-            rows = np.empty((len(self._last_times), self.kernel_model.variable_count))
+            rows = np.empty((len(self._last_times), self.info['variable_count']))
             self.library.bk_outputs(len(self._last_times), batched.ptr(np.ascontiguousarray(self._last_times)),
                                     batched.ptr(self.last_states), batched.ptr(self._last_variables),
                                     batched.ptr(rows), self.threads)

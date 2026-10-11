@@ -291,3 +291,18 @@ def test_be_batched_c_is_a_cellml_solver_in_the_schema():
     assert defaults['rtol'] == batched_c_helper.DEFAULT_RTOL
     assert defaults['atol'] == batched_c_helper.DEFAULT_ATOL
     assert defaults['MaximumNumberOfSteps'] == batched_c_helper.DEFAULT_MAX_STEPS
+
+
+@needs_c
+@pytest.mark.solver
+def test_a_built_model_is_loaded_from_the_cache_until_its_cellml_changes(tmp_path):
+    first = _helper(tmp_path, CELLS, rtol=1e-6)
+    again = _helper(tmp_path, CELLS, rtol=1e-6)
+    assert not first.cached and again.cached
+    assert again.build_seconds == 0.0
+    assert first.run() and again.run()
+    assert np.array_equal(first.get_all_results(flatten=True), again.get_all_results(flatten=True))
+    changed = _helper(tmp_path, CELLS.replace('initial_value="0.5"', 'initial_value="0.6"'), rtol=1e-6)
+    assert not changed.cached
+    assert changed.run()
+    assert changed.get_results([['cell_a/k']])[0][0][0] == 0.6

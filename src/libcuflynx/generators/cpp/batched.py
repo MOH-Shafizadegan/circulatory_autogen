@@ -22,6 +22,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import tempfile
 import time
 
@@ -156,6 +157,116 @@ def build(files, parent=None, verbose=False):
         except Exception as exc:
             raise BatchedBuildError(str(exc)) from exc
         return path, time.perf_counter() - t0
+
+
+def describe(flat_model, am, km):
+    """What the solver needs of a model, as JSON-able data: names, kinds, the variable each state's initial value
+    names (its one-array index, or None for a literal) and the blocks. Every component/variable name of the flat
+    model maps to the index of the variable libCellML keeps for it."""
+    vt = kernel_ir.VT
+    kinds = {vt.CONSTANT: 'constant', vt.COMPUTED_CONSTANT: 'computed_constant',
+             vt.ALGEBRAIC_VARIABLE: 'algebraic', vt.EXTERNAL_VARIABLE: 'external'}
+    offsets = {kind: next((v.index for v in km.variables if v.kind == kind), None) for kind in kinds.values()}
+
+    def index_of(variable):
+        av = am.analyserVariable(variable)
+        if av is None:
+            return None, None
+        if av.type() == vt.STATE:
+            return 'state', av.index()
+        if av.type() in kinds:
+            return 'var', offsets[kinds[av.type()]] + av.index()
+        return None, None
+
+    def components(parent):
+        for i in range(parent.componentCount()):
+            c = parent.component(i)
+            yield c
+            yield from components(c)
+
+    state_index, var_index = {}, {}
+    for c in components(flat_model):
+        for i in range(c.variableCount()):
+            kind, index = index_of(c.variable(i))
+            if kind == 'state':
+                state_index[f'{c.name()}/{c.variable(i).name()}'] = index
+            elif kind == 'var':
+                var_index[f'{c.name()}/{c.variable(i).name()}'] = index
+    state_names = [f'{s.component}/{s.name}' for s in km.states]
+    variable_names = [f'{v.component}/{v.name}' for v in km.variables]
+    state_index.update({name: i for i, name in enumerate(state_names)})
+    var_index.update({name: k for k, name in enumerate(variable_names)})
+    init_ref = []
+    for st in km.states:
+        ref = None
+        if isinstance(st.initial, str):
+            c = flat_model.component(st.component, True)
+            if c is not None and c.variable(st.initial) is not None:
+                kind, index = index_of(c.variable(st.initial))
+                ref = index if kind == 'var' else None
+        init_ref.append(ref)
+    return {
+        'state_count': km.state_count, 'variable_count': km.variable_count,
+        'state_names': state_names, 'variable_names': variable_names,
+        'variable_kinds': [v.kind for v in km.variables],
+        'state_index': state_index, 'var_index': var_index, 'state_init_ref': init_ref,
+        'voi': f'{km.voi.component}/{km.voi.name}',
+        'blocks': [{'kernel': b.kernel, 'states': b.states, 'inputs': b.inputs} for b in km.blocks],
+        'kernels': [{'states': k.n_states, 'inputs': k.n_inputs, 'nonzeros': k.nonzeros} for k in km.kernels],
+    }
+
+
+_IMPORT = re.compile(r'<import\b[^>]*?xlink:href="([^"]+)"')
+
+
+def source_digest(cellml_path):
+    """A digest of a CellML file and every file it imports, recursively, with this module's templates and
+    code (so a changed generator does not load a stale build)."""
+    digest = hashlib.sha1()
+    seen, pending = set(), [os.path.abspath(cellml_path)]
+    while pending:
+        path = pending.pop()
+        if path in seen:
+            continue
+        seen.add(path)
+        with open(path, 'rb') as f:
+            data = f.read()
+        digest.update(path.encode())
+        digest.update(data)
+        for href in sorted(set(_IMPORT.findall(data.decode('utf-8', 'replace')))):
+            if '://' not in href:
+                pending.append(os.path.normpath(os.path.join(os.path.dirname(path), href)))
+    here = os.path.dirname(os.path.abspath(__file__))
+    for path in [__file__, kernel_ir.__file__] + sorted(
+            os.path.join(here, 'templates', n) for n in os.listdir(os.path.join(here, 'templates'))
+            if n.startswith('batched_')):
+        with open(path, 'rb') as f:
+            digest.update(f.read())
+    return digest.hexdigest()[:16]
+
+
+def load_or_build(cellml_path, parent=None, verbose=False):
+    """The description and built library of a CellML model: from the cache under ``parent`` (keyed by
+    :func:`source_digest`) when there, else analysed, generated and built. Returns (description, library
+    path, seconds spent building, True when cached)."""
+    parent = parent or os.path.join(tempfile.gettempdir(), 'libcuflynx_batched_c')
+    index = os.path.join(parent, 'models', source_digest(cellml_path) + '.json')
+    if os.path.isfile(index):
+        with open(index) as f:
+            cached = json.load(f)
+        if os.path.isfile(cached['library']):
+            return cached['description'], cached['library'], 0.0, True
+    flat, am = kernel_ir.analyse_cellml(cellml_path)
+    km = kernel_ir.build_kernel_model(am)
+    files = sources(am, km, os.path.splitext(os.path.basename(cellml_path))[0])
+    description = describe(flat, am, km)
+    path, seconds = build(files, parent, verbose=verbose)
+    os.makedirs(os.path.dirname(index), exist_ok=True)
+    staging = index + f'.{os.getpid()}.tmp'
+    with open(staging, 'w') as f:
+        json.dump({'library': path, 'description': description}, f)
+    os.replace(staging, index)
+    return description, path, seconds, False
 
 
 class BatchedLibrary:
