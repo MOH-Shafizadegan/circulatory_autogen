@@ -1385,24 +1385,23 @@ void Model0d::set_ode_solver(std::string ODEsolver)
 
             # print("idx0d1d:", idx1d0d)
             
-            avs = analysed_model.variables()
-            for av in avs:
+            for av, index in cellml.analyser_variables(analysed_model):
                 v = av.variable()
                 
                 # if analysed_model.areEquivalentVariables(v, ext_variable['variable']):
                 if analysed_model.areEquivalentVariables(v, ev):
-                    ext_variable['variable_index'] = av.index()
+                    ext_variable['variable_index'] = index
                     ext_variable['state_or_variable'] = 'variable'
                     if idx1d0d>0:
-                        self.conn_1d_0d_info[str(idx1d0d)]["cellml_idx"] = av.index() # in the meantime, filling also self.conn_1d_0d_info
+                        self.conn_1d_0d_info[str(idx1d0d)]["cellml_idx"] = index # in the meantime, filling also self.conn_1d_0d_info
                     print(v.name(), ev.name(), " || variable index", ext_variable['variable_index'])
 
                 if 'port_variable' in ext_variable.keys():
                     # if analysed_model.areEquivalentVariables(v, ext_variable['port_variable']):
                     if analysed_model.areEquivalentVariables(v, epv):
-                        ext_variable['port_variable_index'] = av.index()
+                        ext_variable['port_variable_index'] = index
                         if idx1d0d>0:
-                            self.conn_1d_0d_info[str(idx1d0d)]["port_idx"] = av.index() # in the meantime, filling also self.conn_1d_0d_info
+                            self.conn_1d_0d_info[str(idx1d0d)]["port_idx"] = index # in the meantime, filling also self.conn_1d_0d_info
                             self.conn_1d_0d_info[str(idx1d0d)]["port_state0_or_var1"] = 1 # variable
                         print(v.name(), epv.name(), " || port variable index", ext_variable['port_variable_index'])
 
@@ -1410,16 +1409,16 @@ void Model0d::set_ode_solver(std::string ODEsolver)
                     ecv = ext_variable['control_variable']
                     # if analysed_model.areEquivalentVariables(v, ext_variable['control_variable']):
                     if analysed_model.areEquivalentVariables(v, ecv):
-                        ext_variable['control_variable_index'] = av.index()
+                        ext_variable['control_variable_index'] = index
                         if idx1d0d>0:
-                            self.conn_1d_0d_info[str(idx1d0d)]["R_T_variable_idx"] = av.index() # in the meantime, filling also self.conn_1d_0d_info
+                            self.conn_1d_0d_info[str(idx1d0d)]["R_T_variable_idx"] = index # in the meantime, filling also self.conn_1d_0d_info
                         print(v.name(), ecv.name(), " || control variable index", ext_variable['control_variable_index'])
 
                 if ext_variable['variable_type'] == 'delay':
                     if analysed_model.areEquivalentVariables(v, ext_variable['delay_variable']):
-                        ext_variable['delay_variable_index'] = av.index()
+                        ext_variable['delay_variable_index'] = index
                     if analysed_model.areEquivalentVariables(v, ext_variable['delay_amount_variable']):
-                        ext_variable['delay_amount_index'] = av.index()
+                        ext_variable['delay_amount_index'] = index
             
             astates = analysed_model.states()
             for astate in astates:
@@ -1506,7 +1505,9 @@ void Model0d::set_ode_solver(std::string ODEsolver)
         interFaceCodePreClass = ''
         interFaceCodeInClass = ''
         pre_class = True
-        for line in cellml.generate_interface_code(gen, analysed_model, profile).split('\n'):
+        interface_code = cellml.c_code_with_one_variables_array(
+            cellml.generate_interface_code(gen, analysed_model, profile), header=True)
+        for line in interface_code.split('\n'):
             # print(line)
             if 'extern ' in line:
                 if 'VERSION' in line:
@@ -1945,7 +1946,8 @@ Model0d::Model0d() :
         in_class_init = False
 
         # TODO The below is all really susceptible to changes in libcellml, I should create my own profile
-        lines = cellml.generate_implementation_code(gen, analysed_model, profile).split('\n')
+        lines = cellml.c_code_with_one_variables_array(
+            cellml.generate_implementation_code(gen, analysed_model, profile), header=False).split('\n')
         max_func_found = any(l.startswith('double max') for l in lines)
         
         lines_to_pass = []

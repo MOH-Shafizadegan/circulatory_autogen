@@ -49,17 +49,9 @@ dependencies = [
     "pandas>=1.3.0",
     "scipy>=1.7.0",
     "pyyaml>=5.4.0",
-    # libCellML 0.7.0 (released 2026-07-09) is a breaking change: it renames
-    # Analyser.model() -> Analyser.analyserModel(), drops Generator.setModel()/setProfile() in
-    # favour of arguments, changes the generated Python code (no VARIABLE_COUNT), and resolves
-    # units differently when flattening (SN_simple then fails to connect a_2 across components).
-    # The first two are handled by the shims in utilities/libcellml_helper_funcs.py; the last
-    # two are a real migration. Pin below 0.7 until that is done -- without an upper bound CI
-    # silently picks up 0.7.0 and every model-generating test fails.
-    # The upper bound also holds the *Python* ceiling, which is easy to miss: 0.6.3 ships wheels
-    # up to cp313, while 0.7.0's coverage regressed to cp311. Relaxing this pin would therefore
-    # narrow the supported interpreters as well as changing the generated-code API (#459).
-    "libcellml>=0.6.3,<0.7.0",
+    # 0.7's generated Python keeps constants, computed constants and algebraic variables in separate arrays;
+    # PythonGenerator joins them into the one `variables` array the solvers use (#271).
+    "libcellml>=0.7.1",
     "myokit>=1.39.1",
     "matplotlib>=3.3.0",
     "seaborn>=0.11.0",

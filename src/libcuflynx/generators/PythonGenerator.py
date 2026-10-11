@@ -212,6 +212,79 @@ class PythonGenerator:
 
         return qualified_names, attr_names
 
+    # libCellML 0.7's Python code: three arrays, each function taking all of them
+    _ARRAYS = ("constants", "computed_constants", "algebraic_variables")
+    _SIGNATURES = {
+        "initialise_arrays": "def initialise_variables(states, rates, variables):",
+        "compute_computed_constants": "def compute_computed_constants(variables):",
+        "compute_rates": "def compute_rates(voi, states, rates, variables):",
+        "compute_variables": "def compute_variables(voi, states, rates, variables):",
+    }
+
+    @classmethod
+    def _as_one_variables_array(cls, code: str) -> str:
+        """libCellML's Python code with its constants, computed constants and algebraic variables in one ``variables``
+        array, in that order, and each variable's type in ``VARIABLE_INFO``: the layout the solvers, the CasADi and AADC
+        paths and calibration read."""
+        namespace = {}
+        exec(code, namespace)
+        if namespace.get("EXTERNAL_VARIABLE_COUNT"):
+            raise ValueError("Python generation does not support external variables")
+        counts = [namespace["CONSTANT_COUNT"], namespace["COMPUTED_CONSTANT_COUNT"], namespace["ALGEBRAIC_VARIABLE_COUNT"]]
+        offsets = dict(zip(cls._ARRAYS, [0, counts[0], counts[0] + counts[1]]))
+
+        def info(entry, variable_type):
+            return (f'{{"name": "{entry["name"]}", "units": "{entry["units"]}", '
+                    f'"component": "{entry["component"]}", "type": VariableType.{variable_type}}}')
+
+        def info_list(name, entries):
+            return "\n".join([f"{name} = ["] + [f"    {e}," for e in entries] + ["]"])
+
+        variables = ([info(e, "CONSTANT") for e in namespace["CONSTANT_INFO"]]
+                     + [info(e, "COMPUTED_CONSTANT") for e in namespace["COMPUTED_CONSTANT_INFO"]]
+                     + [info(e, "ALGEBRAIC") for e in namespace["ALGEBRAIC_VARIABLE_INFO"]])
+        header = code[:code.index("STATE_COUNT =")]
+        helpers = code[code.index("\ndef ") + 1:code.index("def create_states_array")]
+        functions = []
+        for name, signature in cls._SIGNATURES.items():
+            body = cls._extract_function_block(code, name).split("\n", 1)[1]
+            body = re.sub(rf"\b({'|'.join(cls._ARRAYS)})\[(\d+)\]",
+                          lambda m: f"variables[{offsets[m.group(1)] + int(m.group(2))}]", body)
+            functions.append(signature + "\n" + body.rstrip() + "\n")
+        return "\n".join([
+            header + f"STATE_COUNT = {namespace['STATE_COUNT']}",
+            f"VARIABLE_COUNT = {sum(counts)}",
+            "",
+            "",
+            "class VariableType(Enum):",
+            "    VARIABLE_OF_INTEGRATION = 0",
+            "    STATE = 1",
+            "    CONSTANT = 2",
+            "    COMPUTED_CONSTANT = 3",
+            "    ALGEBRAIC = 4",
+            "",
+            "",
+            "VOI_INFO = " + info(namespace["VOI_INFO"], "VARIABLE_OF_INTEGRATION"),
+            "",
+            info_list("STATE_INFO", [info(e, "STATE") for e in namespace["STATE_INFO"]]),
+            "",
+            info_list("VARIABLE_INFO", variables),
+            "",
+            "",
+            helpers.rstrip(),
+            "",
+            "",
+            "def create_states_array():",
+            "    return [nan]*STATE_COUNT",
+            "",
+            "",
+            "def create_variables_array():",
+            "    return [nan]*VARIABLE_COUNT",
+            "",
+            "",
+            "\n\n".join(functions),
+        ])
+
     @staticmethod
     def _extract_generated_metadata(code: str):
         namespace = {}
@@ -818,6 +891,8 @@ class PythonGenerator:
         generator = lc.Generator()
 
         code = cellml_utils.generate_implementation_code(generator, analysed_model, profile)
+        if code:
+            code = self._as_one_variables_array(code)
         utilities_filename = None
         utilities_code = None
         if self.human_readable and code:

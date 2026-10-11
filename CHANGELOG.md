@@ -5,6 +5,14 @@ next release; add to that section as you land a change.
 
 ## Unreleased
 
+### Changed — libCellML 0.7.1 or later
+
+libCellML 0.7 generates Python and C with constants, computed constants, algebraic and external variables in separate
+arrays. `PythonGenerator` and `CVSCppGenerator` join them into the one `variables` array the solvers and the C++ model
+use, so generated models behave as before: on the test models, the values (Python and C) and the generated C++
+statements are the same as with 0.6.3. 0.6.3 flattened some models with wrong units (a conversion factor's units
+replaced by their inverse), which 0.7.1 fixes (#271).
+
 ### Changed — a module type several sources define comes from the most specific one
 
 A `(vessel_type, BC_type)` defined in more than one module source used to keep the first entry

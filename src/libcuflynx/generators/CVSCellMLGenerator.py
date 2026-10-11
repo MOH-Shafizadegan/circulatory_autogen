@@ -148,22 +148,17 @@ class CVS0DCellMLGenerator(object):
                 # Always dump for init-states reproducer, otherwise don't, even in DEBUG.
                 print_consts_etc = False
                 if print_consts_etc or self.file_prefix == "test_init_states":
-                    from libcellml import AnalyserVariable
-
-                    type_names = {
-                        AnalyserVariable.Type.STATE: "STATE",
-                        AnalyserVariable.Type.CONSTANT: "CONSTANT",
-                        AnalyserVariable.Type.COMPUTED_CONSTANT: "COMPUTED_CONSTANT",
-                        AnalyserVariable.Type.ALGEBRAIC: "ALGEBRAIC",
-                        AnalyserVariable.Type.EXTERNAL: "EXTERNAL",
-                    }
+                    groups = {
+                        "STATE": analysed_model.states(),
+                        "CONSTANT": analysed_model.constants(),
+                        "COMPUTED_CONSTANT": analysed_model.computedConstants(),
+                        "ALGEBRAIC": analysed_model.algebraicVariables(),
+                        "EXTERNAL": analysed_model.externalVariables(),
+                    } if analysed_model else {}
 
                     buckets = {}
-                    vcount = analysed_model.variableCount() if analysed_model else 0
-                    for i in range(vcount):
-                        av = analysed_model.variable(i)
-                        if av is None:
-                            continue
+                    vcount = sum(len(g) for k, g in groups.items() if k != "STATE")
+                    for key, av in ((k, av) for k, g in groups.items() for av in g):
                         v = av.variable()
                         if v is None:
                             continue
@@ -171,11 +166,10 @@ class CVS0DCellMLGenerator(object):
                             comp = v.parent().name()
                         except Exception:
                             comp = ""
-                        key = type_names.get(av.type(), str(av.type()))
                         buckets.setdefault(key, []).append(f"{comp}.{v.name()}" if comp else v.name())
 
                     print("libCellML variable type summary:")
-                    print(f"  analysed_model.variableCount(): {vcount}")
+                    print(f"  variables other than states: {vcount}")
                     for key in sorted(buckets.keys()):
                         items = sorted(buckets[key])
                         print(f"  {key}: {len(items)}")
