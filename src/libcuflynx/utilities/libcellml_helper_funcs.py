@@ -141,7 +141,8 @@ def c_code_with_one_variables_array(code, header):
     code = code.replace(states.group(1), ",\n".join(f"    {e}" for e in tagged(states.group(1), "STATE")))
     entries = []
     for kind, _, variable_type in _C_KINDS:
-        info = re.search(rf"const VariableInfo {kind}_INFO\[\] = \{{\n(.*?)\n\}};\n\n", code, re.S)
+        # an empty kind (a model with no algebraic variables, say) is an array with no entries: "= {\n};"
+        info = re.search(rf"const VariableInfo {kind}_INFO\[\] = \{{\n(.*?)\}};\n\n", code, re.S)
         if info:
             entries += tagged(info.group(1), variable_type)
             code = code.replace(info.group(0), "@VARIABLE_INFO@" if "@VARIABLE_INFO@" not in code else "")

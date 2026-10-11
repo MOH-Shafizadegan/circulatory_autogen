@@ -1,5 +1,6 @@
 """libCellML's generated code in the one-``variables``-array layout the solvers and the C++ generator use (#271)."""
 import os
+import re
 import shutil
 import subprocess
 
@@ -109,3 +110,21 @@ def test_c_code_has_one_variables_array_and_fetches_externals_into_it(tmp_path):
     subprocess.run([compiler, "-o", "run", "driver.c", "model.c", "-lm"], cwd=tmp_path, check=True)
     out = subprocess.run([os.path.join(tmp_path, "run")], capture_output=True, text=True, check=True).stdout.split("\n")
     assert out[:5] == ["k 2 0.5", "rate 3 1", "y 4 3", "e 5 0.25", "rate -2.75"]
+
+
+@pytest.mark.unit
+def test_c_code_of_a_model_with_no_algebraic_variables_lists_every_variable_once():
+    """libCellML writes an empty kind as "= {\\n};", here followed by the external variables' block."""
+    model = lc.Parser().parseModel(MODEL.replace("<ci>rate</ci><ci>x</ci>", "<ci>rate</ci><ci>k</ci>"))
+    analyser = lc.Analyser()
+    analyser.addExternalVariable(lc.AnalyserExternalVariable(model.component("c").variable("e")))
+    analyser.analyseModel(model)
+    am = analyser.analyserModel()
+    assert am.algebraicVariableCount() == 0
+    code = c_code_with_one_variables_array(
+        lc.Generator().implementationCode(am, lc.GeneratorProfile(lc.GeneratorProfile.Profile.C)), header=False)
+    block = code[code.index("VARIABLE_INFO[] = {"):]
+    block = block[:block.index("};")]
+    assert re.findall(r'\{"(\w+)", "\w+", "c", (\w+)\}', block) == [
+        ("k", "CONSTANT"), ("rate", "COMPUTED_CONSTANT"), ("y", "COMPUTED_CONSTANT"), ("e", "EXTERNAL")]
+    assert block.count("{") == 5
