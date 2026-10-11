@@ -17,7 +17,10 @@
    - output times are interpolated (cubic Hermite, from the states and rates at both ends of a step), so
      steps are not cut at outputs;
    - a block continues its step across calls unless something it reads changed (its inputs, or the states
-     set from outside), when it restarts from the given states with a short step.
+     set from outside), when it restarts from the given states with a short step;
+   - an input may follow a protocol trace (bk_set_trace): a piecewise-linear function of the model's time,
+     held at its end values outside its range, read at every rate and Jacobian evaluation. Steps end on the
+     trace's breakpoints, so each step sees one straight piece of it.
    Blocks are independent, so they run on any number of OpenMP threads with bit-identical results. */
 #include <math.h>
 #include <stdlib.h>
@@ -44,8 +47,17 @@ typedef struct {
 } BkOptions;
 
 typedef struct {
+    int var;                       /* the one-array variable it drives */
+    int n;
+    double *t, *v;                 /* breakpoints (increasing) and values */
+} BkTrace;
+
+typedef struct {
     const BkKernel *k;
     int n, ni;
+    int n_traced;                  /* inputs driven by traces: their slots and traces */
+    int *traced_slot;
+    const BkTrace **traced;
     int *states, *inputs;          /* model state indices; one-array variable indices */
     double *in;                    /* the inputs, gathered */
     double ta, tb, h;              /* the last accepted step is [ta, tb]; h the next step to try */
@@ -68,6 +80,9 @@ typedef struct {
     int n_blocks, n_states, n_variables;
     BkBlock *blocks;
     BkOptions opt;
+    int n_traces;
+    BkTrace **traces;
+    double origin;
 } BkSim;
 
 BK_API int bk_kernel_count(void) { return BK_KERNEL_COUNT; }
@@ -123,8 +138,95 @@ BK_API BkSim *bk_create(int n_blocks, const int *kernel, const int *state_offset
         B->J = bk_zeros(n * n); B->lu = bk_zeros(n * n);
         B->piv = (int *) calloc(n > 0 ? n : 1, sizeof(int));
         B->lu_h = NAN;
+        B->traced_slot = (int *) calloc(B->ni > 0 ? B->ni : 1, sizeof(int));
+        B->traced = (const BkTrace **) calloc(B->ni > 0 ? B->ni : 1, sizeof(BkTrace *));
     }
     return sim;
+}
+
+static void bk_free_trace(BkTrace *tr)
+{
+    if (tr) {
+        free(tr->t);
+        free(tr->v);
+        free(tr);
+    }
+}
+
+/* Every block reading a variable with a trace takes it from that trace; blocks whose traced inputs change
+   restart at their next run. */
+static void bk_attach_traces(BkSim *sim)
+{
+    for (int b = 0; b < sim->n_blocks; ++b) {
+        BkBlock *B = &sim->blocks[b];
+        int before = B->n_traced;
+        B->n_traced = 0;
+        for (int k = 0; k < B->ni; ++k)
+            for (int r = 0; r < sim->n_traces; ++r)
+                if (sim->traces[r]->var == B->inputs[k]) {
+                    B->traced_slot[B->n_traced] = k;
+                    B->traced[B->n_traced++] = sim->traces[r];
+                }
+        if (before || B->n_traced)
+            B->active = 0;
+    }
+}
+
+/* Drives variable var by the trace (t[i], v[i]), i < n, t increasing, from the next run on (replacing any
+   trace it had). */
+BK_API void bk_set_trace(BkSim *sim, int var, int n, const double *t, const double *v)
+{
+    BkTrace *tr = (BkTrace *) calloc(1, sizeof(BkTrace));
+    tr->var = var;
+    tr->n = n;
+    tr->t = (double *) malloc(sizeof(double) * (n > 0 ? n : 1));
+    tr->v = (double *) malloc(sizeof(double) * (n > 0 ? n : 1));
+    memcpy(tr->t, t, sizeof(double) * n);
+    memcpy(tr->v, v, sizeof(double) * n);
+    int r = 0;
+    while (r < sim->n_traces && sim->traces[r]->var != var)
+        ++r;
+    if (r < sim->n_traces) {
+        bk_free_trace(sim->traces[r]);
+    } else {
+        sim->traces = (BkTrace **) realloc(sim->traces, sizeof(BkTrace *) * (sim->n_traces + 1));
+        sim->n_traces++;
+    }
+    sim->traces[r] = tr;
+    bk_attach_traces(sim);
+}
+
+/* Variable var is no longer driven by a trace (its value in the variables array applies again). */
+BK_API void bk_clear_trace(BkSim *sim, int var)
+{
+    for (int r = 0; r < sim->n_traces; ++r)
+        if (sim->traces[r]->var == var) {
+            bk_free_trace(sim->traces[r]);
+            sim->traces[r] = sim->traces[--sim->n_traces];
+            bk_attach_traces(sim);
+            return;
+        }
+}
+
+/* The trace at model time t: linear between breakpoints, its end values outside them. */
+static double bk_trace_at(const BkTrace *tr, double t)
+{
+    if (tr->n == 0)
+        return NAN;
+    if (t <= tr->t[0])
+        return tr->v[0];
+    if (t >= tr->t[tr->n - 1])
+        return tr->v[tr->n - 1];
+    int lo = 0, hi = tr->n - 1;
+    while (hi - lo > 1) {
+        int mid = (lo + hi) / 2;
+        if (tr->t[mid] <= t)
+            lo = mid;
+        else
+            hi = mid;
+    }
+    double s = (t - tr->t[lo]) / (tr->t[hi] - tr->t[lo]);
+    return tr->v[lo] + s * (tr->v[hi] - tr->v[lo]);
 }
 
 BK_API void bk_destroy(BkSim *sim)
@@ -136,8 +238,11 @@ BK_API void bk_destroy(BkSim *sim)
         free(B->states); free(B->inputs); free(B->in);
         free(B->ya); free(B->yb); free(B->fa); free(B->fb); free(B->scale);
         free(B->y); free(B->f); free(B->g); free(B->dx); free(B->ftmp); free(B->y1); free(B->c); free(B->fz);
-        free(B->J); free(B->lu); free(B->piv);
+        free(B->J); free(B->lu); free(B->piv); free(B->traced_slot); free((void *) B->traced);
     }
+    for (int r = 0; r < sim->n_traces; ++r)
+        bk_free_trace(sim->traces[r]);
+    free(sim->traces);
     free(sim->blocks);
     free(sim);
 }
@@ -172,9 +277,10 @@ BK_API void bk_invalidate(BkSim *sim)
    time restarts if its origin moves; the others keep their steps, which are on the runtime's own clock. */
 BK_API void bk_set_time_origin(BkSim *sim, double origin)
 {
+    sim->origin = origin;
     for (int b = 0; b < sim->n_blocks; ++b) {
         BkBlock *B = &sim->blocks[b];
-        if (B->k->reads_time && B->origin != origin)
+        if ((B->k->reads_time || B->n_traced) && B->origin != origin)
             B->active = 0;
         B->origin = origin;
     }
@@ -186,8 +292,35 @@ static double bk_weight(const BkOptions *o, const BkBlock *B, int i, double y)
     return 1.0 / (o->rtol * s + o->atol);
 }
 
+/* The traced inputs at runtime clock t. */
+static void bk_apply_traces(BkBlock *B, double t)
+{
+    for (int r = 0; r < B->n_traced; ++r)
+        B->in[B->traced_slot[r]] = bk_trace_at(B->traced[r], t - B->origin);
+}
+
+/* The first trace breakpoint after runtime clock t, or INFINITY. */
+static double bk_next_breakpoint(const BkBlock *B, double t)
+{
+    double next = INFINITY, eps = 1e-12 * (fabs(t) + 1.0);
+    for (int r = 0; r < B->n_traced; ++r) {
+        const BkTrace *tr = B->traced[r];
+        for (int i = 0; i < tr->n; ++i) {
+            double tb = tr->t[i] + B->origin;
+            if (tb > t + eps) {
+                if (tb < next)
+                    next = tb;
+                break;
+            }
+        }
+    }
+    return next;
+}
+
 static void bk_rates(BkBlock *B, double t, const double *y, double *f)
 {
+    if (B->n_traced)
+        bk_apply_traces(B, t);
     B->k->rates(t - B->origin, y, B->in, f);
     B->rates_calls++;
 }
@@ -205,6 +338,8 @@ static int bk_finite(const double *x, int n)
 static void bk_jacobian(const BkOptions *o, BkBlock *B, double t, const double *y, const double *f)
 {
     int n = B->n;
+    if (B->n_traced)
+        bk_apply_traces(B, t);
     if (!o->finite_difference_jacobian) {
         memset(B->J, 0, sizeof(double) * n * n);
         B->k->jacobian(t - B->origin, y, B->in, B->J);
@@ -452,6 +587,11 @@ static int bk_advance(const BkOptions *o, BkBlock *B)
             return BK_TOO_MANY_STEPS;
         if (h < o->h_min || B->tb + h == B->tb)
             return BK_STEP_TOO_SMALL;
+        if (B->n_traced) {
+            double next = bk_next_breakpoint(B, B->tb);   /* end the step on the trace's next breakpoint */
+            if (B->tb + h > next)
+                h = next - B->tb;
+        }
         double a = bk_try_step(o, B, h);
         if (a == 0.0) {
             B->rejected++;
@@ -513,6 +653,11 @@ static void bk_run_block(const BkOptions *o, BkBlock *B, double *states, const d
 {
     int changed = !B->active;
     for (int k = 0; k < B->ni; ++k) {
+        int traced = 0;
+        for (int r = 0; r < B->n_traced; ++r)
+            traced |= B->traced_slot[r] == k;
+        if (traced)
+            continue;              /* driven by its trace, not by the variables */
         double v = variables[B->inputs[k]];
         if (!(v == B->in[k]) && !(isnan(v) && isnan(B->in[k])))
             changed = 1;
@@ -599,6 +744,33 @@ BK_API void bk_initialise(double *states, double *rates, double *variables)
 BK_API void bk_compute_computed_constants(double *states, double *rates, double *variables)
 {
     computeComputedConstants(0.0, states, rates, variables);
+}
+
+/* As bk_outputs, with each traced variable at its trace's value at the row's time (on the model's clock). */
+BK_API void bk_sim_outputs(BkSim *sim, int n_rows, const double *t, const double *states_rows,
+                           const double *variables, double *variables_rows, int threads)
+{
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static) num_threads(threads > 0 ? threads : 1)
+#endif
+    for (int r = 0; r < n_rows; ++r) {
+        double *s = (double *) malloc(sizeof(double) * (STATE_COUNT > 0 ? STATE_COUNT : 1));
+        double *rt = (double *) malloc(sizeof(double) * (STATE_COUNT > 0 ? STATE_COUNT : 1));
+        double *v = variables_rows + (size_t) r * VARIABLE_COUNT;
+        memcpy(s, states_rows + (size_t) r * STATE_COUNT, sizeof(double) * STATE_COUNT);
+        memcpy(v, variables, sizeof(double) * VARIABLE_COUNT);
+        if (sim->n_traces) {
+            for (int k = 0; k < sim->n_traces; ++k)
+                v[sim->traces[k]->var] = bk_trace_at(sim->traces[k], t[r] - sim->origin);
+            /* computed constants along the trace; the states libCellML initialises with them are scratch */
+            computeComputedConstants(t[r] - sim->origin, rt, rt, v);
+        }
+        computeRates(t[r] - sim->origin, s, rt, v);
+        computeVariables(t[r] - sim->origin, s, rt, v);
+        free(s);
+        free(rt);
+    }
+    (void) threads;
 }
 
 /* The variables at each output row: a copy of variables per row, then libCellML's computeRates and

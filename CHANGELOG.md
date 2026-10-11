@@ -28,10 +28,17 @@ as `CVODE_myokit`.
   Both use modified Newton, with the Jacobian and LU factors kept across steps.
 - **Threads and restarts.** OpenMP runs over the blocks, and results are the same for any number
   of threads. A block whose inputs did not change between sub-experiments keeps its steps.
+- **Protocol traces.** A `params_to_change` entry naming a trace drives that constant along it, as on
+  `CVODE_myokit`: piecewise linear on the model's clock, held at its ends. Steps end on the trace's
+  breakpoints, and the kernels compute their computed constants, so everything that depends on the
+  traced constant follows it. SN_simple's protocol agrees with `CVODE_myokit` within 5e-4 of each
+  variable's range, 20x faster.
+- **Instances and outputs.** `bk_instance_*` steps copies of the model from the caller's own threads
+  (AdaptOrDeity's cells); `outputs` computes a few algebraic variables alone after each step.
 - **Limits.**
   - It is meant for moderate tolerances (default `rtol` 1e-4).
   - Its LU is dense, so a single block of hundreds of states is slow.
-  - It does not take models with algebraic loops, external variables, or protocol traces.
+  - It does not take models with algebraic loops or external variables.
   - It has no sensitivities.
 
 ### Fixed — libCellML 0.7's C for models with a state set by a computed constant, or with no algebraic variables

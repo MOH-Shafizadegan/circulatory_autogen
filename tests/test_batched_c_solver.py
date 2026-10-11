@@ -573,3 +573,90 @@ def test_an_output_must_name_one_algebraic_variable(tmp_path):
     with pytest.raises(kernel_ir.KernelIRError, match='names 2 algebraic variables or computed constants'):
         kernel_ir.outputs_program(am, ['flux'])
     assert len(kernel_ir.outputs_program(am, ['cell_a/flux'])) == 1
+
+
+TRACED = _cellml(f"""
+  <component name="drive">
+    <variable name="t" units="second"/>
+    <variable name="u" units="per_s" initial_value="0"/>
+    <variable name="x" units="dimensionless" initial_value="0"/>
+    <variable name="flux" units="per_s"/>
+    <math {MATHML}>
+      <apply><eq/><ci>flux</ci><ci>u</ci></apply>
+      {_ode('x', '<ci>flux</ci>')}
+    </math>
+  </component>""")
+
+
+def _ramp_protocol():
+    """u ramps 0 -> 2 over 0.5 s, then holds; x = integral of u."""
+    return {'pre_times': [0.0], 'sim_times': [[1.0]], 'params_to_change': {'drive/u': [['ramp']]},
+            'protocol_traces': {'ramp': {'t': [0.0, 0.5], 'values': [0.0, 2.0]}}}
+
+
+@needs_c
+@pytest.mark.solver
+@pytest.mark.parametrize('method', ['backward_euler', 'trbdf2'])
+def test_a_constant_follows_its_protocol_trace(tmp_path, method):
+    """x' = u with u a ramp to 2 over 0.5 s then held: x(t) = 2 t^2 to 0.5 s, then 0.5 + 2 (t - 0.5). Steps
+    end on the breakpoint, so even first-order backward Euler gets the kink right; flux (algebraic) and u
+    report the trace at every output time."""
+    helper = _helper(tmp_path, TRACED, sim_time=1.0, dt=0.05, rtol=1e-8, atol=1e-12, method=method)
+    protocol = _ramp_protocol()
+    helper.set_protocol_info(protocol)
+    helper.set_param_vals(['drive/u'], ['ramp'])
+    assert helper.run()
+    t = helper.get_time()
+    x, flux, u = helper.get_results([['drive/x', 'drive/flux', 'drive/u']])[0]
+    expected = np.where(t <= 0.5, 2 * t ** 2, 0.5 + 2 * (t - 0.5))
+    assert x == pytest.approx(expected, abs=2e-4 if method == 'backward_euler' else 1e-6)
+    assert flux == pytest.approx(np.interp(t, [0.0, 0.5], [0.0, 2.0]))
+    assert u == pytest.approx(flux)
+    assert 'drive.u' in helper.get_all_variable_names()                # a traced parameter is an output
+    helper.set_param_vals(['drive/u'], [0.0], change_states=False)     # a number again ends the trace
+    helper.update_times(helper.dt, 1.0, 1.0, 0.0)
+    assert helper.run()
+    x, u = helper.get_results([['drive/x', 'drive/u']])[0]
+    assert x == pytest.approx(np.full(len(t), x[-1])) and np.all(u == 0.0)
+
+
+@needs_c
+@pytest.mark.solver
+def test_a_trace_runs_through_the_protocol_executor_as_on_cvode_myokit(tmp_path):
+    """The same ramp protocol through ProtocolExecutor on BE_batched_c and on CVODE_myokit."""
+    from libcuflynx.protocol_runners.protocol_executor import ProtocolExecutor
+    from libcuflynx.solver_wrappers import get_simulation_helper
+    path = _write(tmp_path, 'model', TRACED)
+    out = {}
+    for solver, info in [('BE_batched_c', {'build_dir': str(tmp_path / 'build'), 'rtol': 1e-8, 'atol': 1e-12,
+                                           'method': 'trbdf2'}),
+                         ('CVODE_myokit', {'rtol': 1e-10, 'atol': 1e-12, 'MaximumStep': 0.01})]:
+        helper = get_simulation_helper(path, solver, 'cellml', dt=0.05, sim_time=1.0, solver_info=info,
+                                       pre_time=0.0)
+        helper.set_protocol_info(_ramp_protocol())          # as ProtocolRunner hands it over
+        ok, by_sub, _, _ = ProtocolExecutor(helper).run_protocol(_ramp_protocol(),
+                                                                 result_variables=[['drive/x']])
+        assert ok
+        out[solver] = np.asarray(by_sub[(0, 0)][0][0] if len(by_sub[(0, 0)]) == 1 else by_sub[(0, 0)][0],
+                                 dtype=float).ravel()
+    assert out['BE_batched_c'] == pytest.approx(out['CVODE_myokit'], abs=1e-6)
+
+
+@needs_c
+@pytest.mark.solver
+def test_a_trace_reaches_the_computed_constants_it_feeds(tmp_path):
+    """k = 2 u is a computed constant (it reads only constants), and x' = k: with u traced, the kernel computes k
+    along the trace, so x = 2 * integral of u."""
+    model = TRACED.replace('<variable name="flux" units="per_s"/>',
+                           '<variable name="flux" units="per_s"/><variable name="k" units="per_s"/>').replace(
+        '<apply><eq/><ci>flux</ci><ci>u</ci></apply>',
+        f'<apply><eq/><ci>k</ci><apply><times/>{_cn(2)}<ci>u</ci></apply></apply>'
+        '<apply><eq/><ci>flux</ci><ci>k</ci></apply>')
+    helper = _helper(tmp_path, model, sim_time=1.0, dt=0.05, rtol=1e-8, atol=1e-12, method='trbdf2')
+    helper.set_protocol_info(_ramp_protocol())
+    helper.set_param_vals(['drive/u'], ['ramp'])
+    assert helper.run()
+    t = helper.get_time()
+    x, k = helper.get_results([['drive/x', 'drive/k']])[0]
+    assert x == pytest.approx(2 * np.where(t <= 0.5, 2 * t ** 2, 0.5 + 2 * (t - 0.5)), abs=1e-6)
+    assert k == pytest.approx(2 * np.interp(t, [0.0, 0.5], [0.0, 2.0]))

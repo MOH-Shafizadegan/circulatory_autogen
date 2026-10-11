@@ -1,8 +1,8 @@
 """A language-neutral form of a CellML model's rates and their exact Jacobian, for code generators.
 
-The libCellML analyser's equation trees become expressions over a model's states, inputs (constants,
-computed constants and external variables, read from libCellML's one ``variables`` array) and local
-temporaries. From them:
+The libCellML analyser's equation trees become expressions over a model's states, inputs (constants and
+external variables, read from libCellML's one ``variables`` array) and local temporaries (the algebraic
+variables and computed constants a block needs, computed in the kernel). From them:
 
 - **Blocks.** The states fall into blocks that do not depend on one another: the connected components of
   the graph joining each rate to the states it reads (through the algebraic variables it needs). A module
@@ -444,7 +444,10 @@ def prune(program):
 
 class _Equations:
     """The model's ODEs (by state index) and algebraic equations (by one-array index), as expressions over
-    model references: ('state', i), ('var', k) for inputs, ('alg', k) for algebraic variables, ('t',)."""
+    model references: ('state', i), ('var', k) for inputs, ('alg', k) for algebraic variables, ('t',).
+
+    Computed constants count as algebraic variables here: a kernel computes those its rates read from the
+    constants, so a constant that changes along a protocol trace reaches everything that depends on it."""
 
     def __init__(self, am, variables):
         def ref(mv):
@@ -452,7 +455,7 @@ class _Equations:
                 return ('t',)
             if mv.kind == 'state':
                 return ('state', mv.index)
-            if mv.kind == 'algebraic':
+            if mv.kind in ('algebraic', 'computed_constant'):
                 return ('alg', mv.index)
             return ('var', mv.index)
 
@@ -464,8 +467,8 @@ class _Equations:
             if t == ET.NLA:
                 raise KernelIRError('the model has an algebraic loop (non-linear algebraic equations): '
                                     'kernels need every algebraic variable in explicit form')
-            if t not in (ET.ODE, ET.ALGEBRAIC):
-                continue          # constants and computed constants are inputs; libCellML's code computes them
+            if t not in (ET.ODE, ET.ALGEBRAIC, ET.COMPUTED_CONSTANT):
+                continue          # constants are inputs
             ast = eq.ast()
             lhs, rhs = ast.leftChild(), ast.rightChild()
             if t == ET.ODE:
@@ -476,6 +479,8 @@ class _Equations:
                 if lhs.type() != T.CI:
                     raise KernelIRError('an algebraic equation is not in explicit form')
                 target = variables.of(lhs.variable())
+                if target.kind not in ('algebraic', 'computed_constant'):
+                    continue      # a state's initial value: libCellML's code sets it
                 if _uses_rate(rhs):
                     # read by outputs only (libCellML's computeVariables computes it), never by a rate
                     self.algebraic[target.index] = None
@@ -677,13 +682,11 @@ def outputs_program(am, outputs):
     one component has) and those they read, in dependency order: ``[(one-array index, expression)]`` over the
     model's states ``('y', i)``, the one variables array ``('in', k)`` (inputs and the variables assigned before)
     and time. For a caller that reads a few algebraic variables after every step and the rest only on demand. A
-    computed constant may be an output too: it is always current in the variables, so it needs no assignment."""
+    computed constant may be an output too."""
     variables = _Variables(am)
     eqs = _Equations(am, variables)
     roots = []
     for name, k in zip(outputs, output_indices(am, outputs)):
-        if variables.variables[k].kind == 'computed_constant':
-            continue
         if eqs.algebraic.get(k) is None:
             raise KernelIRError(f'output {name!r} depends on a rate')
         roots.append(('alg', k))

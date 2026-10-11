@@ -314,6 +314,8 @@ class BatchedLibrary:
             'bk_block_status': ([p, i, dp], i), 'bk_stats': ([p, lp], None), 'bk_openmp_threads': ([], i),
             'bk_initialise': ([dp, dp, dp], None), 'bk_compute_computed_constants': ([dp, dp, dp], None),
             'bk_outputs': ([i, dp, dp, dp, dp, i], None),
+            'bk_set_trace': ([p, i, i, dp, dp], None), 'bk_clear_trace': ([p, i], None),
+            'bk_sim_outputs': ([p, i, dp, dp, dp, dp, i], None),
         }
         for name, (argtypes, restype) in sigs.items():
             fn = getattr(lib, name)
@@ -381,6 +383,26 @@ class BatchedSimulation:
             if status:
                 out_failures.append((b, status, t.value))
         return out_failures
+
+    def set_trace(self, variable, t, values):
+        """Drives one-array variable ``variable`` by the piecewise-linear trace (t, values) on the model's clock
+        (held at its end values outside it); steps end on its breakpoints."""
+        t = np.ascontiguousarray(t, dtype=float)
+        values = np.ascontiguousarray(values, dtype=float)
+        if t.shape != values.shape or t.ndim != 1 or len(t) == 0:
+            raise ValueError('a trace needs t and values of the same length')
+        if np.any(np.diff(t) <= 0):
+            raise ValueError('a trace\'s times must increase')
+        self.lib.bk_set_trace(self._h, int(variable), len(t), ptr(t), ptr(values))
+
+    def clear_trace(self, variable):
+        self.lib.bk_clear_trace(self._h, int(variable))
+
+    def outputs(self, t, states_rows, variables, variables_rows, threads=1):
+        """Every variable at each output row (libCellML's computeVariables), traced ones at their trace's
+        value at the row's time."""
+        self.lib.bk_sim_outputs(self._h, len(t), ptr(t), ptr(states_rows), ptr(variables), ptr(variables_rows),
+                                int(threads))
 
     def stats(self):
         buf = (ctypes.c_long * len(STAT_NAMES))()

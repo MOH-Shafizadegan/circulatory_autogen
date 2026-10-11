@@ -29,6 +29,7 @@ import numpy as np
 from libcuflynx.generators.cpp import batched
 from libcuflynx.solver_wrappers.name_resolver import VariableNameResolver
 from libcuflynx.solver_wrappers.param_grouping import pair_names_with_values
+from libcuflynx.utilities.protocol_shapes import materialise_shapes, validate_trace_references
 
 DEFAULT_RTOL = 1e-4
 DEFAULT_ATOL = 1e-8
@@ -66,6 +67,8 @@ class SimulationHelper:
         self._kind_of_var = info['variable_kinds']
         self.state_init_ref = info['state_init_ref']
         self._init_values()
+        self._traced = {}           # one-array index -> trace name
+        self._trace_targets = []    # constants the protocol traces somewhere: reported as time series
         self.clock = 0.0
         self.last_states = None
         self._variables_rows = None
@@ -163,9 +166,8 @@ class SimulationHelper:
     def _rows(self):
         if self._variables_rows is None:
             rows = np.empty((len(self._last_times), self.info['variable_count']))
-            self.library.bk_outputs(len(self._last_times), batched.ptr(np.ascontiguousarray(self._last_times)),
-                                    batched.ptr(self.last_states), batched.ptr(self._last_variables),
-                                    batched.ptr(rows), self.threads)
+            self.sim.outputs(np.ascontiguousarray(self._last_times), self.last_states, self._last_variables, rows,
+                             self.threads)
             self._variables_rows = rows
         return self._variables_rows
 
@@ -175,6 +177,7 @@ class SimulationHelper:
 
     def reset_and_clear(self, only_one_exp=-1):
         self._state_overrides = {}
+        self._clear_traces()
         self.states[:] = self.original_states
         self._restart_clock()
         self.last_states = None
@@ -214,6 +217,7 @@ class SimulationHelper:
         names = [n.replace('/', '.', 1) for n in self.state_names]
         names += [n.replace('/', '.', 1) for n, k in zip(self.variable_names, self._kind_of_var)
                   if k in ('algebraic', 'external')]
+        names += [self.variable_names[k].replace('/', '.', 1) for k in self._trace_targets]   # as CVODE_myokit
         return names
 
     def _extract(self, name):
@@ -224,7 +228,9 @@ class SimulationHelper:
         kind, index = self._index(name)
         if kind == 'state':
             return self.last_states[:, index].copy()
-        if self._kind_of_var[index] in ('algebraic', 'external'):
+        kind = self._kind_of_var[index]
+        varies = kind in ('algebraic', 'external') or index in self._traced or index in self._trace_targets
+        if varies or (self._traced and kind == 'computed_constant'):    # a trace moves computed constants too
             return self._rows()[:, index].copy()
         return np.asarray([self.variables[index]])
 
@@ -262,12 +268,35 @@ class SimulationHelper:
         return self.get_init_param_vals(param_names)
 
     def set_protocol_info(self, protocol_info):
-        for values in (protocol_info or {}).get('params_to_change', {}).values():
-            for sub in values:
-                if isinstance(sub, list) and any(isinstance(v, str) for v in sub):
-                    raise NotImplementedError('BE_batched_c does not take protocol traces (string values in '
-                                              'params_to_change) yet; use CVODE_myokit for them.')
+        """The protocol to run: its shapes become traces, and every trace a params_to_change entry names must
+        exist."""
+        if protocol_info is not None:
+            materialise_shapes(protocol_info)
+            validate_trace_references(protocol_info)
         self.protocol_info = protocol_info
+        self._trace_targets = []
+        for name, values in (protocol_info or {}).get('params_to_change', {}).items():
+            if any(isinstance(v, str) for sub in values for v in (sub if isinstance(sub, list) else [sub])):
+                kind, index = self._index(name)
+                if kind == 'var' and index not in self._trace_targets:
+                    self._trace_targets.append(index)
+
+    def _trace(self, name):
+        traces = (self.protocol_info or {}).get('protocol_traces')
+        if traces is None:
+            raise ValueError('params_to_change entry is a string trace key, but protocol_traces not found in '
+                             'protocol_info.')
+        if name not in traces:
+            raise ValueError(f"Protocol trace '{name}' not found in protocol_traces.")
+        trace = traces[name]
+        if 'values' not in trace or 't' not in trace:
+            raise ValueError(f"Protocol trace '{name}' needs 't' and 'values'.")
+        return trace
+
+    def _clear_traces(self):
+        for index in list(self._traced):
+            self.sim.clear_trace(index)
+        self._traced = {}
 
     def set_param_vals(self, param_names, param_vals, change_states=True):
         """Set constants (and computed constants), or states; by default states initialised by a changed
@@ -276,9 +305,18 @@ class SimulationHelper:
         states_set = False
         for idx, name_or_list in enumerate(param_names):
             for name, val in pair_names_with_values(name_or_list, param_vals[idx], 'set_param_vals'):
-                if isinstance(val, str):
-                    raise NotImplementedError('BE_batched_c does not take protocol traces yet')
                 kind, index = self._index(name)
+                if isinstance(val, str):
+                    # a protocol trace: the variable follows it on the model's clock from the next run
+                    if kind == 'state' or self._kind_of_var[index] != 'constant':
+                        raise ValueError(f'{name} cannot follow a trace: only constants can')
+                    trace = self._trace(val)
+                    self.sim.set_trace(index, trace['t'], trace['values'])
+                    self._traced[index] = val
+                    continue
+                if kind != 'state' and index in self._traced:
+                    self.sim.clear_trace(index)
+                    del self._traced[index]
                 if kind == 'state':
                     if not change_states:
                         raise ValueError(
