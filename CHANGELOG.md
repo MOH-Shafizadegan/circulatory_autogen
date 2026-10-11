@@ -5,6 +5,27 @@ next release; add to that section as you land a change.
 
 ## Unreleased
 
+### Added — `BE_batched_c`: generated C, one block of states at a time, on several threads
+
+A CellML solver for models made of many weakly connected parts, such as a module array of cells
+(#573). `get_simulation_helper(..., solver='BE_batched_c')` takes the same CellML file and protocols
+as `CVODE_myokit`.
+
+- **Blocks.** `generators/kernel_ir.py` reads libCellML's analysis into a language-neutral form and
+  splits the states into blocks that do not depend on one another. Blocks with the same equations
+  share one kernel, so 64 identical cells compile one kernel.
+- **Exact Jacobians.** Each kernel's Jacobian is made by forward-mode differentiation of the
+  equations. Only its structurally non-zero entries are written.
+- **C.** `generators/cpp/batched.py` writes the kernels as C next to libCellML's own C (as
+  `model_type: cpp` writes it, which gives initial values and outputs), renders the runtime from
+  `templates/batched_*.j2` and builds it with CMake. A built model is reused.
+- **Integrator.** Adaptive backward Euler with modified Newton for each block, and OpenMP over the
+  blocks. Results are the same for any number of threads. A block whose inputs did not change
+  between sub-experiments keeps its steps.
+- **Limits.** It is first order, so it is meant for moderate tolerances (default `rtol` 1e-4). It
+  does not take models with algebraic loops, external variables, or protocol traces. It has no
+  sensitivities.
+
 ### Changed — libCellML 0.7.1 or later
 
 libCellML 0.7 generates Python and C with constants, computed constants, algebraic and external variables in separate
