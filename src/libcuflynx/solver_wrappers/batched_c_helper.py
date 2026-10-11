@@ -9,8 +9,10 @@ across steps), so quiet blocks take long steps and the cost grows linearly with 
 run on OpenMP threads with results identical for any number of threads. A block whose inputs did not change
 between runs (sub-experiments) continues its step; one whose inputs changed restarts from its current state.
 
-Backward Euler is first order: it suits stiff models at moderate tolerances (rtol ~1e-3 to 1e-5) and many
-blocks; CVODE_myokit is the better choice for one tightly coupled model at tight tolerances.
+``method`` (in solver_info): 'backward_euler' (the default; first order, the cheapest step) or 'trbdf2' (second
+order: fewer steps at tight tolerances, and much less phase error on oscillations). Both are L-stable. Both suit
+stiff models at moderate tolerances (rtol ~1e-3 to 1e-6) and many blocks; CVODE_myokit is the better choice
+for one tightly coupled model at tight tolerances.
 
 solver_info keys: ``rtol`` (default 1e-4), ``atol`` (1e-8), ``MaximumStep`` (unbounded),
 ``MaximumNumberOfSteps`` (steps per block per run, default 10 000 000), ``threads`` (default 1) and
@@ -54,7 +56,7 @@ class SimulationHelper:
         self.sim = batched.BatchedSimulation(self.library, info['blocks'], info['state_count'],
                                              info['variable_count'])
         self.sim.set_options(rtol=self.rtol, atol=self.atol, max_step=self.max_step, max_steps=self.max_steps,
-                             finite_difference_jacobian=(self.jacobian == 'finite_difference'))
+                             finite_difference_jacobian=(self.jacobian == 'finite_difference'), method=self.method)
 
         self.STATE_COUNT = info['state_count']
         self.state_names = info['state_names']
@@ -81,6 +83,9 @@ class SimulationHelper:
         self.jacobian = si.get('jacobian', 'exact')
         if self.jacobian not in JACOBIANS:
             raise ValueError(f"solver_info jacobian must be one of {JACOBIANS}, not {self.jacobian!r}")
+        self.method = si.get('method') or 'backward_euler'
+        if self.method not in batched.METHODS:
+            raise ValueError(f"BE_batched_c method must be one of {batched.METHODS}, not {self.method!r}")
 
     def _init_values(self):
         self.states = np.zeros(self.info['state_count'])

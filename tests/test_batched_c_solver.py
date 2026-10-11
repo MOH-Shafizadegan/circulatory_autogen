@@ -285,7 +285,9 @@ def test_agrees_with_cvode_myokit(tmp_path):
 def test_be_batched_c_is_a_cellml_solver_in_the_schema():
     from libcuflynx.parsers.PrimitiveParsers import SOLVER_INFO_FIELDS, SOLVER_SCHEMA
     assert 'BE_batched_c' in SOLVER_SCHEMA['solvers_by_model_type']['cellml']
-    assert SOLVER_SCHEMA['stiff_suitable_methods']['BE_batched_c'] == ['backward_euler']
+    assert SOLVER_SCHEMA['stiff_suitable_methods']['BE_batched_c'] == ['backward_euler', 'trbdf2']
+    from libcuflynx.generators.cpp.batched import METHODS
+    assert SOLVER_SCHEMA['methods_by_solver']['BE_batched_c'] == list(METHODS)
     from libcuflynx.solver_wrappers import batched_c_helper
     defaults = {f['name']: f['default'] for f in SOLVER_INFO_FIELDS['BE_batched_c']}
     assert defaults['rtol'] == batched_c_helper.DEFAULT_RTOL
@@ -356,3 +358,49 @@ def test_a_fast_transient_from_rest_is_stepped_through(tmp_path):
     assert np.max(np.abs(y - np.exp(-t))) < 1e-2
     assert np.max(np.abs(v[1:] - y[1:])) < 1e-6
     assert helper.stats()['steps'] < 2000
+
+
+@needs_c
+@pytest.mark.solver
+def test_trbdf2_is_second_order(tmp_path):
+    """On the analytic cells, TR-BDF2's error falls about a hundredfold over two decades of rtol (second order,
+    rtol^(2/3)), backward Euler's about tenfold (first order, rtol^(1/2))."""
+    t = np.linspace(0.0, 3.0, 31)
+    worst = {}
+    for method in ('backward_euler', 'trbdf2'):
+        for rtol in (1e-4, 1e-6):
+            helper = _helper(tmp_path, CELLS, sim_time=3.0, rtol=rtol, atol=1e-12, method=method)
+            assert helper.run()
+            a, p = (helper.get_results([[n]])[0][0] for n in ('cell_a/x', 'pair/p'))
+            worst[method, rtol] = max(np.max(np.abs(a - 2.0 * np.exp(-0.5 * t))) / 2.0,
+                                      np.max(np.abs(p - np.cos(3.0 * t))))
+    assert worst['trbdf2', 1e-6] < worst['trbdf2', 1e-4] / 15
+    assert worst['backward_euler', 1e-6] > worst['backward_euler', 1e-4] / 15
+    assert worst['trbdf2', 1e-6] < worst['backward_euler', 1e-6] / 10
+
+
+# v follows u = 1e4 y through a factor of 1e11: its rate is the difference of terms near 1e15, whose rounding
+# (~0.1) times a step is far above v's tolerance, as in a flow through a tiny inertance.
+CANCELLING = _cellml(f"""
+  <component name="c">
+    <variable name="t" units="dimensionless"/>
+    <variable name="v" units="dimensionless" initial_value="1e4"/>
+    <variable name="y" units="dimensionless" initial_value="1"/>
+    <math {MATHML}>
+      {_ode('v', f'<apply><times/>{_cn(1e11)}<apply><minus/><apply><times/>{_cn(1e4)}<ci>y</ci></apply><ci>v</ci></apply></apply>')}
+      {_ode('y', f'<apply><times/>{_cn(-0.5)}<ci>y</ci></apply>')}
+    </math>
+  </component>""")
+
+
+@needs_c
+@pytest.mark.solver
+@pytest.mark.parametrize('method', ['backward_euler', 'trbdf2'])
+def test_newton_converges_where_the_residual_is_all_rounding(tmp_path, method):
+    helper = _helper(tmp_path, CANCELLING, sim_time=2.0, dt=0.5, rtol=1e-6, method=method)
+    assert helper.run()
+    v, y = (helper.get_results([[n]])[0][0] for n in ('c/v', 'c/y'))
+    assert np.max(np.abs(y - np.exp(-0.5 * np.linspace(0.0, 2.0, 5)))) < 1e-3
+    assert np.max(np.abs(v - 1e4 * y)) < 1e-2
+    stats = helper.stats()
+    assert stats['rejected_steps'] < 10 and stats['steps'] < 5000, stats

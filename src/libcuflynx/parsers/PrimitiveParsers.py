@@ -194,8 +194,8 @@ SOLVER_SCHEMA = {
     'methods_by_solver': {
         'CVODE_opencor': ['CVODE'],
         'CVODE_myokit': ['CVODE'],
-        # adaptive backward Euler over independent blocks of states, in generated C
-        'BE_batched_c': ['backward_euler'],
+        # adaptive implicit one-step methods over independent blocks of states, in generated C
+        'BE_batched_c': ['backward_euler', 'trbdf2'],
         'solve_ivp': ['RK45', 'RK23', 'DOP853', 'Radau', 'BDF', 'LSODA', 'forward_euler'],
         'CVODE': ['CVODE'],
         'RK4': ['RK4'],
@@ -305,8 +305,8 @@ SOLVER_SCHEMA['fsa_suitable_methods'] = {
 # are stable where its explicit rk is not.
 SOLVER_SCHEMA['stiff_suitable_methods'] = {
     'CVODE_myokit': ['CVODE'],
-    # L-stable, so stiff-safe; first order, so it is accurate to its rtol only (not to CVODE's).
-    'BE_batched_c': ['backward_euler'],
+    # Both L-stable, so stiff-safe.
+    'BE_batched_c': ['backward_euler', 'trbdf2'],
     'CVODE_opencor': ['CVODE'],
     'CVODE': ['CVODE'],
     'solve_ivp': ['Radau', 'BDF', 'LSODA'],

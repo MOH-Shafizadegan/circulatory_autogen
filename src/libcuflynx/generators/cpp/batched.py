@@ -32,6 +32,8 @@ from libcuflynx.generators import kernel_ir
 from libcuflynx.generators.cpp.generator import core_code, template_environment
 
 TARGET = 'batched_model'
+#: The runtime's integration methods, in the order its options number them.
+METHODS = ('backward_euler', 'trbdf2')
 
 _C_FUNCTIONS = {
     'sqrt': 'sqrt', 'exp': 'exp', 'ln': 'log', 'log10': 'log10', 'abs': 'fabs', 'sign': 'bk_sign',
@@ -282,7 +284,7 @@ class BatchedLibrary:
             'bk_kernel_nonzeros': ([i], i),
             'bk_kernel_rates': ([i, d, dp, dp, dp], None), 'bk_kernel_jacobian': ([i, d, dp, dp, dp], None),
             'bk_create': ([i, ip, ip, ip, ip, ip, i, i], p), 'bk_destroy': ([p], None),
-            'bk_set_options': ([p, d, d, d, d, d, i, i, l, i], None), 'bk_invalidate': ([p], None),
+            'bk_set_options': ([p, d, d, d, d, d, i, i, l, i, i], None), 'bk_invalidate': ([p], None),
             'bk_set_time_origin': ([p, d], None), 'bk_run': ([p, dp, dp, d, i, dp, dp, i], i),
             'bk_block_status': ([p, i, dp], i), 'bk_stats': ([p, lp], None), 'bk_openmp_threads': ([], i),
             'bk_initialise': ([dp, dp, dp], None), 'bk_compute_computed_constants': ([dp, dp, dp], None),
@@ -303,7 +305,7 @@ def ptr(a, ctype=ctypes.c_double):
 
 
 STAT_NAMES = ('steps', 'rejected_steps', 'rate_evaluations', 'jacobians', 'finite_difference_jacobians',
-              'factorisations')
+              'factorisations', 'newton_failures')
 
 
 class BatchedSimulation:
@@ -325,9 +327,13 @@ class BatchedSimulation:
                                     ptr(inputs, ctypes.c_int), n_states, n_variables)
 
     def set_options(self, rtol=1e-4, atol=1e-12, max_step=0.0, min_step=0.0, newton_tol=0.01, max_newton=6,
-                    max_jacobian_age=50, max_steps=10_000_000, finite_difference_jacobian=False):
+                    max_jacobian_age=50, max_steps=10_000_000, finite_difference_jacobian=False,
+                    method='backward_euler'):
+        if method not in METHODS:
+            raise ValueError(f'method must be one of {METHODS}, not {method!r}')
         self.lib.bk_set_options(self._h, rtol, atol, max_step or 0.0, min_step, newton_tol, max_newton,
-                                max_jacobian_age, int(max_steps), int(bool(finite_difference_jacobian)))
+                                max_jacobian_age, int(max_steps), int(bool(finite_difference_jacobian)),
+                                METHODS.index(method))
 
     def invalidate(self):
         self.lib.bk_invalidate(self._h)
@@ -352,7 +358,7 @@ class BatchedSimulation:
         return out_failures
 
     def stats(self):
-        buf = (ctypes.c_long * 6)()
+        buf = (ctypes.c_long * len(STAT_NAMES))()
         self.lib.bk_stats(self._h, buf)
         return dict(zip(STAT_NAMES, list(buf)))
 
