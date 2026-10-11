@@ -622,3 +622,126 @@ BK_API void bk_outputs(int n_rows, const double *t, const double *states_rows, c
     }
     (void) threads;
 }
+
+/* Instances: one copy of the whole model with its own states and variables (one-array), advanced step by step
+   by its caller, from any thread (an instance is used by one thread at a time; instances share nothing but
+   the kernels). For a program that keeps many copies of a model, adds and removes them and changes their
+   parameters between steps, such as a game's cells. */
+typedef struct {
+    BkSim *sim;
+    double *states, *rates, *variables, *scratch;
+    double t;
+} BkInstance;
+
+/* A new instance at t = 0 with the model's initial values and computed constants. */
+BK_API BkInstance *bk_instance_create(void)
+{
+    BkInstance *I = (BkInstance *) calloc(1, sizeof(BkInstance));
+    I->sim = bk_create(BK_BLOCK_COUNT, BK_BLOCK_KERNEL, BK_BLOCK_STATE_OFFSETS, BK_BLOCK_STATES,
+                       BK_BLOCK_INPUT_OFFSETS, BK_BLOCK_INPUTS, (int) STATE_COUNT, (int) VARIABLE_COUNT);
+    I->states = bk_zeros((int) STATE_COUNT);
+    I->rates = bk_zeros((int) STATE_COUNT);
+    I->scratch = bk_zeros((int) STATE_COUNT);
+    I->variables = bk_zeros((int) VARIABLE_COUNT);
+    initialiseVariables(I->states, I->rates, I->variables);
+    computeComputedConstants(0.0, I->states, I->rates, I->variables);
+    return I;
+}
+
+/* A copy of an instance: time, states, variables, options and each block's steps, so it continues exactly as
+   the original would. */
+BK_API BkInstance *bk_instance_copy(const BkInstance *src)
+{
+    BkInstance *I = bk_instance_create();
+    I->sim->opt = src->sim->opt;
+    I->t = src->t;
+    memcpy(I->states, src->states, sizeof(double) * STATE_COUNT);
+    memcpy(I->variables, src->variables, sizeof(double) * VARIABLE_COUNT);
+    for (int b = 0; b < I->sim->n_blocks; ++b) {
+        const BkBlock *S = &src->sim->blocks[b];
+        BkBlock *B = &I->sim->blocks[b];
+        size_t n = sizeof(double) * B->n;
+        memcpy(B->in, S->in, sizeof(double) * B->ni);
+        memcpy(B->ya, S->ya, n); memcpy(B->yb, S->yb, n); memcpy(B->fa, S->fa, n); memcpy(B->fb, S->fb, n);
+        memcpy(B->scale, S->scale, n);
+        memcpy(B->J, S->J, n * B->n); memcpy(B->lu, S->lu, n * B->n);
+        memcpy(B->piv, S->piv, sizeof(int) * B->n);
+        B->ta = S->ta; B->tb = S->tb; B->h = S->h; B->lu_h = S->lu_h; B->crate = S->crate;
+        B->rejected_last = S->rejected_last; B->origin = S->origin;
+        B->jacobian_valid = S->jacobian_valid; B->jacobian_age = S->jacobian_age; B->active = S->active;
+    }
+    return I;
+}
+
+BK_API void bk_instance_destroy(BkInstance *I)
+{
+    if (!I)
+        return;
+    bk_destroy(I->sim);
+    free(I->states); free(I->rates); free(I->scratch); free(I->variables);
+    free(I);
+}
+
+/* The instance's arrays, for the caller to read and write: STATE_COUNT states, VARIABLE_COUNT variables. After
+   writing a state call bk_instance_restart; after writing a constant call bk_instance_parameters_changed. */
+BK_API double *bk_instance_states(BkInstance *I) { return I->states; }
+BK_API double *bk_instance_variables(BkInstance *I) { return I->variables; }
+BK_API double bk_instance_time(const BkInstance *I) { return I->t; }
+
+/* Its options, as bk_set_options. */
+BK_API BkSim *bk_instance_sim(BkInstance *I) { return I->sim; }
+
+/* The states were set from outside: integrate afresh from them. */
+BK_API void bk_instance_restart(BkInstance *I) { bk_invalidate(I->sim); }
+
+/* Constants changed: recompute the computed constants (libCellML's computeComputedConstants, which also
+   initialises some states, so those go to scratch and the instance's states are kept). Blocks that read a
+   changed value restart at their next step. */
+BK_API void bk_instance_parameters_changed(BkInstance *I)
+{
+    memcpy(I->scratch, I->states, sizeof(double) * STATE_COUNT);
+    computeComputedConstants(I->t, I->scratch, I->rates, I->variables);
+}
+
+/* Advances every block by dt (each takes its own steps; inputs are read from the variables, and a block whose
+   inputs changed since its last step restarts). Returns the number of blocks that failed. */
+BK_API int bk_instance_advance(BkInstance *I, double dt)
+{
+    double t1 = I->t + dt;
+    int failed = 0;
+    for (int b = 0; b < I->sim->n_blocks; ++b) {
+        bk_run_block(&I->sim->opt, &I->sim->blocks[b], I->states, I->variables, I->t, 1, &t1, NULL,
+                     I->sim->n_states);
+        failed += I->sim->blocks[b].status != BK_OK;
+    }
+    I->t = t1;
+    return failed;
+}
+
+/* Every algebraic variable at the instance's time and states (libCellML's computeRates and computeVariables),
+   into its variables. */
+BK_API void bk_instance_compute_variables(BkInstance *I)
+{
+    computeRates(I->t, I->states, I->rates, I->variables);
+    computeVariables(I->t, I->states, I->rates, I->variables);
+}
+
+/* The model's variables, for a caller that finds them by name: counts, and each one's name, units, component
+   and (for variables) libCellML type (2 constant, 3 computed constant, 4 algebraic, 5 external). */
+BK_API int bk_state_count(void) { return (int) STATE_COUNT; }
+BK_API int bk_variable_count(void) { return (int) VARIABLE_COUNT; }
+
+BK_API void bk_state_info(int i, const char **name, const char **units, const char **component)
+{
+    *name = STATE_INFO[i].name;
+    *units = STATE_INFO[i].units;
+    *component = STATE_INFO[i].component;
+}
+
+BK_API int bk_variable_info(int i, const char **name, const char **units, const char **component)
+{
+    *name = VARIABLE_INFO[i].name;
+    *units = VARIABLE_INFO[i].units;
+    *component = VARIABLE_INFO[i].component;
+    return (int) VARIABLE_INFO[i].type;
+}

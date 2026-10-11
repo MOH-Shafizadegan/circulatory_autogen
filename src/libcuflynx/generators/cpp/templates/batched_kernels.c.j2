@@ -34,3 +34,11 @@ const BkKernel BK_KERNELS[] = {
 };
 
 const int BK_KERNEL_COUNT = {{ kernels|length }};
+
+/* The model's blocks: kernel, and the model states and one-array variables of its inputs (offsets per block). */
+const int BK_BLOCK_COUNT = {{ n_blocks }};
+const int BK_BLOCK_KERNEL[] = { {{ block_table.kernel }} };
+const int BK_BLOCK_STATE_OFFSETS[] = { {{ block_table.state_offsets }} };
+const int BK_BLOCK_STATES[] = { {{ block_table.states }} };
+const int BK_BLOCK_INPUT_OFFSETS[] = { {{ block_table.input_offsets }} };
+const int BK_BLOCK_INPUTS[] = { {{ block_table.inputs }} };

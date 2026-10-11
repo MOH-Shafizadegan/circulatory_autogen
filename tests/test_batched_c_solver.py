@@ -404,3 +404,140 @@ def test_newton_converges_where_the_residual_is_all_rounding(tmp_path, method):
     assert np.max(np.abs(v - 1e4 * y)) < 1e-2
     stats = helper.stats()
     assert stats['rejected_steps'] < 10 and stats['steps'] < 5000, stats
+
+
+class _Instances:
+    """The instance API of a built library, through ctypes."""
+
+    def __init__(self, tmp_path, text):
+        import ctypes
+        from libcuflynx.generators.cpp import batched
+        _, path, _, _ = batched.load_or_build(_write(tmp_path, 'model', text), str(tmp_path / 'build'))
+        lib = ctypes.CDLL(path)
+        vp, d, i, s = ctypes.c_void_p, ctypes.c_double, ctypes.c_int, ctypes.c_char_p
+        dp = ctypes.POINTER(d)
+        for name, res, args in [
+                ('bk_instance_create', vp, []), ('bk_instance_copy', vp, [vp]), ('bk_instance_destroy', None, [vp]),
+                ('bk_instance_states', dp, [vp]), ('bk_instance_variables', dp, [vp]),
+                ('bk_instance_time', d, [vp]), ('bk_instance_sim', vp, [vp]), ('bk_instance_restart', None, [vp]),
+                ('bk_instance_parameters_changed', None, [vp]), ('bk_instance_advance', i, [vp, d]),
+                ('bk_instance_compute_variables', None, [vp]), ('bk_state_count', i, []), ('bk_variable_count', i, []),
+                ('bk_state_info', None, [i, ctypes.POINTER(s)] * 1 + [ctypes.POINTER(s)] * 2),
+                ('bk_variable_info', i, [i] + [ctypes.POINTER(s)] * 3),
+                ('bk_set_options', None, [vp, d, d, d, d, d, i, i, ctypes.c_long, i, i])]:
+            f = getattr(lib, name)
+            f.restype, f.argtypes = res, args
+        self.lib = lib
+
+        def names(count, info):
+            out = {}
+            for k in range(count):
+                n, u, c = s(), s(), s()
+                info(k, ctypes.byref(n), ctypes.byref(u), ctypes.byref(c))
+                out[f'{c.value.decode()}/{n.value.decode()}'] = k
+            return out
+        self.state = names(lib.bk_state_count(), lib.bk_state_info)
+        self.variable = names(lib.bk_variable_count(), lib.bk_variable_info)
+
+    def create(self, rtol=1e-8, method=1):
+        inst = self.lib.bk_instance_create()
+        self.lib.bk_set_options(self.lib.bk_instance_sim(inst), rtol, 1e-12, 0.0, 0.0, 0.01, 6, 50, 10_000_000, 0,
+                                method)
+        return inst
+
+    def states(self, inst):
+        return np.ctypeslib.as_array(self.lib.bk_instance_states(inst), shape=(self.lib.bk_state_count(),))
+
+    def variables(self, inst):
+        return np.ctypeslib.as_array(self.lib.bk_instance_variables(inst), shape=(self.lib.bk_variable_count(),))
+
+
+@needs_c
+@pytest.mark.solver
+def test_an_instance_stepped_by_its_caller_follows_the_analytic_solutions(tmp_path):
+    """Ten world steps of 0.1 s: cell_a's x = 2 exp(-0.5 t), and the oscillator's p = cos(3 t)."""
+    api = _Instances(tmp_path, CELLS)
+    inst = api.create()
+    for _ in range(10):
+        assert api.lib.bk_instance_advance(inst, 0.1) == 0
+    y = api.states(inst)
+    assert api.lib.bk_instance_time(inst) == pytest.approx(1.0)
+    assert y[api.state['cell_a/x']] == pytest.approx(2.0 * math.exp(-0.5), rel=1e-6)
+    assert y[api.state['pair/p']] == pytest.approx(math.cos(3.0), rel=1e-5)
+    api.lib.bk_instance_destroy(inst)
+
+
+@needs_c
+@pytest.mark.solver
+def test_a_changed_parameter_takes_effect_from_the_next_step_and_keeps_the_states(tmp_path):
+    """cell_a's x starts at x0 = 4 k. Setting k to 0.25 at t = 1 changes x's rate from there on, and leaves x
+    where it was (the computed constant x0 changes, the state does not)."""
+    model = CELLS.replace(
+        '<variable name="x0" units="dimensionless" initial_value="2.0"/>',
+        '<variable name="x0" units="dimensionless"/>').replace(
+        '<apply><eq/><ci>flux</ci>',
+        f'<apply><eq/><ci>x0</ci><apply><times/>{_cn(4, "second")}<ci>k</ci></apply></apply><apply><eq/><ci>flux</ci>', 1)
+    api = _Instances(tmp_path, model)
+    inst = api.create()
+    x, k, x0 = api.state['cell_a/x'], api.variable['cell_a/k'], api.variable['cell_a/x0']
+    assert api.states(inst)[x] == 2.0
+    for _ in range(10):
+        api.lib.bk_instance_advance(inst, 0.1)
+    x1 = api.states(inst)[x]
+    api.variables(inst)[k] = 0.25
+    api.lib.bk_instance_parameters_changed(inst)
+    assert api.variables(inst)[x0] == 1.0 and api.states(inst)[x] == x1
+    for _ in range(10):
+        api.lib.bk_instance_advance(inst, 0.1)
+    assert api.states(inst)[x] == pytest.approx(x1 * math.exp(-0.25), rel=1e-6)
+    api.lib.bk_instance_destroy(inst)
+
+
+@needs_c
+@pytest.mark.solver
+def test_instances_stepped_on_threads_match_one_thread_bit_for_bit(tmp_path):
+    """Eight instances with different rate constants, stepped one by one and then from eight threads at once."""
+    from concurrent.futures import ThreadPoolExecutor
+    api = _Instances(tmp_path, CELLS)
+    k = api.variable['cell_a/k']
+
+    def run(threads):
+        instances = [api.create(rtol=1e-4) for _ in range(8)]
+        for j, inst in enumerate(instances):
+            api.variables(inst)[k] = 0.1 * (j + 1)
+            api.lib.bk_instance_parameters_changed(inst)
+
+        def step(inst):
+            for _ in range(50):
+                api.lib.bk_instance_advance(inst, 0.1)
+            return api.states(inst).copy()
+        if threads == 1:
+            out = [step(inst) for inst in instances]
+        else:
+            with ThreadPoolExecutor(threads) as pool:
+                out = list(pool.map(step, instances))
+        for inst in instances:
+            api.lib.bk_instance_destroy(inst)
+        return np.array(out)
+    one, many = run(1), run(8)
+    assert np.array_equal(one, many)
+    assert len(set(one[:, api.state['cell_a/x']])) == 8
+
+
+@needs_c
+@pytest.mark.solver
+def test_a_copy_continues_from_its_original(tmp_path):
+    """A daughter: a copy at t = 0.5 carries on exactly as its original (same steps, bit for bit)."""
+    api = _Instances(tmp_path, CELLS)
+    inst = api.create()
+    for _ in range(5):
+        api.lib.bk_instance_advance(inst, 0.1)
+    copy = api.lib.bk_instance_copy(inst)
+    assert api.lib.bk_instance_time(copy) == api.lib.bk_instance_time(inst)
+    assert np.array_equal(api.states(copy), api.states(inst))
+    for _ in range(5):
+        api.lib.bk_instance_advance(inst, 0.1)
+        api.lib.bk_instance_advance(copy, 0.1)
+    assert np.array_equal(api.states(copy), api.states(inst))
+    api.lib.bk_instance_destroy(copy)
+    api.lib.bk_instance_destroy(inst)

@@ -105,6 +105,22 @@ def kernel_context(kernel, n_blocks):
             'reads_time': _reads_time(kernel.rates), 'n_blocks': n_blocks, 'rates': rates, 'jacobian': jacobian}
 
 
+def block_table(blocks):
+    """The blocks as the C arrays the library builds its instances from (each array ends with a 0, so none
+    is empty)."""
+    state_offsets, input_offsets, states, inputs = [0], [0], [], []
+    for b in blocks:
+        states += b.states
+        inputs += b.inputs
+        state_offsets.append(len(states))
+        input_offsets.append(len(inputs))
+
+    def c_array(values):
+        return ', '.join(str(v) for v in list(values) + [0])
+    return {'kernel': c_array(b.kernel for b in blocks), 'state_offsets': c_array(state_offsets),
+            'states': c_array(states), 'input_offsets': c_array(input_offsets), 'inputs': c_array(inputs)}
+
+
 def sources(am, km, model_name='model'):
     """{file name: text} of the library for an analysed model and its kernel model."""
     if am.externalVariableCount():
@@ -114,7 +130,8 @@ def sources(am, km, model_name='model'):
     for b in km.blocks:
         counts[b.kernel] = counts.get(b.kernel, 0) + 1
     ctx = {'model_name': model_name, 'kernels': [kernel_context(k, counts[k.index]) for k in km.kernels],
-           'n_blocks': len(km.blocks), 'n_states': km.state_count, 'target': TARGET}
+           'n_blocks': len(km.blocks), 'n_states': km.state_count, 'target': TARGET,
+           'block_table': block_table(km.blocks)}
     interface, implementation = core_code(am)
     blocks = [{'kernel': b.kernel, 'states': b.states, 'inputs': b.inputs} for b in km.blocks]
     return {
