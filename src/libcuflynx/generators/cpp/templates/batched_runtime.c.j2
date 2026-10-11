@@ -5,7 +5,9 @@
    - each step solves y1 = y0 + h f(t1, y1) by modified Newton: the exact Jacobian and the LU factors
      (partial pivoting) of I - h J are kept across iterations and steps, and redone when Newton converges
      slowly or fails, after max_jacobian_age steps, or when h changes (factors only);
-   - the local error 0.5 h |f(y1) - f(y0)|, weighted by rtol * (largest |y| so far) + atol, sets the step;
+   - the local error 0.5 h (f(y1) - f(y0)), weighted by rtol * (largest |y| so far) + atol, sets the step;
+     when it would reject the step it is filtered through (I - h J)^-1 (as Radau5 does), so a fast mode
+     that backward Euler damps correctly does not count as error;
    - output times are interpolated (cubic Hermite, from the states and rates at both ends of a step), so
      steps are not cut at outputs;
    - a block continues its step across calls unless something it reads changed (its inputs, or the states
@@ -89,7 +91,7 @@ BK_API BkSim *bk_create(int n_blocks, const int *kernel, const int *state_offset
     sim->opt.rtol = 1e-4;
     sim->opt.atol = 1e-12;
     sim->opt.h_max = INFINITY;
-    sim->opt.h_min = 1e-14;
+    sim->opt.h_min = 0.0;
     sim->opt.newton_tol = 0.01;
     sim->opt.max_newton = 6;
     sim->opt.max_jacobian_age = 50;
@@ -341,7 +343,7 @@ static double bk_first_step(const BkOptions *o, BkBlock *B)
     }
     if (!isfinite(h))
         h = 1.0;
-    return h > o->h_min ? h : o->h_min;
+    return h > o->h_min ? h : (o->h_min > 0.0 ? o->h_min : 1e-300);
 }
 
 static void bk_restart(const BkOptions *o, BkBlock *B, const double *states, double t)
@@ -360,6 +362,18 @@ static void bk_restart(const BkOptions *o, BkBlock *B, const double *states, dou
     B->active = 1;
 }
 
+/* The weighted max-norm of the error estimate in B->dx. */
+static double bk_error(const BkOptions *o, const BkBlock *B)
+{
+    double err = 0.0;
+    for (int i = 0; i < B->n; ++i) {
+        double e = fabs(B->dx[i]) * bk_weight(o, B, i, B->y[i]);
+        if (!(e <= err))
+            err = e;
+    }
+    return err;
+}
+
 /* One accepted step from tb. */
 static int bk_advance(const BkOptions *o, BkBlock *B)
 {
@@ -368,7 +382,7 @@ static int bk_advance(const BkOptions *o, BkBlock *B)
     for (;;) {
         if (++B->run_steps > o->max_steps)
             return BK_TOO_MANY_STEPS;
-        if (h < o->h_min)
+        if (h < o->h_min || B->tb + h == B->tb)
             return BK_STEP_TOO_SMALL;
         double t1 = B->tb + h;
         for (int i = 0; i < n; ++i)
@@ -385,11 +399,12 @@ static int bk_advance(const BkOptions *o, BkBlock *B)
             h *= 0.25;
             continue;
         }
-        double err = 0.0;
-        for (int i = 0; i < n; ++i) {
-            double e = 0.5 * h * fabs(B->f[i] - B->fb[i]) * bk_weight(o, B, i, B->y[i]);
-            if (!(e <= err))
-                err = e;
+        for (int i = 0; i < n; ++i)
+            B->dx[i] = 0.5 * h * (B->f[i] - B->fb[i]);
+        double err = bk_error(o, B);
+        if (!(err <= 1.0) && B->jacobian_valid && (B->lu_h == h || bk_factor(B, h))) {
+            bk_solve(B);         /* filtered only when needed: it can only lower a stiff mode's error */
+            err = bk_error(o, B);
         }
         if (!(err <= 1.0)) {
             B->rejected++;

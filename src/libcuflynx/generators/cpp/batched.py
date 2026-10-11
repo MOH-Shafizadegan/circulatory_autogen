@@ -324,7 +324,7 @@ class BatchedSimulation:
                                     ptr(states, ctypes.c_int), ptr(input_offsets, ctypes.c_int),
                                     ptr(inputs, ctypes.c_int), n_states, n_variables)
 
-    def set_options(self, rtol=1e-4, atol=1e-12, max_step=0.0, min_step=1e-14, newton_tol=0.01, max_newton=6,
+    def set_options(self, rtol=1e-4, atol=1e-12, max_step=0.0, min_step=0.0, newton_tol=0.01, max_newton=6,
                     max_jacobian_age=50, max_steps=10_000_000, finite_difference_jacobian=False):
         self.lib.bk_set_options(self._h, rtol, atol, max_step or 0.0, min_step, newton_tol, max_newton,
                                 max_jacobian_age, int(max_steps), int(bool(finite_difference_jacobian)))

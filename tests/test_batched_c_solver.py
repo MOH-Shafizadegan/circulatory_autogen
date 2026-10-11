@@ -330,3 +330,29 @@ def test_a_state_initialised_by_a_computed_constant_moves_only_when_states_may_c
     helper.update_times(helper.dt, 1.0, 1.0, 0.0)
     assert helper.run()
     assert helper.get_results([['cell_a/x']])[0][0][0] == pytest.approx(x[-1], rel=1e-12)
+
+
+FAST_START = _cellml(f"""
+  <component name="fast">
+    <variable name="t" units="dimensionless"/>
+    <variable name="v" units="dimensionless" initial_value="0"/>
+    <variable name="y" units="dimensionless" initial_value="1"/>
+    <math {MATHML}>
+      {_ode('v', f'<apply><times/>{_cn(-1e12)}<apply><minus/><ci>v</ci><ci>y</ci></apply></apply>')}
+      {_ode('y', '<apply><minus/><ci>y</ci></apply>')}
+    </math>
+  </component>""")
+
+
+@needs_c
+@pytest.mark.solver
+def test_a_fast_transient_from_rest_is_stepped_through(tmp_path):
+    """v relaxes onto y in ~1e-12 time units from rest, as a flow through a tiny inertance does: the first steps are
+    far below 1e-14, and the error of the damped fast mode must not keep them there."""
+    helper = _helper(tmp_path, FAST_START, sim_time=2.0, dt=0.5, rtol=1e-5)
+    assert helper.run()
+    v, y = (helper.get_results([[n]])[0][0] for n in ('fast/v', 'fast/y'))
+    t = np.linspace(0.0, 2.0, 5)
+    assert np.max(np.abs(y - np.exp(-t))) < 1e-2
+    assert np.max(np.abs(v[1:] - y[1:])) < 1e-6
+    assert helper.stats()['steps'] < 2000
