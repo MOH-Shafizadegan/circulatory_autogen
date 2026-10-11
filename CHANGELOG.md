@@ -39,6 +39,8 @@ as `CVODE_myokit`.
   - It is meant for moderate tolerances (default `rtol` 1e-4).
   - Its LU is dense, so a single block of hundreds of states is slow.
   - It does not take models with algebraic loops or external variables.
+  - Excitable models want a `MaximumStep` or a tighter `rtol`: at `rtol` 1e-6 and no step cap, an action
+    potential in SN_simple lands 0.25 ms late (1.3 mV on its upstroke); with `MaximumStep` 1e-3, 0.09 mV.
   - It has no sensitivities.
 
 ### Fixed — libCellML 0.7's C for models with a state set by a computed constant, or with no algebraic variables

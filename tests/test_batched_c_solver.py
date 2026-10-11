@@ -674,3 +674,46 @@ def test_a_variable_set_by_a_literal_equation_reaches_the_rates(tmp_path):
     am, km = _kernel_model(tmp_path, 'literal', model)
     kernel = km.kernels[km.blocks[0].kernel]
     assert any(e == ('num', 0.5) for _, e in kernel.rates.assignments)
+
+
+@pytest.mark.unit
+def test_its_own_defaults_not_cvodes_fill_missing_settings():
+    """The cellml defaults are CVODE_myokit's: BE_batched_c gets its own (no step cap, 10M steps per block), so
+    a protocol run is not stopped by CVODE's 5000 steps; CVODE_myokit keeps its defaults."""
+    from libcuflynx.parsers.PrimitiveParsers import _solver_info_default_for, solver_field_defaults
+    be = _solver_info_default_for('cellml', 'BE_batched_c')
+    assert be['MaximumNumberOfSteps'] == 10_000_000 and 'MaximumStep' not in be and be['rtol'] == 1e-4
+    assert _solver_info_default_for('cellml', 'CVODE_myokit')['MaximumStep'] == 0.001
+    assert solver_field_defaults('BE_batched_c')['MaximumStep'] is None
+
+
+@pytest.mark.solver
+def test_a_protocol_runner_gives_the_solver_its_own_step_defaults(tmp_path, monkeypatch):
+    from libcuflynx.protocol_runners import protocol_runner
+    seen = {}
+
+    def fake_helper(**kwargs):
+        seen.update(kwargs['solver_info'])
+        raise RuntimeError('stop here')
+    monkeypatch.setattr(protocol_runner, 'get_simulation_helper', fake_helper)
+    with pytest.raises(RuntimeError, match='stop here'):
+        protocol_runner.ProtocolRunner(_write(tmp_path, 'm', CELLS), inp_data_dict={'dt': 0.01, 'solver_info': {}},
+                                       solver='BE_batched_c', model_type='cellml')
+    assert seen['MaximumNumberOfSteps'] == 10_000_000 and seen['MaximumStep'] is None
+
+
+@pytest.mark.unit
+def test_build_dir_is_a_setting_configs_may_give():
+    from libcuflynx.parsers.PrimitiveParsers import validate_solver_info
+    validate_solver_info('BE_batched_c', {'rtol': 1e-4, 'build_dir': '/tmp/x'})
+
+
+@pytest.mark.unit
+def test_the_build_digest_needs_no_source_files_on_disk(tmp_path, monkeypatch):
+    """A frozen application ships the templates but not the generator's .py files: the digest then uses the
+    installed version instead of failing."""
+    from libcuflynx.generators.cpp import batched
+    path = _write(tmp_path, 'm', CELLS)
+    on_disk = batched.source_digest(path)
+    monkeypatch.setattr(batched.kernel_ir, '__file__', str(tmp_path / 'not_shipped' / 'kernel_ir.py'))
+    assert batched.source_digest(path) != on_disk

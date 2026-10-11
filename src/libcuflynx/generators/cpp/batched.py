@@ -158,17 +158,32 @@ def build_dir_for(files, parent):
     return os.path.join(parent, f'batched_c_{digest.hexdigest()[:12]}')
 
 
+def _lock(f):
+    """An exclusive lock on open file ``f`` until it is closed: flock on POSIX, a one-byte region lock on Windows."""
+    try:
+        import fcntl
+    except ImportError:
+        import msvcrt
+        f.seek(0)
+        while True:
+            try:
+                msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)   # retries for ~10 s, then raises
+                return
+            except OSError:
+                continue
+    fcntl.flock(f, fcntl.LOCK_EX)
+
+
 def build(files, parent=None, verbose=False):
     """Write ``files`` to a folder named after their digest under ``parent`` (the system temp folder by
     default) and build the library there unless it is already built; return (library path, seconds spent
     building, 0 when it was already built). A lock file serialises concurrent builds of the same sources."""
-    import fcntl
     from libcuflynx.coupling.model0d_lib import _library_path, build_library
     parent = parent or os.path.join(tempfile.gettempdir(), 'libcuflynx_batched_c')
     out = build_dir_for(files, parent)
     os.makedirs(out, exist_ok=True)
-    with open(os.path.join(out, '.lock'), 'w') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    with open(os.path.join(out, '.lock'), 'a+') as lock:
+        _lock(lock)
         path = _library_path(os.path.join(out, 'build'), TARGET)
         if path is not None:
             return path, 0.0
@@ -243,6 +258,17 @@ def describe(flat_model, am, km):
 _IMPORT = re.compile(r'<import\b[^>]*?xlink:href="([^"]+)"')
 
 
+def _frozen_version():
+    """What identifies the generator's code when its source files are not on disk (a frozen application): the
+    installed libcuflynx's version, else the application's own timestamp."""
+    try:
+        from importlib.metadata import version
+        return 'libcuflynx ' + version('libcuflynx')
+    except Exception:
+        import sys
+        return f'application {os.path.getmtime(sys.executable)}'
+
+
 def source_digest(cellml_path):
     """A digest of a CellML file and every file it imports, recursively, with this module's templates and
     code (so a changed generator does not load a stale build)."""
@@ -261,7 +287,14 @@ def source_digest(cellml_path):
             if '://' not in href:
                 pending.append(os.path.normpath(os.path.join(os.path.dirname(path), href)))
     here = os.path.dirname(os.path.abspath(__file__))
-    for path in [__file__, kernel_ir.__file__] + sorted(
+    for path in [__file__, kernel_ir.__file__]:
+        if os.path.isfile(path):
+            with open(path, 'rb') as f:
+                digest.update(f.read())
+        else:
+            # a frozen application ships compiled modules only: its version stands for the generator's code
+            digest.update(_frozen_version().encode())
+    for path in sorted(
             os.path.join(here, 'templates', n) for n in os.listdir(os.path.join(here, 'templates'))
             if n.startswith('batched_')):
         with open(path, 'rb') as f:
