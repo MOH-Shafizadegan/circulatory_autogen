@@ -772,3 +772,26 @@ def test_an_instance_of_some_blocks_steps_only_those(tmp_path):
         assert y[api.state['cell_a/x']] == pytest.approx(2.0 * math.exp(-0.5), rel=1e-6)
         assert y[api.state['cell_b/x']] == 1.0 and y[api.state['pair/p']] == 1.0
         api.lib.bk_instance_destroy(one)
+
+
+@needs_c
+@pytest.mark.solver
+def test_outputs_read_computed_constants_as_libcellml_computes_them(tmp_path):
+    """An output that reads a computed constant (cell_b/flux = k x with k from k0 = 2 kk) uses the value
+    libCellML's computeComputedConstants keeps, bit for bit the same as a full computeVariables."""
+    head, cell_b = CELLS.split('<component name="cell_b">')
+    cell_b = cell_b.replace('<variable name="k" units="per_s" initial_value="0.2"/>',
+                            '<variable name="k" units="per_s"/><variable name="kk" units="per_s" initial_value="0.1"/>').replace(
+        '<apply><eq/><ci>flux</ci><apply><times/><ci>k</ci><ci>x</ci></apply></apply>',
+        f'<apply><eq/><ci>k</ci><apply><times/>{_cn(2)}<ci>kk</ci></apply></apply>'
+        '<apply><eq/><ci>flux</ci><apply><times/><ci>k</ci><ci>x</ci></apply></apply>', 1)
+    model = head + '<component name="cell_b">' + cell_b
+    api = _Instances(tmp_path, model, outputs=('cell_b/flux',))
+    inst = api.create()
+    api.lib.bk_instance_advance(inst, 0.3)
+    api.lib.bk_instance_outputs(inst)
+    flux = api.variables(inst)[api.variable['cell_b/flux']]
+    api.lib.bk_instance_compute_variables(inst)
+    assert flux == api.variables(inst)[api.variable['cell_b/flux']]
+    assert all(k != api.variable['cell_b/k'] for k, _ in kernel_ir.outputs_program(
+        kernel_ir.analyse_cellml(str(tmp_path / 'model.cellml'))[1], ['cell_b/flux']))

@@ -683,12 +683,15 @@ def outputs_program(am, outputs):
     """Assignments that compute the algebraic variables named in ``outputs`` (``component/name``, or a name only
     one component has) and those they read, in dependency order: ``[(one-array index, expression)]`` over the
     model's states ``('y', i)``, the one variables array ``('in', k)`` (inputs and the variables assigned before)
-    and time. For a caller that reads a few algebraic variables after every step and the rest only on demand. A
-    computed constant may be an output too."""
+    and time. For a caller that reads a few algebraic variables after every step and the rest only on demand.
+    Computed constants are read from the variables, where libCellML's computeComputedConstants keeps them, so an
+    output has the same value whichever way it is computed; a computed constant may itself be an output."""
     variables = _Variables(am)
     eqs = _Equations(am, variables)
     roots = []
     for name, k in zip(outputs, output_indices(am, outputs)):
+        if variables.variables[k].kind == 'computed_constant':
+            continue
         if eqs.algebraic.get(k) is None:
             raise KernelIRError(f'output {name!r} depends on a rate')
         roots.append(('alg', k))
@@ -702,7 +705,7 @@ def outputs_program(am, outputs):
         if op in ('num', 't'):
             return e
         return (op,) + tuple(global_(x) for x in e[1:])
-    return [(k, global_(eqs.algebraic[k])) for k in eqs.closure(roots)]
+    return [(k, global_(eqs.algebraic[k])) for k in eqs.closure(roots) if variables.variables[k].kind == 'algebraic']
 
 
 def analyse_cellml(path, external_variables=()):
