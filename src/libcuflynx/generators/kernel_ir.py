@@ -467,20 +467,22 @@ class _Equations:
             if t == ET.NLA:
                 raise KernelIRError('the model has an algebraic loop (non-linear algebraic equations): '
                                     'kernels need every algebraic variable in explicit form')
-            if t not in (ET.ODE, ET.ALGEBRAIC, ET.COMPUTED_CONSTANT):
-                continue          # constants are inputs
             ast = eq.ast()
+            if ast is None:
+                continue          # an external variable: an input
             lhs, rhs = ast.leftChild(), ast.rightChild()
             if t == ET.ODE:
                 if lhs.type() != T.DIFF:
                     raise KernelIRError('an ODE is not in the form d(state)/dt = expression')
                 self.ode[eq.state(0).index()] = reader.expr(rhs)
             else:
-                if lhs.type() != T.CI:
+                # by the variable it defines, whatever libCellML calls the equation (a computed constant can be
+                # defined by a literal, in an equation of type 'constant')
+                if lhs is None or lhs.type() != T.CI:
                     raise KernelIRError('an algebraic equation is not in explicit form')
                 target = variables.of(lhs.variable())
                 if target.kind not in ('algebraic', 'computed_constant'):
-                    continue      # a state's initial value: libCellML's code sets it
+                    continue      # a constant (an input), or a state's initial value (libCellML's code sets it)
                 if _uses_rate(rhs):
                     # read by outputs only (libCellML's computeVariables computes it), never by a rate
                     self.algebraic[target.index] = None

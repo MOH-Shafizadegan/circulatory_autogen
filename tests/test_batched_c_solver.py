@@ -660,3 +660,17 @@ def test_a_trace_reaches_the_computed_constants_it_feeds(tmp_path):
     x, k = helper.get_results([['drive/x', 'drive/k']])[0]
     assert x == pytest.approx(2 * np.where(t <= 0.5, 2 * t ** 2, 0.5 + 2 * (t - 0.5)), abs=1e-6)
     assert k == pytest.approx(2 * np.interp(t, [0.0, 0.5], [0.0, 2.0]))
+
+
+@pytest.mark.unit
+def test_a_variable_set_by_a_literal_equation_reaches_the_rates(tmp_path):
+    """c = 0.5 written as an equation (libCellML: a computed constant, defined in an equation of type 'constant')
+    is computed in the kernel like any other computed constant: x' = -c x."""
+    model = TRACED.replace('<variable name="flux" units="per_s"/>',
+                           '<variable name="flux" units="per_s"/><variable name="c" units="per_s"/>').replace(
+        '<apply><eq/><ci>flux</ci><ci>u</ci></apply>',
+        f'<apply><eq/><ci>c</ci>{_cn(0.5, "per_s")}</apply>'
+        '<apply><eq/><ci>flux</ci><apply><times/><apply><minus/><ci>c</ci></apply><ci>x</ci></apply></apply>')
+    am, km = _kernel_model(tmp_path, 'literal', model)
+    kernel = km.kernels[km.blocks[0].kernel]
+    assert any(e == ('num', 0.5) for _, e in kernel.rates.assignments)
