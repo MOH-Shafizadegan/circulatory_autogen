@@ -18,13 +18,28 @@ as `CVODE_myokit`.
   equations. Only its structurally non-zero entries are written.
 - **C.** `generators/cpp/batched.py` writes the kernels as C next to libCellML's own C (as
   `model_type: cpp` writes it, which gives initial values and outputs), renders the runtime from
-  `templates/batched_*.j2` and builds it with CMake. A built model is reused.
-- **Integrator.** Adaptive backward Euler with modified Newton for each block, and OpenMP over the
-  blocks. Results are the same for any number of threads. A block whose inputs did not change
-  between sub-experiments keeps its steps.
-- **Limits.** It is first order, so it is meant for moderate tolerances (default `rtol` 1e-4). It
-  does not take models with algebraic loops, external variables, or protocol traces. It has no
-  sensitivities.
+  `templates/batched_*.j2` and builds it with CMake. A built model is cached under a digest of its
+  CellML files, so later helpers load it in milliseconds.
+- **Integrators.** Each block gets its own adaptive, L-stable one-step method, chosen by
+  `solver_info` `method`:
+  - `backward_euler`, the default;
+  - `trbdf2`, second order, which is far more accurate at the same tolerance and usually faster.
+
+  Both use modified Newton, with the Jacobian and LU factors kept across steps.
+- **Threads and restarts.** OpenMP runs over the blocks, and results are the same for any number
+  of threads. A block whose inputs did not change between sub-experiments keeps its steps.
+- **Limits.**
+  - It is meant for moderate tolerances (default `rtol` 1e-4).
+  - Its LU is dense, so a single block of hundreds of states is slow.
+  - It does not take models with algebraic loops, external variables, or protocol traces.
+  - It has no sensitivities.
+
+### Fixed — libCellML 0.7's C for models with a state set by a computed constant, or with no algebraic variables
+
+The one-`variables`-array rewrite of libCellML 0.7's C now keeps `voi`, `states` and `rates` in
+`computeComputedConstants`. libCellML sets the states initialised by a computed constant there, so
+`SN_simple` did not compile. The rewrite also no longer leaves a stray `{` in `VARIABLE_INFO` when
+a kind of variable is empty.
 
 ### Changed — libCellML 0.7.1 or later
 
