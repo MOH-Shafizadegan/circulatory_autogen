@@ -656,18 +656,18 @@ def build_kernel_model(am):
 
 
 def output_indices(am, outputs):
-    """The one-array indices of the algebraic variables named in ``outputs`` (``component/name``, or a name only
-    one component has), in the order given."""
+    """The one-array indices of the algebraic variables or computed constants named in ``outputs``
+    (``component/name``, or a name only one component has), in the order given."""
     by_name = {}
     for v in _Variables(am).variables:
-        if v.kind == 'algebraic':
+        if v.kind in ('algebraic', 'computed_constant'):
             by_name.setdefault(f'{v.component}/{v.name}', []).append(v.index)
             by_name.setdefault(v.name, []).append(v.index)
     found = []
     for name in outputs:
         k = by_name.get(name, [])
         if len(k) != 1:
-            raise KernelIRError(f'output {name!r} names {len(k)} algebraic variables, not one')
+            raise KernelIRError(f'output {name!r} names {len(k)} algebraic variables or computed constants, not one')
         found.append(k[0])
     return found
 
@@ -676,11 +676,14 @@ def outputs_program(am, outputs):
     """Assignments that compute the algebraic variables named in ``outputs`` (``component/name``, or a name only
     one component has) and those they read, in dependency order: ``[(one-array index, expression)]`` over the
     model's states ``('y', i)``, the one variables array ``('in', k)`` (inputs and the variables assigned before)
-    and time. For a caller that reads a few algebraic variables after every step and the rest only on demand."""
+    and time. For a caller that reads a few algebraic variables after every step and the rest only on demand. A
+    computed constant may be an output too: it is always current in the variables, so it needs no assignment."""
     variables = _Variables(am)
     eqs = _Equations(am, variables)
     roots = []
     for name, k in zip(outputs, output_indices(am, outputs)):
+        if variables.variables[k].kind == 'computed_constant':
+            continue
         if eqs.algebraic.get(k) is None:
             raise KernelIRError(f'output {name!r} depends on a rate')
         roots.append(('alg', k))

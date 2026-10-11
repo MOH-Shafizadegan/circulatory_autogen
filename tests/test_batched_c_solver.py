@@ -570,6 +570,6 @@ def test_outputs_are_computed_alone_as_libcellml_computes_them(tmp_path):
 @pytest.mark.unit
 def test_an_output_must_name_one_algebraic_variable(tmp_path):
     am, _ = _kernel_model(tmp_path, 'cells', CELLS)
-    with pytest.raises(kernel_ir.KernelIRError, match='names 2 algebraic variables'):
+    with pytest.raises(kernel_ir.KernelIRError, match='names 2 algebraic variables or computed constants'):
         kernel_ir.outputs_program(am, ['flux'])
     assert len(kernel_ir.outputs_program(am, ['cell_a/flux'])) == 1
