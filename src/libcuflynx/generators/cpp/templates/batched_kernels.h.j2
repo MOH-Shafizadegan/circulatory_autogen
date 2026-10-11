@@ -20,6 +20,11 @@ typedef struct {
 extern const BkKernel BK_KERNELS[];
 extern const int BK_KERNEL_COUNT;
 
+extern const int BK_OUTPUT_COUNT;
+extern const int BK_OUTPUTS[];
+/* The outputs and the algebraic variables they read, from the states y, into the one variables array in. */
+void bk_model_outputs(double t, const double *y, double *in);
+
 extern const int BK_BLOCK_COUNT;
 extern const int BK_BLOCK_KERNEL[];
 extern const int BK_BLOCK_STATE_OFFSETS[];

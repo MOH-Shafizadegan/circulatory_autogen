@@ -655,6 +655,48 @@ def build_kernel_model(am):
     return KernelModel(variables.states, variables.variables, variables.voi, kernels, blocks)
 
 
+def output_indices(am, outputs):
+    """The one-array indices of the algebraic variables named in ``outputs`` (``component/name``, or a name only
+    one component has), in the order given."""
+    by_name = {}
+    for v in _Variables(am).variables:
+        if v.kind == 'algebraic':
+            by_name.setdefault(f'{v.component}/{v.name}', []).append(v.index)
+            by_name.setdefault(v.name, []).append(v.index)
+    found = []
+    for name in outputs:
+        k = by_name.get(name, [])
+        if len(k) != 1:
+            raise KernelIRError(f'output {name!r} names {len(k)} algebraic variables, not one')
+        found.append(k[0])
+    return found
+
+
+def outputs_program(am, outputs):
+    """Assignments that compute the algebraic variables named in ``outputs`` (``component/name``, or a name only
+    one component has) and those they read, in dependency order: ``[(one-array index, expression)]`` over the
+    model's states ``('y', i)``, the one variables array ``('in', k)`` (inputs and the variables assigned before)
+    and time. For a caller that reads a few algebraic variables after every step and the rest only on demand."""
+    variables = _Variables(am)
+    eqs = _Equations(am, variables)
+    roots = []
+    for name, k in zip(outputs, output_indices(am, outputs)):
+        if eqs.algebraic.get(k) is None:
+            raise KernelIRError(f'output {name!r} depends on a rate')
+        roots.append(('alg', k))
+
+    def global_(e):
+        op = e[0]
+        if op == 'state':
+            return ('y', e[1])
+        if op in ('var', 'alg'):
+            return ('in', e[1])
+        if op in ('num', 't'):
+            return e
+        return (op,) + tuple(global_(x) for x in e[1:])
+    return [(k, global_(eqs.algebraic[k])) for k in eqs.closure(roots)]
+
+
 def analyse_cellml(path, external_variables=()):
     """Parse, flatten and analyse a CellML file; ``external_variables`` are (component, variable) names to
     make external. Returns (flat model, AnalyserModel)."""

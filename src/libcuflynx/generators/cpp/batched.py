@@ -121,8 +121,9 @@ def block_table(blocks):
             'states': c_array(states), 'input_offsets': c_array(input_offsets), 'inputs': c_array(inputs)}
 
 
-def sources(am, km, model_name='model'):
-    """{file name: text} of the library for an analysed model and its kernel model."""
+def sources(am, km, model_name='model', outputs=()):
+    """{file name: text} of the library for an analysed model and its kernel model; ``outputs`` are the algebraic
+    variables bk_instance_outputs computes (kernel_ir.outputs_program)."""
     if am.externalVariableCount():
         raise BatchedBuildError('BE_batched_c does not take models with external variables yet')
     env = template_environment()
@@ -132,6 +133,10 @@ def sources(am, km, model_name='model'):
     ctx = {'model_name': model_name, 'kernels': [kernel_context(k, counts[k.index]) for k in km.kernels],
            'n_blocks': len(km.blocks), 'n_states': km.state_count, 'target': TARGET,
            'block_table': block_table(km.blocks)}
+    program = kernel_ir.outputs_program(am, outputs)
+    ctx['outputs'] = [f'in[{k}] = {c_expression(e)};' for k, e in program]
+    ctx['output_targets'] = ', '.join(str(i) for i in kernel_ir.output_indices(am, outputs) + [0])   # never empty
+    ctx['n_outputs'] = len(outputs)
     interface, implementation = core_code(am)
     blocks = [{'kernel': b.kernel, 'states': b.states, 'inputs': b.inputs} for b in km.blocks]
     return {
@@ -264,12 +269,15 @@ def source_digest(cellml_path):
     return digest.hexdigest()[:16]
 
 
-def load_or_build(cellml_path, parent=None, verbose=False):
+def load_or_build(cellml_path, parent=None, verbose=False, outputs=()):
     """The description and built library of a CellML model: from the cache under ``parent`` (keyed by
-    :func:`source_digest`) when there, else analysed, generated and built. Returns (description, library
-    path, seconds spent building, True when cached)."""
+    :func:`source_digest` and the outputs) when there, else analysed, generated and built. Returns (description,
+    library path, seconds spent building, True when cached)."""
     parent = parent or os.path.join(tempfile.gettempdir(), 'libcuflynx_batched_c')
-    index = os.path.join(parent, 'models', source_digest(cellml_path) + '.json')
+    key = source_digest(cellml_path)
+    if outputs:
+        key += '_' + hashlib.sha1('\n'.join(outputs).encode()).hexdigest()[:8]
+    index = os.path.join(parent, 'models', key + '.json')
     if os.path.isfile(index):
         with open(index) as f:
             cached = json.load(f)
@@ -277,7 +285,7 @@ def load_or_build(cellml_path, parent=None, verbose=False):
             return cached['description'], cached['library'], 0.0, True
     flat, am = kernel_ir.analyse_cellml(cellml_path)
     km = kernel_ir.build_kernel_model(am)
-    files = sources(am, km, os.path.splitext(os.path.basename(cellml_path))[0])
+    files = sources(am, km, os.path.splitext(os.path.basename(cellml_path))[0], outputs)
     description = describe(flat, am, km)
     path, seconds = build(files, parent, verbose=verbose)
     os.makedirs(os.path.dirname(index), exist_ok=True)

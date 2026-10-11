@@ -718,6 +718,13 @@ BK_API int bk_instance_advance(BkInstance *I, double dt)
     return failed;
 }
 
+/* The outputs chosen when the library was built (bk_output_count, bk_output_index) at the instance's time and
+   states, into its variables: the few algebraic variables a caller reads after every step. */
+BK_API void bk_instance_outputs(BkInstance *I) { bk_model_outputs(I->t, I->states, I->variables); }
+
+BK_API int bk_output_count(void) { return BK_OUTPUT_COUNT; }
+BK_API int bk_output_index(int i) { return BK_OUTPUTS[i]; }
+
 /* Every algebraic variable at the instance's time and states (libCellML's computeRates and computeVariables),
    into its variables. */
 BK_API void bk_instance_compute_variables(BkInstance *I)

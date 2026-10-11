@@ -409,10 +409,11 @@ def test_newton_converges_where_the_residual_is_all_rounding(tmp_path, method):
 class _Instances:
     """The instance API of a built library, through ctypes."""
 
-    def __init__(self, tmp_path, text):
+    def __init__(self, tmp_path, text, outputs=()):
         import ctypes
         from libcuflynx.generators.cpp import batched
-        _, path, _, _ = batched.load_or_build(_write(tmp_path, 'model', text), str(tmp_path / 'build'))
+        _, path, _, _ = batched.load_or_build(_write(tmp_path, 'model', text), str(tmp_path / 'build'),
+                                              outputs=outputs)
         lib = ctypes.CDLL(path)
         vp, d, i, s = ctypes.c_void_p, ctypes.c_double, ctypes.c_int, ctypes.c_char_p
         dp = ctypes.POINTER(d)
@@ -422,6 +423,7 @@ class _Instances:
                 ('bk_instance_time', d, [vp]), ('bk_instance_sim', vp, [vp]), ('bk_instance_restart', None, [vp]),
                 ('bk_instance_parameters_changed', None, [vp]), ('bk_instance_advance', i, [vp, d]),
                 ('bk_instance_compute_variables', None, [vp]), ('bk_state_count', i, []), ('bk_variable_count', i, []),
+                ('bk_instance_outputs', None, [vp]), ('bk_output_count', i, []), ('bk_output_index', i, [i]),
                 ('bk_state_info', None, [i, ctypes.POINTER(s)] * 1 + [ctypes.POINTER(s)] * 2),
                 ('bk_variable_info', i, [i] + [ctypes.POINTER(s)] * 3),
                 ('bk_set_options', None, [vp, d, d, d, d, d, i, i, ctypes.c_long, i, i])]:
@@ -541,3 +543,33 @@ def test_a_copy_continues_from_its_original(tmp_path):
     assert np.array_equal(api.states(copy), api.states(inst))
     api.lib.bk_instance_destroy(copy)
     api.lib.bk_instance_destroy(inst)
+
+
+@needs_c
+@pytest.mark.solver
+def test_outputs_are_computed_alone_as_libcellml_computes_them(tmp_path):
+    """Built with cell_b/flux as its output, an instance computes that flux (and only what it reads) after a step,
+    exactly as libCellML's computeVariables does; cell_a's flux is left alone."""
+    api = _Instances(tmp_path, CELLS, outputs=('cell_b/flux',))
+    assert api.lib.bk_output_count() == 1
+    flux_b, flux_a = api.variable['cell_b/flux'], api.variable['cell_a/flux']
+    assert api.lib.bk_output_index(0) == flux_b
+    inst = api.create()
+    for _ in range(3):
+        api.lib.bk_instance_advance(inst, 0.1)
+    v = api.variables(inst)
+    v[flux_a] = v[flux_b] = -1.0
+    api.lib.bk_instance_outputs(inst)
+    assert v[flux_a] == -1.0
+    computed = v[flux_b]
+    api.lib.bk_instance_compute_variables(inst)
+    assert computed == v[flux_b] == 0.2 * api.states(inst)[api.state['cell_b/x']]
+    api.lib.bk_instance_destroy(inst)
+
+
+@pytest.mark.unit
+def test_an_output_must_name_one_algebraic_variable(tmp_path):
+    am, _ = _kernel_model(tmp_path, 'cells', CELLS)
+    with pytest.raises(kernel_ir.KernelIRError, match='names 2 algebraic variables'):
+        kernel_ir.outputs_program(am, ['flux'])
+    assert len(kernel_ir.outputs_program(am, ['cell_a/flux'])) == 1

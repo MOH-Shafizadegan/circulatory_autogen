@@ -35,6 +35,18 @@ const BkKernel BK_KERNELS[] = {
 
 const int BK_KERNEL_COUNT = {{ kernels|length }};
 
+/* The model's outputs ({{ n_outputs }} algebraic variables) and what they read, into the one variables array. */
+const int BK_OUTPUT_COUNT = {{ n_outputs }};
+const int BK_OUTPUTS[] = { {{ output_targets }} };
+
+void bk_model_outputs(double t, const double *y, double *in)
+{
+    (void) t; (void) y; (void) in;
+{% for line in outputs %}
+    {{ line }}
+{% endfor %}
+}
+
 /* The model's blocks: kernel, and the model states and one-array variables of its inputs (offsets per block). */
 const int BK_BLOCK_COUNT = {{ n_blocks }};
 const int BK_BLOCK_KERNEL[] = { {{ block_table.kernel }} };
