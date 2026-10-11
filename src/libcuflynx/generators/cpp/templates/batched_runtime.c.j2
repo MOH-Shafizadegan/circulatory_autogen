@@ -805,12 +805,38 @@ typedef struct {
     double t;
 } BkInstance;
 
-/* A new instance at t = 0 with the model's initial values and computed constants. */
-BK_API BkInstance *bk_instance_create(void)
+/* A new instance at t = 0 with the model's initial values and computed constants, integrating the blocks listed
+   (indices into the model's blocks; all of them when blocks is NULL): a program that keeps one part of a model
+   (one module of a module array) steps only that part's states. */
+BK_API BkInstance *bk_instance_create_blocks(int n_blocks, const int *blocks)
 {
     BkInstance *I = (BkInstance *) calloc(1, sizeof(BkInstance));
-    I->sim = bk_create(BK_BLOCK_COUNT, BK_BLOCK_KERNEL, BK_BLOCK_STATE_OFFSETS, BK_BLOCK_STATES,
-                       BK_BLOCK_INPUT_OFFSETS, BK_BLOCK_INPUTS, (int) STATE_COUNT, (int) VARIABLE_COUNT);
+    if (!blocks) {
+        I->sim = bk_create(BK_BLOCK_COUNT, BK_BLOCK_KERNEL, BK_BLOCK_STATE_OFFSETS, BK_BLOCK_STATES,
+                           BK_BLOCK_INPUT_OFFSETS, BK_BLOCK_INPUTS, (int) STATE_COUNT, (int) VARIABLE_COUNT);
+    } else {
+        int ns = 0, ni = 0;
+        for (int k = 0; k < n_blocks; ++k) {
+            ns += BK_BLOCK_STATE_OFFSETS[blocks[k] + 1] - BK_BLOCK_STATE_OFFSETS[blocks[k]];
+            ni += BK_BLOCK_INPUT_OFFSETS[blocks[k] + 1] - BK_BLOCK_INPUT_OFFSETS[blocks[k]];
+        }
+        int *kernel = (int *) malloc(sizeof(int) * (n_blocks + 1));
+        int *so = (int *) malloc(sizeof(int) * (n_blocks + 1)), *io = (int *) malloc(sizeof(int) * (n_blocks + 1));
+        int *st = (int *) malloc(sizeof(int) * (ns + 1)), *in = (int *) malloc(sizeof(int) * (ni + 1));
+        so[0] = io[0] = 0;
+        for (int k = 0; k < n_blocks; ++k) {
+            int b = blocks[k];
+            int bs = BK_BLOCK_STATE_OFFSETS[b], be = BK_BLOCK_STATE_OFFSETS[b + 1];
+            int is = BK_BLOCK_INPUT_OFFSETS[b], ie = BK_BLOCK_INPUT_OFFSETS[b + 1];
+            kernel[k] = BK_BLOCK_KERNEL[b];
+            memcpy(st + so[k], BK_BLOCK_STATES + bs, sizeof(int) * (be - bs));
+            memcpy(in + io[k], BK_BLOCK_INPUTS + is, sizeof(int) * (ie - is));
+            so[k + 1] = so[k] + (be - bs);
+            io[k + 1] = io[k] + (ie - is);
+        }
+        I->sim = bk_create(n_blocks, kernel, so, st, io, in, (int) STATE_COUNT, (int) VARIABLE_COUNT);
+        free(kernel); free(so); free(io); free(st); free(in);
+    }
     I->states = bk_zeros((int) STATE_COUNT);
     I->rates = bk_zeros((int) STATE_COUNT);
     I->scratch = bk_zeros((int) STATE_COUNT);
@@ -820,11 +846,32 @@ BK_API BkInstance *bk_instance_create(void)
     return I;
 }
 
+/* The block that holds a state (an index into the model's blocks). */
+BK_API int bk_state_block(int state)
+{
+    for (int b = 0; b < BK_BLOCK_COUNT; ++b)
+        for (int i = BK_BLOCK_STATE_OFFSETS[b]; i < BK_BLOCK_STATE_OFFSETS[b + 1]; ++i)
+            if (BK_BLOCK_STATES[i] == state)
+                return b;
+    return -1;
+}
+
+/* A new instance of the whole model. */
+BK_API BkInstance *bk_instance_create(void)
+{
+    return bk_instance_create_blocks(0, NULL);
+}
+
 /* A copy of an instance: time, states, variables, options and each block's steps, so it continues exactly as
    the original would. */
 BK_API BkInstance *bk_instance_copy(const BkInstance *src)
 {
-    BkInstance *I = bk_instance_create();
+    int nb = src->sim->n_blocks;
+    int *blocks = (int *) malloc(sizeof(int) * (nb + 1));
+    for (int b = 0; b < nb; ++b)
+        blocks[b] = bk_state_block(src->sim->blocks[b].states[0]);
+    BkInstance *I = bk_instance_create_blocks(nb, blocks);
+    free(blocks);
     I->sim->opt = src->sim->opt;
     I->t = src->t;
     memcpy(I->states, src->states, sizeof(double) * STATE_COUNT);
@@ -896,6 +943,18 @@ BK_API void bk_instance_outputs(BkInstance *I) { bk_model_outputs(I->t, I->state
 
 BK_API int bk_output_count(void) { return BK_OUTPUT_COUNT; }
 BK_API int bk_output_index(int i) { return BK_OUTPUTS[i]; }
+
+/* The states that name a variable for their initial value take it from the instance's variables now, and those
+   initialised by computed constants are recomputed: a new instance's initial values after its parameters were set
+   (a named parameter set, a player's choices). Its blocks start afresh. */
+BK_API void bk_instance_initialise_states(BkInstance *I)
+{
+    for (int i = 0; i < (int) STATE_COUNT; ++i)
+        if (BK_STATE_INIT_VAR[i] >= 0)
+            I->states[i] = I->variables[BK_STATE_INIT_VAR[i]];
+    computeComputedConstants(I->t, I->states, I->rates, I->variables);
+    bk_invalidate(I->sim);
+}
 
 /* Every algebraic variable at the instance's time and states (libCellML's computeRates and computeVariables),
    into its variables. */

@@ -47,6 +47,9 @@ void bk_model_outputs(double t, const double *y, double *in)
 {% endfor %}
 }
 
+/* Per state, the one-array variable its initial value names, or -1 for a literal. */
+const int BK_STATE_INIT_VAR[] = { {{ state_init }} };
+
 /* The model's blocks: kernel, and the model states and one-array variables of its inputs (offsets per block). */
 const int BK_BLOCK_COUNT = {{ n_blocks }};
 const int BK_BLOCK_KERNEL[] = { {{ block_table.kernel }} };

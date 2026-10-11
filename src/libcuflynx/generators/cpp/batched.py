@@ -121,9 +121,11 @@ def block_table(blocks):
             'states': c_array(states), 'input_offsets': c_array(input_offsets), 'inputs': c_array(inputs)}
 
 
-def sources(am, km, model_name='model', outputs=()):
+def sources(am, km, model_name='model', outputs=(), state_init=None):
     """{file name: text} of the library for an analysed model and its kernel model; ``outputs`` are the algebraic
-    variables bk_instance_outputs computes (kernel_ir.outputs_program)."""
+    variables bk_instance_outputs computes (kernel_ir.outputs_program); ``state_init`` the one-array variable each
+    state's initial value names, or None for a literal (describe()'s ``state_init_ref``), for
+    bk_instance_initialise_states."""
     if am.externalVariableCount():
         raise BatchedBuildError('BE_batched_c does not take models with external variables yet')
     env = template_environment()
@@ -137,6 +139,8 @@ def sources(am, km, model_name='model', outputs=()):
     ctx['outputs'] = [f'in[{k}] = {c_expression(e)};' for k, e in program]
     ctx['output_targets'] = ', '.join(str(i) for i in kernel_ir.output_indices(am, outputs) + [0])   # never empty
     ctx['n_outputs'] = len(outputs)
+    refs = state_init if state_init is not None else [None] * km.state_count
+    ctx['state_init'] = ', '.join(str(-1 if r is None else r) for r in list(refs) + [None])   # never empty
     interface, implementation = core_code(am)
     blocks = [{'kernel': b.kernel, 'states': b.states, 'inputs': b.inputs} for b in km.blocks]
     return {
@@ -318,8 +322,9 @@ def load_or_build(cellml_path, parent=None, verbose=False, outputs=()):
             return cached['description'], cached['library'], 0.0, True
     flat, am = kernel_ir.analyse_cellml(cellml_path)
     km = kernel_ir.build_kernel_model(am)
-    files = sources(am, km, os.path.splitext(os.path.basename(cellml_path))[0], outputs)
     description = describe(flat, am, km)
+    files = sources(am, km, os.path.splitext(os.path.basename(cellml_path))[0], outputs,
+                    description['state_init_ref'])
     path, seconds = build(files, parent, verbose=verbose)
     os.makedirs(os.path.dirname(index), exist_ok=True)
     staging = index + f'.{os.getpid()}.tmp'

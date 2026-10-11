@@ -424,6 +424,8 @@ class _Instances:
                 ('bk_instance_parameters_changed', None, [vp]), ('bk_instance_advance', i, [vp, d]),
                 ('bk_instance_compute_variables', None, [vp]), ('bk_state_count', i, []), ('bk_variable_count', i, []),
                 ('bk_instance_outputs', None, [vp]), ('bk_output_count', i, []), ('bk_output_index', i, [i]),
+                ('bk_instance_create_blocks', vp, [i, ctypes.POINTER(i)]), ('bk_state_block', i, [i]),
+                ('bk_instance_initialise_states', None, [vp]),
                 ('bk_state_info', None, [i, ctypes.POINTER(s)] * 1 + [ctypes.POINTER(s)] * 2),
                 ('bk_variable_info', i, [i] + [ctypes.POINTER(s)] * 3),
                 ('bk_set_options', None, [vp, d, d, d, d, d, i, i, ctypes.c_long, i, i])]:
@@ -717,3 +719,56 @@ def test_the_build_digest_needs_no_source_files_on_disk(tmp_path, monkeypatch):
     on_disk = batched.source_digest(path)
     monkeypatch.setattr(batched.kernel_ir, '__file__', str(tmp_path / 'not_shipped' / 'kernel_ir.py'))
     assert batched.source_digest(path) != on_disk
+
+
+@needs_c
+@pytest.mark.solver
+def test_initial_values_follow_the_parameters_they_name(tmp_path):
+    """cell_a's x starts at x0 (a constant) and, in a second model, at x0 = 4 k (a computed constant): after the
+    parameter changes, bk_instance_initialise_states starts x from the new value."""
+    api = _Instances(tmp_path, CELLS)
+    inst = api.create()
+    api.variables(inst)[api.variable['cell_a/x0']] = 5.0
+    api.lib.bk_instance_initialise_states(inst)
+    assert api.states(inst)[api.state['cell_a/x']] == 5.0
+    assert api.states(inst)[api.state['cell_b/x']] == 1.0
+    api.lib.bk_instance_destroy(inst)
+
+    model = CELLS.replace(
+        '<variable name="x0" units="dimensionless" initial_value="2.0"/>',
+        '<variable name="x0" units="dimensionless"/>').replace(
+        '<apply><eq/><ci>flux</ci>',
+        f'<apply><eq/><ci>x0</ci><apply><times/>{_cn(4, "second")}<ci>k</ci></apply></apply><apply><eq/><ci>flux</ci>', 1)
+    (tmp_path / 'computed').mkdir()
+    api = _Instances(tmp_path / 'computed', model)
+    inst = api.create()
+    api.variables(inst)[api.variable['cell_a/k']] = 0.25
+    api.lib.bk_instance_initialise_states(inst)
+    assert api.states(inst)[api.state['cell_a/x']] == 1.0
+    api.lib.bk_instance_destroy(inst)
+
+
+@needs_c
+@pytest.mark.solver
+def test_an_instance_of_some_blocks_steps_only_those(tmp_path):
+    """An instance of cell_a's block alone: its x decays, the other blocks' states stay where they were; a copy
+    keeps the same blocks."""
+    import ctypes
+    api = _Instances(tmp_path, CELLS)
+    b = api.lib.bk_state_block(api.state['cell_a/x'])
+    assert b >= 0 and api.lib.bk_state_block(api.state['pair/p']) != b
+    blocks = (ctypes.c_int * 1)(b)
+    inst = api.lib.bk_instance_create_blocks(1, blocks)
+    api.lib.bk_set_options(api.lib.bk_instance_sim(inst), 1e-8, 1e-12, 0.0, 0.0, 0.01, 6, 50, 10_000_000, 0, 1)
+    copy = None
+    for step in range(10):
+        if step == 5:
+            copy = api.lib.bk_instance_copy(inst)
+        api.lib.bk_instance_advance(inst, 0.1)
+        if copy:
+            api.lib.bk_instance_advance(copy, 0.1)
+    for one in (inst, copy):
+        y = api.states(one)
+        assert y[api.state['cell_a/x']] == pytest.approx(2.0 * math.exp(-0.5), rel=1e-6)
+        assert y[api.state['cell_b/x']] == 1.0 and y[api.state['pair/p']] == 1.0
+        api.lib.bk_instance_destroy(one)
