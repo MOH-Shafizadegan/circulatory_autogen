@@ -516,9 +516,10 @@ BK_API void bk_initialise(double *states, double *rates, double *variables)
     initialiseVariables(states, rates, variables);
 }
 
-BK_API void bk_compute_computed_constants(double *variables)
+/* Computed constants, and the states libCellML initialises from them. */
+BK_API void bk_compute_computed_constants(double *states, double *rates, double *variables)
 {
-    computeComputedConstants(variables);
+    computeComputedConstants(0.0, states, rates, variables);
 }
 
 /* The variables at each output row: a copy of variables per row, then libCellML's computeRates and

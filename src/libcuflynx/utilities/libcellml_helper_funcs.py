@@ -103,7 +103,8 @@ def c_code_with_one_variables_array(code, header):
     signatures = {
         "initialiseArrays": (f"void initialiseVariables(double voi, double *states, double *rates, double *variables{ext})"
                              if externals else "void initialiseVariables(double *states, double *rates, double *variables)"),
-        "computeComputedConstants": "void computeComputedConstants(double *variables)",
+        # libCellML 0.7 also sets the states whose initial value is a computed constant here
+        "computeComputedConstants": "void computeComputedConstants(double voi, double *states, double *rates, double *variables)",
         "computeRates": f"void computeRates(double voi, double *states, double *rates, double *variables{ext})",
         "computeVariables": f"void computeVariables(double voi, double *states, double *rates, double *variables{ext})",
     }

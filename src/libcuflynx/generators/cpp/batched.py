@@ -285,7 +285,7 @@ class BatchedLibrary:
             'bk_set_options': ([p, d, d, d, d, d, i, i, l, i], None), 'bk_invalidate': ([p], None),
             'bk_set_time_origin': ([p, d], None), 'bk_run': ([p, dp, dp, d, i, dp, dp, i], i),
             'bk_block_status': ([p, i, dp], i), 'bk_stats': ([p, lp], None), 'bk_openmp_threads': ([], i),
-            'bk_initialise': ([dp, dp, dp], None), 'bk_compute_computed_constants': ([dp], None),
+            'bk_initialise': ([dp, dp, dp], None), 'bk_compute_computed_constants': ([dp, dp, dp], None),
             'bk_outputs': ([i, dp, dp, dp, dp, i], None),
         }
         for name, (argtypes, restype) in sigs.items():

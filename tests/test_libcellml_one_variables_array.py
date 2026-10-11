@@ -78,7 +78,7 @@ static double e(double voi, double *states, double *rates, double *variables, si
 int main(void) {
     double *s = createStatesArray(), *r = createStatesArray(), *v = createVariablesArray();
     initialiseVariables(0.0, s, r, v, e);
-    computeComputedConstants(v);
+    computeComputedConstants(0.0, s, r, v);
     computeRates(0.0, s, r, v, e);
     computeVariables(0.0, s, r, v, e);
     for (size_t i = 0; i < VARIABLE_COUNT; ++i) printf("%s %d %g\n", VARIABLE_INFO[i].name, VARIABLE_INFO[i].type, v[i]);
@@ -128,3 +128,49 @@ def test_c_code_of_a_model_with_no_algebraic_variables_lists_every_variable_once
     assert re.findall(r'\{"(\w+)", "\w+", "c", (\w+)\}', block) == [
         ("k", "CONSTANT"), ("rate", "COMPUTED_CONSTANT"), ("y", "COMPUTED_CONSTANT"), ("e", "EXTERNAL")]
     assert block.count("{") == 5
+
+
+# x starts at x0 = 2 k, a computed constant: libCellML 0.7 sets that state in computeComputedConstants
+COMPUTED_INITIAL_VALUE = MODEL.replace(
+    '<variable name="x" units="dimensionless" initial_value="3" interface="public"/>',
+    '<variable name="x" units="dimensionless" initial_value="x0" interface="public"/>'
+    '<variable name="x0" units="dimensionless" interface="public"/>').replace(
+    '<apply><eq/><ci>rate</ci>',
+    '<apply><eq/><ci>x0</ci><apply><times/><cn cellml:units="second">2</cn><ci>k</ci></apply></apply>'
+    '<apply><eq/><ci>rate</ci>')
+
+COMPUTED_INITIAL_DRIVER = r"""
+#include <stdio.h>
+#include "model.h"
+int main(void) {
+    double *s = createStatesArray(), *r = createStatesArray(), *v = createVariablesArray();
+    initialiseVariables(s, r, v);
+    computeComputedConstants(0.0, s, r, v);
+    printf("%g\n", s[0]);
+    return 0;
+}
+"""
+
+
+@pytest.mark.unit
+def test_c_code_sets_a_state_initialised_by_a_computed_constant(tmp_path):
+    model = lc.Parser().parseModel(COMPUTED_INITIAL_VALUE)
+    analyser = lc.Analyser()
+    analyser.analyseModel(model)
+    assert analyser.errorCount() == 0
+    am = analyser.analyserModel()
+    profile = lc.GeneratorProfile(lc.GeneratorProfile.Profile.C)
+    header = c_code_with_one_variables_array(lc.Generator().interfaceCode(am, profile), header=True)
+    implementation = c_code_with_one_variables_array(lc.Generator().implementationCode(am, profile), header=False)
+    assert "void computeComputedConstants(double voi, double *states, double *rates, double *variables)" in header
+    assert "states[0] = variables[" in implementation.split("void computeComputedConstants")[1]
+
+    compiler = shutil.which("cc") or shutil.which("gcc")
+    if compiler is None:
+        pytest.skip("no C compiler to run the code")
+    (tmp_path / "model.h").write_text(header)
+    (tmp_path / "model.c").write_text(implementation)
+    (tmp_path / "driver.c").write_text(COMPUTED_INITIAL_DRIVER)
+    subprocess.run([compiler, "-o", "run", "driver.c", "model.c", "-lm"], cwd=tmp_path, check=True)
+    out = subprocess.run([os.path.join(tmp_path, "run")], capture_output=True, text=True, check=True).stdout
+    assert out.strip() == "1"

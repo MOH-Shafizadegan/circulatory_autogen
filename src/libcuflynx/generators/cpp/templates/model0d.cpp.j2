@@ -240,7 +240,7 @@ void Model0d::initialiseVariablesAndComputeConstants()
 {
     gCurrentModel = this;
     initialise(voi, states, rates, variables, initStatesPath, initVarsPath, false);
-    computeComputedConstants(variables);
+    computeComputedConstants(voi, states, rates, variables);
     hookInit();
     computeVariables(voi, states, rates, variables);
 {% if delays %}

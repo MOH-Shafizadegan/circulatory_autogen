@@ -171,7 +171,7 @@ def test_exact_jacobian_matches_central_differences(tmp_path):
     lib = batched.BatchedLibrary(path)
     states, rates, variables = np.zeros(km.state_count), np.zeros(km.state_count), np.zeros(km.variable_count)
     lib.bk_initialise(batched.ptr(states), batched.ptr(rates), batched.ptr(variables))
-    lib.bk_compute_computed_constants(batched.ptr(variables))
+    lib.bk_compute_computed_constants(batched.ptr(states), batched.ptr(rates), batched.ptr(variables))
     block = km.blocks[0]
     inputs = variables[block.inputs].copy()
     n = len(block.states)
@@ -306,3 +306,27 @@ def test_a_built_model_is_loaded_from_the_cache_until_its_cellml_changes(tmp_pat
     assert not changed.cached
     assert changed.run()
     assert changed.get_results([['cell_a/k']])[0][0][0] == 0.6
+
+
+@needs_c
+@pytest.mark.solver
+def test_a_state_initialised_by_a_computed_constant_moves_only_when_states_may_change(tmp_path):
+    """cell_a's x starts at x0 = 4 k: setting k re-initialises x at an experiment's start
+    (change_states=True), and leaves the evolved x alone mid-protocol (change_states=False)."""
+    model = CELLS.replace(
+        '<variable name="x0" units="dimensionless" initial_value="2.0"/>',
+        '<variable name="x0" units="dimensionless"/>').replace(
+        '<apply><eq/><ci>flux</ci>',
+        f'<apply><eq/><ci>x0</ci><apply><times/>{_cn(4, "second")}<ci>k</ci></apply></apply><apply><eq/><ci>flux</ci>', 1)
+    helper = _helper(tmp_path, model, sim_time=1.0, rtol=1e-6)
+    assert helper.run()
+    assert helper.get_results([['cell_a/x']])[0][0][0] == 2.0           # 4 * 0.5
+    helper.reset_states()
+    helper.set_param_vals(['cell_a/k'], [1.0])
+    assert helper.run()
+    x = helper.get_results([['cell_a/x']])[0][0]
+    assert x[0] == 4.0
+    helper.set_param_vals(['cell_a/k'], [0.25], change_states=False)
+    helper.update_times(helper.dt, 1.0, 1.0, 0.0)
+    assert helper.run()
+    assert helper.get_results([['cell_a/x']])[0][0][0] == pytest.approx(x[-1], rel=1e-12)

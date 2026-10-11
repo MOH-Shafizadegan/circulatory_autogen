@@ -87,7 +87,8 @@ class SimulationHelper:
         self.variables = np.zeros(self.info['variable_count'])
         rates = np.zeros(self.info['state_count'])
         self.library.bk_initialise(batched.ptr(self.states), batched.ptr(rates), batched.ptr(self.variables))
-        self.library.bk_compute_computed_constants(batched.ptr(self.variables))
+        self.library.bk_compute_computed_constants(batched.ptr(self.states), batched.ptr(rates),
+                                                   batched.ptr(self.variables))
         self._literal_initial_states = self.states.copy()
         self._var_overrides = {}
         self._state_overrides = {}
@@ -286,7 +287,10 @@ class SimulationHelper:
                         raise ValueError(f'{name} is an algebraic variable: it cannot be set')
                     self._var_overrides[index] = float(val)
                     self.variables[index] = float(val)
-        self.library.bk_compute_computed_constants(batched.ptr(self.variables))
+        # into scratch states: the states it initialises are refreshed below only when change_states
+        scratch = np.zeros(self.STATE_COUNT)
+        self.library.bk_compute_computed_constants(batched.ptr(scratch), batched.ptr(np.zeros(self.STATE_COUNT)),
+                                                   batched.ptr(self.variables))
         for index, val in self._var_overrides.items():
             self.variables[index] = val
         changed = set(np.flatnonzero(~((self.variables == before) | (np.isnan(self.variables) & np.isnan(before)))))
