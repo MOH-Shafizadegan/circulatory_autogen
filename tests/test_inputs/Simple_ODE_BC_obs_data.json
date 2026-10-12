@@ -1,0 +1,57 @@
+{
+  "protocol_info": {
+    "pre_times": [
+      0.0
+    ],
+    "sim_times": [
+      [
+        8.0
+      ]
+    ],
+    "params_to_change": {
+      "benchmark/u_bc": [
+        [
+          1.0
+        ]
+      ]
+    },
+    "experiment_labels": [
+      "Simple_ODE_BC"
+    ]
+  },
+  "prediction_items": [],
+  "data_items": [
+    {
+      "data_item_name": "benchmark/x",
+      "trace_name_for_plotting": "x_{SS}",
+      "data_type": "constant",
+      "operation": "steady_state_avg",
+      "operands": [
+        "benchmark/x"
+      ],
+      "unit": "dimensionless",
+      "weight": 1.0,
+      "value": 1.0,
+      "std": 0.1,
+      "experiment_idx": 0,
+      "subexperiment_idx": 0,
+      "plot_type": "None"
+    },
+    {
+      "data_item_name": "benchmark/y",
+      "trace_name_for_plotting": "y_{SS}",
+      "data_type": "constant",
+      "operation": "steady_state_avg",
+      "operands": [
+        "benchmark/y"
+      ],
+      "unit": "dimensionless",
+      "weight": 1.0,
+      "value": 1.0,
+      "std": 0.1,
+      "experiment_idx": 0,
+      "subexperiment_idx": 0,
+      "plot_type": "None"
+    }
+  ]
+}
