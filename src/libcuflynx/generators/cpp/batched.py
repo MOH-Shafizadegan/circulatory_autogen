@@ -1,4 +1,4 @@
-"""C for the BE_batched_c solver: libCellML's C for the whole model, plus the kernels of
+"""C for the BE_batched_c and CVODES_batched_c solvers: libCellML's C for the whole model, plus the kernels of
 :mod:`libcuflynx.generators.kernel_ir` and a runtime, built as one shared library with CMake.
 
 Files written to the build folder (templates in ``templates/batched_*.j2``):
@@ -7,7 +7,10 @@ Files written to the build folder (templates in ``templates/batched_*.j2``):
 ``model0d_core.c/.h``      libCellML's C, one variables array (as ``model_type: cpp`` writes it):
                            initial values, computed constants, and the algebraic variables for outputs
 ``batched_kernels.c/.h``   each kernel's rates and exact Jacobian, over a block's own states and inputs
-``batched_runtime.c``      the integrator (adaptive backward Euler, modified Newton), OpenMP over blocks
+``batched_runtime.c``      the integrator, OpenMP over blocks: BE_batched_c's (adaptive backward Euler or
+                           TR-BDF2, modified Newton; ``batched_runtime.c.j2``) or CVODES_batched_c's (one CVODES
+                           per block; ``batched_cvodes_runtime.c.j2``, which extends it and needs SUNDIALS 6+).
+                           Both export the same functions, so a caller can swap them.
 ``CMakeLists.txt``         the library ``batched_model``
 ``blocks.json``            the blocks: kernel, model state indices, model variable indices of its inputs
 =========================  ===========================================================================
@@ -34,6 +37,12 @@ from libcuflynx.generators.cpp.generator import core_code, template_environment
 TARGET = 'batched_model'
 #: The runtime's integration methods, in the order its options number them.
 METHODS = ('backward_euler', 'trbdf2')
+#: The solvers this module builds, with each one's runtime template and methods (CVODES_batched_c's BDF is the
+#: CVODE method of the other CVODE solvers).
+SOLVERS = {
+    'BE_batched_c': {'runtime': 'batched_runtime.c.j2', 'methods': METHODS},
+    'CVODES_batched_c': {'runtime': 'batched_cvodes_runtime.c.j2', 'methods': ('CVODE',)},
+}
 
 _C_FUNCTIONS = {
     'sqrt': 'sqrt', 'exp': 'exp', 'ln': 'log', 'log10': 'log10', 'abs': 'fabs', 'sign': 'bk_sign',
@@ -121,20 +130,22 @@ def block_table(blocks):
             'states': c_array(states), 'input_offsets': c_array(input_offsets), 'inputs': c_array(inputs)}
 
 
-def sources(am, km, model_name='model', outputs=(), state_init=None):
+def sources(am, km, model_name='model', outputs=(), state_init=None, solver='BE_batched_c'):
     """{file name: text} of the library for an analysed model and its kernel model; ``outputs`` are the algebraic
     variables bk_instance_outputs computes (kernel_ir.outputs_program); ``state_init`` the one-array variable each
     state's initial value names, or None for a literal (describe()'s ``state_init_ref``), for
-    bk_instance_initialise_states."""
+    bk_instance_initialise_states; ``solver`` one of SOLVERS, whose runtime integrates the blocks."""
+    if solver not in SOLVERS:
+        raise ValueError(f'solver must be one of {tuple(SOLVERS)}, not {solver!r}')
     if am.externalVariableCount():
-        raise BatchedBuildError('BE_batched_c does not take models with external variables yet')
+        raise BatchedBuildError(f'{solver} does not take models with external variables yet')
     env = template_environment()
     counts = {}
     for b in km.blocks:
         counts[b.kernel] = counts.get(b.kernel, 0) + 1
     ctx = {'model_name': model_name, 'kernels': [kernel_context(k, counts[k.index]) for k in km.kernels],
            'n_blocks': len(km.blocks), 'n_states': km.state_count, 'target': TARGET,
-           'block_table': block_table(km.blocks)}
+           'block_table': block_table(km.blocks), 'solver': solver, 'cvodes': solver == 'CVODES_batched_c'}
     program = kernel_ir.outputs_program(am, outputs)
     ctx['outputs'] = [f'in[{k}] = {c_expression(e)};' for k, e in program]
     ctx['output_targets'] = ', '.join(str(i) for i in kernel_ir.output_indices(am, outputs) + [0])   # never empty
@@ -148,7 +159,7 @@ def sources(am, km, model_name='model', outputs=(), state_init=None):
         'model0d_core.c': implementation,
         'batched_kernels.h': env.get_template('batched_kernels.h.j2').render(**ctx),
         'batched_kernels.c': env.get_template('batched_kernels.c.j2').render(**ctx),
-        'batched_runtime.c': env.get_template('batched_runtime.c.j2').render(**ctx),
+        'batched_runtime.c': env.get_template(SOLVERS[solver]['runtime']).render(**ctx),
         'CMakeLists.txt': env.get_template('batched_CMakeLists.txt.j2').render(**ctx),
         'blocks.json': json.dumps(blocks),
     }
@@ -198,7 +209,11 @@ def build(files, parent=None, verbose=False):
         try:
             path = build_library(out, os.path.join(out, 'build'), verbose=verbose, target=TARGET)
         except Exception as exc:
-            raise BatchedBuildError(str(exc)) from exc
+            hint = ''
+            if 'cvodes' in files.get('CMakeLists.txt', '').lower():
+                hint = ('\nCVODES_batched_c needs SUNDIALS 6 or later (CVODES): set SUNDIALS_DIR to its install '
+                        'prefix if CMake does not find it.')
+            raise BatchedBuildError(str(exc) + hint) from exc
         return path, time.perf_counter() - t0
 
 
@@ -306,12 +321,16 @@ def source_digest(cellml_path):
     return digest.hexdigest()[:16]
 
 
-def load_or_build(cellml_path, parent=None, verbose=False, outputs=()):
-    """The description and built library of a CellML model: from the cache under ``parent`` (keyed by
-    :func:`source_digest` and the outputs) when there, else analysed, generated and built. Returns (description,
-    library path, seconds spent building, True when cached)."""
+def load_or_build(cellml_path, parent=None, verbose=False, outputs=(), solver='BE_batched_c'):
+    """The description and built library of a CellML model for ``solver`` (one of SOLVERS): from the cache under
+    ``parent`` (keyed by :func:`source_digest`, the outputs and the solver) when there, else analysed, generated
+    and built. Returns (description, library path, seconds spent building, True when cached)."""
+    if solver not in SOLVERS:
+        raise ValueError(f'solver must be one of {tuple(SOLVERS)}, not {solver!r}')
     parent = parent or os.path.join(tempfile.gettempdir(), 'libcuflynx_batched_c')
     key = source_digest(cellml_path)
+    if solver != 'BE_batched_c':
+        key += '_' + solver
     if outputs:
         key += '_' + hashlib.sha1('\n'.join(outputs).encode()).hexdigest()[:8]
     index = os.path.join(parent, 'models', key + '.json')
@@ -324,7 +343,7 @@ def load_or_build(cellml_path, parent=None, verbose=False, outputs=()):
     km = kernel_ir.build_kernel_model(am)
     description = describe(flat, am, km)
     files = sources(am, km, os.path.splitext(os.path.basename(cellml_path))[0], outputs,
-                    description['state_init_ref'])
+                    description['state_init_ref'], solver)
     path, seconds = build(files, parent, verbose=verbose)
     os.makedirs(os.path.dirname(index), exist_ok=True)
     staging = index + f'.{os.getpid()}.tmp'
@@ -339,7 +358,15 @@ class BatchedLibrary:
 
     def __init__(self, path):
         self.path = path
-        lib = ctypes.CDLL(path)
+        try:
+            lib = ctypes.CDLL(path)
+        except OSError as exc:
+            # a CVODES library built against the headers of another SUNDIALS than the libraries it links
+            if 'SUN' in str(exc) or 'CVode' in str(exc):
+                build_dir = os.path.dirname(os.path.dirname(path))
+                raise BatchedBuildError(f'{exc}\nCVODES_batched_c needs SUNDIALS 6 or later (CVODES): set '
+                                        f'SUNDIALS_DIR to one install, and delete {build_dir}.') from exc
+            raise
         d, i, l, p = ctypes.c_double, ctypes.c_int, ctypes.c_long, ctypes.c_void_p
         dp, ip, lp = ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_long)
         sigs = {
@@ -353,13 +380,16 @@ class BatchedLibrary:
             'bk_initialise': ([dp, dp, dp], None), 'bk_compute_computed_constants': ([dp, dp, dp], None),
             'bk_outputs': ([i, dp, dp, dp, dp, i], None),
             'bk_set_trace': ([p, i, i, dp, dp], None), 'bk_clear_trace': ([p, i], None),
-            'bk_sim_outputs': ([p, i, dp, dp, dp, dp, i], None),
+            'bk_sim_outputs': ([p, i, dp, dp, dp, dp, i], None), 'bk_solver_name': ([], ctypes.c_char_p),
+            'bk_instances_advance': ([i, ctypes.POINTER(p), d, i], i),
         }
         for name, (argtypes, restype) in sigs.items():
             fn = getattr(lib, name)
             fn.argtypes = argtypes
             fn.restype = restype
         self._lib = lib
+        #: the solver the library integrates with (a key of SOLVERS)
+        self.solver = lib.bk_solver_name().decode()
 
     def __getattr__(self, name):
         return getattr(self._lib, name)
@@ -392,13 +422,16 @@ class BatchedSimulation:
                                     ptr(inputs, ctypes.c_int), n_states, n_variables)
 
     def set_options(self, rtol=1e-4, atol=1e-12, max_step=0.0, min_step=0.0, newton_tol=0.01, max_newton=6,
-                    max_jacobian_age=50, max_steps=10_000_000, finite_difference_jacobian=False,
-                    method='backward_euler'):
-        if method not in METHODS:
-            raise ValueError(f'method must be one of {METHODS}, not {method!r}')
+                    max_jacobian_age=50, max_steps=10_000_000, finite_difference_jacobian=False, method=None):
+        """The integrator's settings; ``method`` one of the library's solver's methods (its first by default).
+        CVODES_batched_c takes 0 for newton_tol, max_newton and max_jacobian_age as CVODES's own defaults."""
+        methods = SOLVERS[self.lib.solver]['methods']
+        method = method or methods[0]
+        if method not in methods:
+            raise ValueError(f'method must be one of {methods}, not {method!r}')
         self.lib.bk_set_options(self._h, rtol, atol, max_step or 0.0, min_step, newton_tol, max_newton,
                                 max_jacobian_age, int(max_steps), int(bool(finite_difference_jacobian)),
-                                METHODS.index(method))
+                                methods.index(method))
 
     def invalidate(self):
         self.lib.bk_invalidate(self._h)

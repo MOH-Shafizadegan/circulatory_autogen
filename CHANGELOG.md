@@ -43,6 +43,28 @@ as `CVODE_myokit`.
     potential in SN_simple lands 0.25 ms late (1.3 mV on its upstroke); with `MaximumStep` 1e-3, 0.09 mV.
   - It has no sensitivities.
 
+### Added — `CVODES_batched_c`: one CVODES per block, on the same generated C
+
+`get_simulation_helper(..., solver='CVODES_batched_c')` builds `BE_batched_c`'s kernels, blocks, traces and
+outputs with a different runtime (`templates/batched_cvodes_runtime.c.j2`, which extends `batched_runtime.c.j2`).
+Each block gets its own CVODES: BDF with Newton, a dense LU and the exact Jacobian (CVODES's difference
+quotients with `jacobian: finite_difference`).
+
+- **Threads.** Blocks share nothing, so OpenMP runs over them with results that are the same for any number
+  of threads.
+- **Restarts.** A block is reinitialised (`CVodeReInit`) only when its inputs, its states, a trace or its time
+  origin change. A trace's breakpoints are CVODES stop times.
+- **Swapping solvers.** The library exports every `bk_*` function of `BE_batched_c`, plus
+  `bk_block_cvodes_flag`, so a program that steps `bk_instance_*` copies can swap one library for the other.
+  The one difference is `bk_instance_copy`: a copy starts CVODES afresh from the copied states, so it
+  follows its original to the tolerance rather than bit for bit.
+- **Settings.** The defaults are `CVODE_myokit`'s tolerances (`rtol` 1e-6, `atol` 1e-8).
+  `MaximumNumberOfSteps` counts the steps of one block in one run, as on `BE_batched_c`.
+- **Needs SUNDIALS 6 or later.** It is found from `SUNDIALS_DIR` or CMake's search path. Without SUNDIALS the
+  build fails with a message that says so, and its tests skip.
+- Both batched libraries also get `bk_solver_name`, and `bk_instances_advance`, which advances many
+  instances on OpenMP threads.
+
 ### Fixed — libCellML 0.7's C for models with a state set by a computed constant, or with no algebraic variables
 
 The one-`variables`-array rewrite of libCellML 0.7's C now keeps `voi`, `states` and `rates` in
