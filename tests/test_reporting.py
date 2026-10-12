@@ -166,7 +166,7 @@ def test_each_module_is_a_section_in_the_mapped_symbols():
     model = _generated_style_model()
     text = module_sections(model, {'parameters/p_mod_A': {'latex': r'\kappa'}},
                            module_info={'mod_A': {'module_type': 'lin_a', 'version': 'v1',
-                                                  'instance': 'fit_a'}})
+                                                  'parameterisation': 'fit_a'}})
     assert text.count(r'\subsection{') == 2
     assert r'\subsection{Module A}' in text and r'\texttt{lin\_a}' in text
     assert r'\frac{d{x_{\mathrm{A}}}}{dt} &= -\kappa\cdot x_{\mathrm{A}}' in text
@@ -185,14 +185,16 @@ def test_each_module_is_a_section_in_the_mapped_symbols():
 # --------------------------------------------------------------------------------------------
 
 def _step(step_id, depends=(), fixed=(), priors=()):
-    return {'id': step_id, 'target': {'module_type': 'm', 'version': 'v1', 'instance': step_id},
+    return {'id': step_id,
+            'target': {'module_type': 'm', 'version': 'v1', 'parameterisation': step_id},
             'n_parameters': 1, 'n_data_items': 2, 'settings': {'param_id_method': 'CMA-ES'},
             'depends_on': list(depends), 'fixed_from': list(fixed), 'priors_from': list(priors)}
 
 
 @pytest.mark.unit
 def test_a_workflow_flow_chart_follows_its_dependencies():
-    target = {'id': None, 'target': {'module_type': 'soma', 'version': 'v', 'instance': 'r'},
+    target = {'id': None,
+              'target': {'module_type': 'soma', 'version': 'v', 'parameterisation': 'r'},
               'n_merged': 3}
     nodes, edges = flowchart.workflow_graph([
         _step('a'), _step('b'), _step('c', depends=['a', 'b'], fixed=['a'], priors=['b']),
@@ -270,7 +272,7 @@ def test_methods_of_a_workflow_report_each_step_and_its_results(tmp_path):
 
     run_calibration_workflow(library['chain_rest'], output_dir=run_dir)
 
-    # the mapping goes beside the target instance, and its edits reach the document
+    # the mapping goes beside the target parameterisation, and its edits reach the document
     from libcuflynx.reporting.methods import update_workflow_variable_mapping
     path, rows = update_workflow_variable_mapping(library['chain_rest'], run_dir=run_dir)
     assert path == os.path.join(library['chain/rest'], 'rest_variable_mapping.csv')

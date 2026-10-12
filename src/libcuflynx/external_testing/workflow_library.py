@@ -11,7 +11,7 @@ Modules (all version ``v1``):
 * ``twin`` -- supermodule of ``A`` (lin_a) and ``B`` (lin_b), which are independent.
 * ``chain`` -- supermodule of ``A`` (lin_a) feeding ``C`` (lin_c): ``z = 2 p_A^2 + q_C^2``.
 
-Instances:
+Parameterisations:
 
 * ``lin_a/fit_a`` -- y = Y_A: p = sqrt(Y_A / 2) (2 by default).
 * ``lin_b/fit_b`` -- y = Y_B: p = sqrt(Y_B / 3) (3 by default).
@@ -116,24 +116,28 @@ def _params_for_id(path, rows):
                      for vessel, param, lo, hi in rows))
 
 
-def _instance(modules, module_type, instance, parameters, obs=None, params_for_id=None):
-    directory = os.path.join(modules, module_type, 'versions', 'v1', 'parameterisations', instance)
-    _parameters(os.path.join(directory, f'{instance}_parameters.csv'), parameters)
+def _parameterisation(modules, module_type, parameterisation, parameters, obs=None,
+                      params_for_id=None):
+    directory = os.path.join(modules, module_type, 'versions', 'v1', 'parameterisations',
+                             parameterisation)
+    _parameters(os.path.join(directory, f'{parameterisation}_parameters.csv'), parameters)
     if obs is not None:
-        _write_json(os.path.join(directory, f'{instance}_obs_data.json'), _obs(instance, obs))
+        _write_json(os.path.join(directory, f'{parameterisation}_obs_data.json'),
+                    _obs(parameterisation, obs))
     if params_for_id is not None:
-        _params_for_id(os.path.join(directory, f'{instance}_params_for_id.csv'), params_for_id)
+        _params_for_id(os.path.join(directory, f'{parameterisation}_params_for_id.csv'),
+                       params_for_id)
     return directory
 
 
-def _target(module_type, instance):
-    return {'module_type': module_type, 'version': 'v1', 'instance': instance}
+def _target(module_type, parameterisation):
+    return {'module_type': module_type, 'version': 'v1', 'parameterisation': parameterisation}
 
 
 def build_workflow_library(root, settings=None):
     """Write the library under ``root``. Returns a dict of paths: ``modules`` (the module
     library dir), ``twin_split`` and ``chain_rest`` (the two workflow files), and the
-    instance directories by ``<type>/<instance>``.
+    parameterisation directories by ``<type>/<parameterisation>``.
 
     ``settings`` replaces the workflows' settings (default ``OPTIMISER_SETTINGS``).
     """
@@ -150,7 +154,7 @@ def build_workflow_library(root, settings=None):
             'default_parameterisation': 'default', 'entrance_ports': entrance, 'exit_ports': exit_,
             'general_ports': [], 'variables_and_units': variables}])
         param = 'q' if module_type == 'lin_c' else 'p'
-        _instance(modules, module_type, 'default', [(param, 1.0)])
+        _parameterisation(modules, module_type, 'default', [(param, 1.0)])
 
     def submodule(name, module_type, inp=(), out=()):
         return {'name': name, 'module_type': module_type, 'module_subtype': 'v1',
@@ -166,19 +170,19 @@ def build_workflow_library(root, settings=None):
                       'submodules': submodules}])
 
     paths = {'modules': modules}
-    paths['lin_a/fit_a'] = _instance(modules, 'lin_a', 'fit_a', [('p', 1.0)],
-                                     obs=[('y_a', 'mod/y', Y_A, STD_A)],
-                                     params_for_id=[('mod', 'p', 0.1, 5.0)])
-    paths['lin_b/fit_b'] = _instance(modules, 'lin_b', 'fit_b', [('p', 1.0)],
-                                     obs=[('y_b', 'mod/y', Y_B, STD_B)],
-                                     params_for_id=[('mod', 'p', 0.1, 5.0)])
+    paths['lin_a/fit_a'] = _parameterisation(modules, 'lin_a', 'fit_a', [('p', 1.0)],
+                                             obs=[('y_a', 'mod/y', Y_A, STD_A)],
+                                             params_for_id=[('mod', 'p', 0.1, 5.0)])
+    paths['lin_b/fit_b'] = _parameterisation(modules, 'lin_b', 'fit_b', [('p', 1.0)],
+                                             obs=[('y_b', 'mod/y', Y_B, STD_B)],
+                                             params_for_id=[('mod', 'p', 0.1, 5.0)])
     twin_rows = [('p_A', 1.0), ('p_B', 1.0)]
-    _instance(modules, 'twin', 'default', twin_rows)
-    paths['twin/joint'] = _instance(
+    _parameterisation(modules, 'twin', 'default', twin_rows)
+    paths['twin/joint'] = _parameterisation(
         modules, 'twin', 'joint', twin_rows,
         obs=[('y_a', 'mod_A/y', Y_A, STD_A), ('y_b', 'mod_B/y', Y_B, STD_B)],
         params_for_id=[('mod_A', 'p', 0.1, 5.0), ('mod_B', 'p', 0.1, 5.0)])
-    paths['twin/split'] = _instance(modules, 'twin', 'split', twin_rows)
+    paths['twin/split'] = _parameterisation(modules, 'twin', 'split', twin_rows)
     paths['twin_split'] = os.path.join(paths['twin/split'], 'calibration_workflow.json')
     _write_json(paths['twin_split'], {
         'schema_version': 1, 'workflow_name': 'twin_split',
@@ -189,10 +193,10 @@ def build_workflow_library(root, settings=None):
                   {'id': 'fit_b', 'target': _target('lin_b', 'fit_b')}]})
 
     chain_rows = [('p_A', 1.0), ('q_C', 1.0)]
-    _instance(modules, 'chain', 'default', chain_rows)
-    paths['chain/rest'] = _instance(modules, 'chain', 'rest', chain_rows,
-                                    obs=[('z_c', 'mod_C/z', Z_C, STD_C)],
-                                    params_for_id=[('mod_C', 'q', 0.1, 10.0)])
+    _parameterisation(modules, 'chain', 'default', chain_rows)
+    paths['chain/rest'] = _parameterisation(modules, 'chain', 'rest', chain_rows,
+                                            obs=[('z_c', 'mod_C/z', Z_C, STD_C)],
+                                            params_for_id=[('mod_C', 'q', 0.1, 10.0)])
     paths['chain_rest'] = os.path.join(paths['chain/rest'], 'calibration_workflow.json')
     _write_json(paths['chain_rest'], {
         'schema_version': 1, 'workflow_name': 'chain_rest',

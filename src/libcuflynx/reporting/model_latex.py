@@ -149,8 +149,8 @@ def _module_heading(component, display, module_info):
         detail.append(r'\texttt{' + escape(info['module_type']) + '}')
     if info.get('version'):
         detail.append('version ' + r'\texttt{' + escape(info['version']) + '}')
-    if info.get('instance'):
-        detail.append('instance ' + r'\texttt{' + escape(info['instance']) + '}')
+    if info.get('parameterisation'):
+        detail.append('parameterisation ' + r'\texttt{' + escape(info['parameterisation']) + '}')
     return title, detail
 
 
@@ -160,7 +160,7 @@ def module_sections(model, mapping=None, module_info=None, section='subsection',
 
     ``mapping`` is a path to a variable mapping CSV, a ``{variable_name: row}`` dict, or None
     for the default symbols. ``module_info`` optionally maps a module name (the component
-    without ``_module``) to ``{'title', 'module_type', 'version', 'instance'}`` for the
+    without ``_module``) to ``{'title', 'module_type', 'version', 'parameterisation'}`` for the
     headings.
     '''
     if not hasattr(model, 'components'):

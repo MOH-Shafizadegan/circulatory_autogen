@@ -10,7 +10,7 @@ When that module is the submodule at ``path`` (``i_M``, or ``soma_i_M`` two leve
 a supermodule that is itself generated as ``mod``, supermodule expansion
 (``utilities/supermodules.py``) renames its vessel ``mod[_x]`` to ``mod_<path>[_x]``, so the
 same parameter is ``param_name_for_gen('mod_<path>[_x]', param_name)`` there. In the
-supermodule's own instance parameters CSV the ``mod_`` prefix is absent:
+supermodule's own parameterisation parameters CSV the ``mod_`` prefix is absent:
 ``{var}_{path}[_x]``.
 
 These are the rules circulatory-autogen-modules' ``calibrate apply`` follows by hand.
@@ -50,8 +50,8 @@ def model_name(vessel, param):
     return param_name_for_gen(vessel, param)
 
 
-def instance_name(vessel, param, step_vessel=STEP_VESSEL):
-    '''The name of ``param`` of ``vessel`` in the instance parameters CSV of the module
+def parameterisation_name(vessel, param, step_vessel=STEP_VESSEL):
+    '''The name of ``param`` of ``vessel`` in the parameterisation parameters CSV of the module
     generated as ``step_vessel``: ``('mod', 'p') -> 'p'``, ``('mod_A', 'p') -> 'p_A'``,
     a global unchanged.'''
     if is_global(vessel) or vessel == step_vessel:

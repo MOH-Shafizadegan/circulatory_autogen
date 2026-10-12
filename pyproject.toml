@@ -104,7 +104,7 @@ cuflynx-param-id = "libcuflynx.scripts.param_id_run_script:main"
 # Declared even though the stage is not currently implemented: the module says why, and
 # `cuflynx-sequential-param-id` reports it in one line instead of the command not existing.
 cuflynx-sequential-param-id = "libcuflynx.scripts.sequential_param_id_run_script:main"
-# Not to be confused with the above: ordered calibrations of *several* module instances (a
+# Not to be confused with the above: ordered calibrations of *several* module parameterisations (a
 # supermodule's submodules, then the supermodule), from a calibration_workflow.json.
 cuflynx-calibration-workflow = "libcuflynx.scripts.calibration_workflow_run_script:main"
 # Writing a model and its calibration up: LaTeX symbols per variable, then a methods section.

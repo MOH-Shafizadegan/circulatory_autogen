@@ -12,7 +12,7 @@ import sys
 EPILOG = (
     "Does not read user_inputs.yaml: give the CellML model (a generated *_flat.cellml or any\n"
     "CellML), or a calibration_workflow.json, whose target model is used and whose mapping\n"
-    "goes in the target instance's directory by default.\n"
+    "goes in the target parameterisation's directory by default.\n"
     "\n"
     "Columns: variable_name (component/variable, as obs_data and CUFLynx name it), latex\n"
     "(edit these), kind, component, units."

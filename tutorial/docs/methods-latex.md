@@ -12,10 +12,10 @@ Two commands turn a model and its calibration into the methods section of a pape
 
 ```
 cuflynx-variable-mapping generated_models/<prefix>/<prefix>_flat.cellml
-cuflynx-variable-mapping --workflow <instance dir>/calibration_workflow.json --module-library-dir <library>
+cuflynx-variable-mapping --workflow <parameterisation dir>/calibration_workflow.json --module-library-dir <library>
 ```
 
-Each command writes `<prefix>_variable_mapping.csv` beside the model. For a calibration workflow, the file goes in the target supermodule instance's directory instead, as `<instance>_variable_mapping.csv`.
+Each command writes `<prefix>_variable_mapping.csv` beside the model. For a calibration workflow, the file goes in the target supermodule parameterisation's directory instead, as `<parameterisation>_variable_mapping.csv`.
 
 | Column | What it holds |
 |---|---|
@@ -37,7 +37,7 @@ Running the command again keeps every symbol already in the file. It adds new va
 
 ```
 # a calibration workflow (see Parameter Identification -> Calibration workflows)
-cuflynx-methods-latex --workflow <instance dir>/calibration_workflow.json \
+cuflynx-methods-latex --workflow <parameterisation dir>/calibration_workflow.json \
     --module-library-dir <library> --run-dir workflow_output/<name> -o methods.tex --pdf
 
 # one calibration
@@ -53,12 +53,12 @@ The document has three parts.
     - its initial values;
     - a table of the parameters it uses (symbol, value, units, name in the model).
 
-    For a workflow, the model is the target supermodule, and each module is labelled with its module type, version and instance from the supermodule config.
+    For a workflow, the model is the target supermodule, and each module is labelled with its module type, version and parameterisation from the supermodule config.
 2. **Flow chart.** This is a TikZ figure.
-    - **For a workflow:** one box per step (its instance, how many parameters and observables, the method). Arrows run from each step to the steps after it: solid for values passed on as fixed values, dashed for priors. A last box shows the merge into the target.
+    - **For a workflow:** one box per step (its parameterisation, how many parameters and observables, the method). Arrows run from each step to the steps after it: solid for values passed on as fixed values, dashed for priors. A last box shows the merge into the target.
     - **For one calibration:** the model, observables and parameters feed the optimisation, followed by MCMC and identifiability when they were run.
 3. **One subsection per step.** Each covers:
-    - which instance the step calibrates and against which observations;
+    - which parameterisation the step calibrates and against which observations;
     - the values it was given by earlier steps, and the priors it was given;
     - the protocol (experiments, pre-times, segment durations, inputs set per segment);
     - the observables (feature, observed value ± standard deviation, weight, experiment and segment);

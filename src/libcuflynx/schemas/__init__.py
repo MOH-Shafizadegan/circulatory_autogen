@@ -10,8 +10,9 @@
 * ``obs_data.schema.json`` -- ``<name>_obs_data.json``: the top level of an obs_data file,
   including the optional ``obs_data_name``.
 * ``calibration_workflow.schema.json`` -- ``calibration_workflow.json``: ordered calibrations
-  of module instances merged into a supermodule instance (``libcuflynx.calibration_workflow``,
-  whose ``spec.py`` and ``resolve.py`` check the same rules and those that need the library).
+  of module parameterisations merged into a supermodule parameterisation
+  (``libcuflynx.calibration_workflow``, whose ``spec.py`` and ``resolve.py`` check the same
+  rules and those that need the library).
 
 libcuflynx does not need a JSON Schema library: ``utilities/config_schemas.py`` checks the same
 rules when it loads the files. The schemas are for editors, other tools (PhLynx) and tests.

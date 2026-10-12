@@ -99,12 +99,12 @@ def merge_renamed_key(mapping, new_key, old_key, where):
     return {(new_key if k == old_key else k): v for k, v in mapping.items() if k != new_key}
 
 
-def reject_instance_key(record, where):
-    '''A module-array record names its parameter set with ``"parameterisation"``; an
-    ``"instance"`` key is a ValueError naming ``where``.'''
+def reject_instance_key(record, where, what='A module-array record'):
+    '''``what`` (a module-array record, a workflow target) names its parameter set with
+    ``"parameterisation"``; an ``"instance"`` key is a ValueError naming ``where``.'''
     if INSTANCE_KEY in record:
-        raise ValueError(f'{where} has "{INSTANCE_KEY}": {record[INSTANCE_KEY]!r}. A module-array '
-                         f'record names its parameter set with "{PARAMETERISATION_KEY}"; rename '
+        raise ValueError(f'{where} has "{INSTANCE_KEY}": {record[INSTANCE_KEY]!r}. {what} '
+                         f'names its parameter set with "{PARAMETERISATION_KEY}"; rename '
                          f'the key.')
 
 

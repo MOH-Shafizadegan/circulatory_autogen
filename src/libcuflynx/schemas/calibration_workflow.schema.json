@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/physiomelinks/circulatory_autogen/schemas/calibration_workflow.schema.json",
   "title": "libcuflynx calibration workflow (calibration_workflow.json)",
-  "description": "Ordered calibrations of module instances -- typically a supermodule's submodules, then the supermodule -- each against its own instance's obs_data and params_for_id, merged into the parameters of one supermodule instance (the target). Run with cuflynx-calibration-workflow or libcuflynx.calibration_workflow.run_calibration_workflow. The checks that need the module library (the instances exist, each step's module sits in the target, no parameter is calibrated by two steps) are in libcuflynx/calibration_workflow/resolve.py; the rest are in spec.py as well as here.",
+  "description": "Ordered calibrations of module parameterisations -- typically a supermodule's submodules, then the supermodule -- each against its own obs_data and params_for_id, merged into the parameters of one supermodule parameterisation (the target). Run with cuflynx-calibration-workflow or libcuflynx.calibration_workflow.run_calibration_workflow. The checks that need the module library (the parameterisations exist, each step's module sits in the target, no parameter is calibrated by two steps) are in libcuflynx/calibration_workflow/resolve.py; the rest are in spec.py as well as here.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -25,7 +25,7 @@
     },
     "target": {
       "$ref": "#/$defs/target",
-      "description": "the supermodule instance the calibrated values are merged into. Defaults to the instance whose directory holds the file."
+      "description": "the supermodule parameterisation the calibrated values are merged into. Defaults to the parameterisation whose directory holds the file."
     },
     "module_library_dirs": {
       "type": "array",
@@ -53,7 +53,17 @@
       "required": [
         "module_type",
         "version",
-        "instance"
+        "parameterisation"
+      ],
+      "allOf": [
+        {
+          "not": {
+            "required": [
+              "instance"
+            ]
+          },
+          "description": "\"instance\" is not a target key: a target names its parameter set with \"parameterisation\"."
+        }
       ],
       "properties": {
         "module_type": {
@@ -66,10 +76,10 @@
           "pattern": "\\S",
           "description": "the module version (the entry's module_subtype)"
         },
-        "instance": {
+        "parameterisation": {
           "type": "string",
           "pattern": "^[^/\\\\]+$",
-          "description": "a directory under <version>/instances/"
+          "description": "a directory under <version>/parameterisations/"
         }
       }
     },
@@ -162,7 +172,7 @@
         },
         "target": {
           "$ref": "#/$defs/target",
-          "description": "the instance this step calibrates, against its own <instance>_obs_data.json and <instance>_params_for_id.csv"
+          "description": "the parameterisation this step calibrates, against its own <parameterisation>_obs_data.json and <parameterisation>_params_for_id.csv"
         },
         "submodule": {
           "type": "string",

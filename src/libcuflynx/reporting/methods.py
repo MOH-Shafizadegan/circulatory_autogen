@@ -373,9 +373,10 @@ def _step_section(step, symbols):
     t = step['target']
     where = (f', the submodule {_tt(step["submodule_path"])} of the target'
              if step.get('submodule_path') else '')
-    out.append(f'This step calibrates instance {_tt(t["instance"])} of module '
+    out.append(f'This step calibrates parameterisation {_tt(t["parameterisation"])} of module '
                f'{_tt(t["module_type"])} (version {_tt(t["version"])}){where}, against that '
-               f'instance\'s own observations ({_tt(os.path.basename(step["obs_path"]))}).')
+               f'parameterisation\'s own observations '
+               f'({_tt(os.path.basename(step["obs_path"]))}).')
     if step.get('description'):
         out.append(_sentence(step['description']))
     if step['fixed_from']:
@@ -428,8 +429,8 @@ def workflow_methods_latex(workflow_path, run_dir=None, mapping=None, module_lib
 
     ``run_dir`` is the workflow's output directory: with it, the target model carries the
     calibrated values and each step reports its result. ``mapping`` is a variable mapping
-    CSV for the *target* model; by default ``<target instance>_variable_mapping.csv`` in the
-    target instance's directory, if it exists, else the default symbols.
+    CSV for the *target* model; by default ``<target parameterisation>_variable_mapping.csv``
+    in the target parameterisation's directory, if it exists, else the default symbols.
     '''
     from libcuflynx.calibration_workflow import load_workflow, resolve_workflow, workflow_model
 
@@ -459,8 +460,9 @@ def workflow_methods_latex(workflow_path, run_dir=None, mapping=None, module_lib
         steps.append({
             'id': step.id, 'target': step.target.as_dict(), 'submodule_path': rs.path,
             'description': step.description,
-            'obs_path': rs.instance.obs_data_path, 'obs': _load_json(rs.instance.obs_data_path),
-            'params': read_params_for_id(rs.instance.params_for_id_path),
+            'obs_path': rs.parameterisation.obs_data_path,
+            'obs': _load_json(rs.parameterisation.obs_data_path),
+            'params': read_params_for_id(rs.parameterisation.params_for_id_path),
             'settings': workflow.step_settings(step), 'depends_on': list(step.depends_on),
             'fixed_from': list(step.fixed_from),
             'priors_from': [p.as_dict() for p in step.priors_from],
@@ -476,7 +478,7 @@ def workflow_methods_latex(workflow_path, run_dir=None, mapping=None, module_lib
     figure = flowchart.figure(
         flowchart.tikz(nodes, edges),
         f'Calibration workflow {escape(workflow.name)}: each step calibrates one module '
-        'instance against its own observations; solid arrows pass calibrated values on as '
+        'parameterisation against its own observations; solid arrows pass calibrated values on as '
         'fixed values, dashed arrows as priors, and the results are merged into the target.',
         'fig:calibration-flowchart', natural_width_cm=flowchart.width_cm(nodes, edges))
     if flowchart_only:
@@ -488,8 +490,8 @@ def workflow_methods_latex(workflow_path, run_dir=None, mapping=None, module_lib
                 + f'The parameters were calibrated in {len(steps)} step'
                 + ('s' if len(steps) != 1 else '')
                 + ' (Figure~\\ref{fig:calibration-flowchart}), each against the observations '
-                'of one module instance, in the order shown; the values of every step were '
-                'then merged into the target, '
+                'of one module parameterisation, in the order shown; the values of every step '
+                'were then merged into the target, '
                 + _tt(workflow.target.label()) + '.\n\n' + figure)
     for step in steps:
         symbols = {'step': Symbols(rows, step['submodule_path']), 'target': Symbols(rows)}
@@ -498,7 +500,7 @@ def workflow_methods_latex(workflow_path, run_dir=None, mapping=None, module_lib
 
 
 def workflow_mapping_path(workflow_path, module_library_dirs=None):
-    '''``<target instance dir>/<instance>_variable_mapping.csv`` for a workflow.'''
+    '''``<target parameterisation dir>/<parameterisation>_variable_mapping.csv`` for a workflow.'''
     from libcuflynx.calibration_workflow import load_workflow, resolve_workflow
     resolved = resolve_workflow(load_workflow(workflow_path, module_library_dirs))
     return resolved.target.file('variable_mapping.csv')
@@ -507,7 +509,7 @@ def workflow_mapping_path(workflow_path, module_library_dirs=None):
 def update_workflow_variable_mapping(workflow_path, out_path=None, module_library_dirs=None,
                                      run_dir=None):
     '''Create or refresh the variable mapping of a workflow's target model (by default in the
-    target instance's directory). Returns ``(path, rows)``.'''
+    target parameterisation's directory). Returns ``(path, rows)``.'''
     from libcuflynx.calibration_workflow import load_workflow, workflow_model
     from libcuflynx.reporting.variable_mapping import update_variable_mapping_file
     workflow = load_workflow(workflow_path, module_library_dirs)
@@ -521,7 +523,7 @@ def update_workflow_variable_mapping(workflow_path, out_path=None, module_librar
 
 
 def target_module_info(resolved):
-    '''``{module name in the target model: {module_type, version, instance}}``.'''
+    '''``{module name in the target model: {module_type, version, parameterisation}}``.'''
     from libcuflynx.calibration_workflow.naming import STEP_VESSEL
     entry = resolved.target.entry
     info = {}
@@ -531,7 +533,7 @@ def target_module_info(resolved):
             path = prefix + sub['name']
             info[f'{STEP_VESSEL}_{path}'] = {'module_type': sub['vessel_type'],
                                              'version': sub['BC_type'],
-                                             'instance': sub.get('parameterisation')}
+                                             'parameterisation': sub.get('parameterisation')}
             nested = _supermodule(resolved, sub)
             if nested is not None:
                 walk(nested, path + '_')
@@ -541,7 +543,7 @@ def target_module_info(resolved):
     else:
         t = resolved.workflow.target
         info[STEP_VESSEL] = {'module_type': t.module_type, 'version': t.version,
-                             'instance': t.instance}
+                             'parameterisation': t.parameterisation}
     return info
 
 
@@ -575,7 +577,7 @@ def calibration_methods_latex(model_path, obs_data_path, params_for_id_path, set
     params = read_params_for_id(params_for_id_path)
     result = _param_id_result(run_dir, params) if run_dir else None
     step = {'id': 'calibration', 'target': {'module_type': os.path.splitext(
-        os.path.basename(model_path))[0], 'version': '--', 'instance': '--'},
+        os.path.basename(model_path))[0], 'version': '--', 'parameterisation': '--'},
         'submodule_path': '', 'description': '', 'obs_path': obs_data_path, 'obs': obs,
         'params': params, 'settings': settings, 'depends_on': [], 'fixed_from': [],
         'priors_from': [], 'store_distribution': do_uq, 'result': result}
@@ -591,7 +593,7 @@ def calibration_methods_latex(model_path, obs_data_path, params_for_id_path, set
     symbols = {'step': Symbols(rows), 'target': Symbols(rows)}
     section = _step_section(step, symbols).replace(
         '\\subsection{Step calibration}', '\\subsection{Calibration details}').replace(
-        'This step calibrates instance \\texttt{--} of module ', 'The model ').replace(
+        'This step calibrates parameterisation \\texttt{--} of module ', 'The model ').replace(
         ' (version \\texttt{--})', '')
     body = [_model_section(model, rows, None, mapping),
             '\\section{Calibration}\nFigure~\\ref{fig:calibration-flowchart} shows the '

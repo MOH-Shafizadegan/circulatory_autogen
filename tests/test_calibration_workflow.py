@@ -1,7 +1,7 @@
 """Calibration workflows (libcuflynx.calibration_workflow, cuflynx-calibration-workflow).
 
-A workflow calibrates several module instances in order, each against its own obs_data and
-params_for_id, and merges the results into one supermodule instance. The fixture library is
+A workflow calibrates several module parameterisations in order, each against its own obs_data and
+params_for_id, and merges the results into one supermodule parameterisation. The fixture library is
 libcuflynx.external_testing.workflow_library (shared with CUFLynx's tests): algebraic modules
 whose optima are known in closed form.
 
@@ -20,7 +20,7 @@ import numpy as np
 import pytest
 
 from libcuflynx.calibration_workflow import (StoredDistribution, WorkflowError,
-                                             generate_module_instance, load_workflow,
+                                             generate_parameterisation, load_workflow,
                                              load_workflow_run, plan_workflow, resolve_workflow,
                                              run_calibration_workflow)
 from libcuflynx.calibration_workflow import naming
@@ -52,7 +52,7 @@ def _raw(library, which='chain_rest'):
 
 
 def _merged(result):
-    return {r['instance_name']: r['value'] for r in result['merged_parameters']}
+    return {r['parameterisation_name']: r['value'] for r in result['merged_parameters']}
 
 
 # --------------------------------------------------------------------------------------------
@@ -60,7 +60,7 @@ def _merged(result):
 # --------------------------------------------------------------------------------------------
 
 @pytest.mark.unit
-def test_target_defaults_to_the_instance_holding_the_file(library):
+def test_target_defaults_to_the_parameterisation_holding_the_file(library):
     workflow = load_workflow(library['twin_split'])
     assert workflow.target == Target('twin', 'v1', 'split')
     assert [s.id for s in workflow.topological_order()] == ['fit_a', 'fit_b']
@@ -78,6 +78,19 @@ def test_the_shipped_schema_accepts_the_fixture_workflows_and_rejects_unknown_ke
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(raw, schema)
     with pytest.raises(WorkflowError, match='unknown key'):
+        parse_workflow(raw, path=library['chain_rest'])
+
+
+@pytest.mark.unit
+def test_a_target_names_its_parameterisation_not_an_instance(library):
+    jsonschema = pytest.importorskip('jsonschema')
+    raw = _raw(library)
+    target = raw['steps'][0]['target']
+    target['instance'] = target.pop('parameterisation')
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(raw, load_schema(CALIBRATION_WORKFLOW_SCHEMA))
+    with pytest.raises(WorkflowError, match='A workflow target names its parameter set with '
+                                            '"parameterisation"'):
         parse_workflow(raw, path=library['chain_rest'])
 
 
@@ -142,8 +155,8 @@ def test_names_move_into_the_supermodule_as_supermodule_expansion_renames_them()
     assert naming.map_vessel('global', 'soma') == 'global'
     assert naming.model_name(naming.map_vessel('mod', 'i_M'), 'rho_M') == 'rho_M_mod_i_M'
     assert naming.model_name('global', 'R') == 'R'
-    assert naming.instance_name('mod_soma_i_M', 'rho_M') == 'rho_M_soma_i_M'
-    assert naming.instance_name('mod', 'p') == 'p'
+    assert naming.parameterisation_name('mod_soma_i_M', 'rho_M') == 'rho_M_soma_i_M'
+    assert naming.parameterisation_name('mod', 'p') == 'p'
     assert naming.relative_path('soma_i_M', 'soma') == 'i_M'
     assert naming.relative_path('i_M', '') == 'i_M'
     assert naming.relative_path('B', 'A') is None
@@ -161,7 +174,7 @@ def test_plan_names_every_parameter_in_the_target(library):
     steps = {s['id']: s for s in plan['steps']}
     assert steps['fit_a']['submodule_path'] == 'A'
     assert steps['fit_a']['calibrates'] == [{'model_name': 'p_mod', 'target_model_name': 'p_mod_A',
-                                             'target_instance_name': 'p_A'}]
+                                             'target_parameterisation_name': 'p_A'}]
     assert steps['rest']['submodule_path'] == ''
     assert steps['rest']['fixed_from'] == [{'from_step': 'fit_a', 'model_name': 'p_mod',
                                             'in_step': 'p_mod_A'}]
@@ -179,7 +192,7 @@ def test_every_step_needs_its_own_params_for_id(library):
 def test_a_parameter_belongs_to_one_step(library):
     raw = _raw(library, 'twin_split')
     raw['steps'].append({'id': 'joint', 'target': {'module_type': 'twin', 'version': 'v1',
-                                                   'instance': 'joint'}})
+                                                   'parameterisation': 'joint'}})
     workflow = parse_workflow(raw, path=library['twin_split'])
     with pytest.raises(WorkflowError, match='calibrated by both step "fit_a" and step "joint"'):
         resolve_workflow(workflow)
@@ -189,7 +202,7 @@ def test_a_parameter_belongs_to_one_step(library):
 def test_a_step_must_land_in_the_target(library):
     raw = _raw(library)
     raw['steps'].append({'id': 'fit_b', 'target': {'module_type': 'lin_b', 'version': 'v1',
-                                                   'instance': 'fit_b'}})
+                                                   'parameterisation': 'fit_b'}})
     with pytest.raises(WorkflowError, match='not a submodule of chain'):
         resolve_workflow(parse_workflow(raw, path=library['chain_rest']))
 
@@ -208,9 +221,9 @@ def test_an_ambiguous_submodule_must_be_named(library):
               'w') as f:
         f.write('variable_name,units,value,data_reference\n')
     raw = {'workflow_name': 'double', 'module_library_dirs': [library['modules']],
-           'target': {'module_type': 'double', 'version': 'v1', 'instance': 'default'},
+           'target': {'module_type': 'double', 'version': 'v1', 'parameterisation': 'default'},
            'steps': [{'id': 'fit_a', 'target': {'module_type': 'lin_a', 'version': 'v1',
-                                                'instance': 'fit_a'}}]}
+                                                'parameterisation': 'fit_a'}}]}
     with pytest.raises(WorkflowError, match=r"\['A1', 'A2'\] in double/v1/default; say which"):
         resolve_workflow(parse_workflow(raw))
     raw['steps'][0]['submodule'] = 'A2'
@@ -234,7 +247,8 @@ def test_a_type_in_two_libraries_resolves_to_the_one_generation_uses(library, tm
     with pytest.warns(ModuleShadowWarning):
         resolved = resolve_workflow(parse_workflow(raw, path=library['twin_split']))
     assert resolved.target.entry['config_path'].startswith(first)
-    assert all(step.instance.entry['config_path'].startswith(first) for step in resolved.steps.values())
+    assert all(step.parameterisation.entry['config_path'].startswith(first)
+               for step in resolved.steps.values())
 
 
 # --------------------------------------------------------------------------------------------
@@ -338,12 +352,13 @@ def _simulate(model_path, names):
 
 
 def _calibrate_joint(library, out_dir):
-    """The twin/joint instance calibrated the ordinary way: one obs_data, one params_for_id."""
+    """The twin/joint parameterisation calibrated the ordinary way: one obs_data, one
+    params_for_id."""
     from libcuflynx.scripts.param_id_run_script import run_param_id
     target = Target('twin', 'v1', 'joint')
-    generated = generate_module_instance(target, os.path.join(out_dir, 'model'), 'joint',
-                                         library_inputs={'module_library_dirs':
-                                                         [library['modules']]})
+    generated = generate_parameterisation(target, os.path.join(out_dir, 'model'), 'joint',
+                                          library_inputs={'module_library_dirs':
+                                                          [library['modules']]})
     inp = copy.deepcopy(OPTIMISER_SETTINGS)
     inp.update({'file_prefix': 'joint', 'model_type': 'cellml', 'DEBUG': False, 'do_ad': False,
                 'do_ia': False, 'do_uq': False, 'UQ_options': {},
@@ -376,7 +391,7 @@ def test_calibrating_independent_parts_apart_matches_calibrating_them_together(l
     assert split['p_B'] == pytest.approx(np.sqrt(Y_B / 3), rel=1e-4)
 
     # the merged target model and the jointly calibrated model predict the same observables
-    calibrated_joint = generate_module_instance(
+    calibrated_joint = generate_parameterisation(
         Target('twin', 'v1', 'joint'), str(tmp_path / 'joint_calibrated'), 'joint_calibrated',
         [{'variable_name': f'p_mod_{sub}', 'units': 'dimensionless',
           'value': repr(joint[f'p_{sub}']), 'data_reference': 'joint calibration'}
@@ -445,7 +460,7 @@ def test_fixed_values_flow_into_the_supermodule_and_editing_obs_data_redoes_it(l
     assert ('step_skipped', 'fit_a') in [(e['event'], e.get('step')) for e in events]
     assert _merged(result)['q_C'] == pytest.approx(4.0, rel=1e-4)
 
-    # the merged set, in the target instance's naming, next to its parameters
+    # the merged set, in the target parameterisation's naming, next to its parameters
     with open(result['calibrated_parameters_file']) as f:
         written = {r['variable_name']: r for r in csv.DictReader(f)}
     assert result['calibrated_parameters_file'] == os.path.join(
@@ -535,7 +550,7 @@ def test_a_tab_shows_each_model_with_the_values_available_so_far(library, tmp_pa
     assert rest['kind'] == 'step' and rest['waiting_for'] == ['fit_a'] and rest['fixed'] == []
     assert rest['obs_data_path'].endswith('rest_obs_data.json')
     assert os.path.isfile(rest['flat_model_path'])
-    assert parameters(rest)['p_mod_A'] == 1.0     # the instance default, nothing fixed yet
+    assert parameters(rest)['p_mod_A'] == 1.0     # the parameterisation default, nothing fixed yet
 
     run_calibration_workflow(library['chain_rest'], output_dir=out, only='fit_a')
     rest = workflow_model(library['chain_rest'], 'rest', output_dir=out, work_dir=work)

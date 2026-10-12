@@ -1,5 +1,5 @@
 '''
-Generating one module instance on its own, with some of its parameters overridden.
+Generating one module parameterisation on its own, with some of its parameters overridden.
 '''
 
 import csv
@@ -28,14 +28,14 @@ def read_parameter_rows(path):
         return [dict(row) for row in csv.DictReader(f)]
 
 
-def generate_module_instance(target, work_dir, file_prefix, overrides=(), library_inputs=None,
-                             model_type='cellml', solver=None, vessel=STEP_VESSEL):
-    '''Generate the module instance ``target`` (a spec.Target) alone, as a single module-array
-    record named ``vessel``, under ``work_dir``.
+def generate_parameterisation(target, work_dir, file_prefix, overrides=(), library_inputs=None,
+                              model_type='cellml', solver=None, vessel=STEP_VESSEL):
+    '''Generate the module parameterisation ``target`` (a spec.Target) alone, as a single
+    module-array record named ``vessel``, under ``work_dir``.
 
     ``overrides`` are parameter rows (``variable_name`` in the generated model's naming,
     ``units``, ``value``, ``data_reference``) written as the host parameters file, which wins
-    over every instance and supermodule default. ``library_inputs`` are the generation keys
+    over every parameterisation and supermodule default. ``library_inputs`` are the generation keys
     that locate the modules (``module_library_dirs`` etc.).
 
     Returns ``{'model_path', 'flat_model_path', 'parameters_path', 'resources_dir',
@@ -52,7 +52,7 @@ def generate_module_instance(target, work_dir, file_prefix, overrides=(), librar
     generated_models_dir = os.path.join(work_dir, 'generated_models')
     os.makedirs(resources_dir, exist_ok=True)
     record = {'name': vessel, 'module_type': target.module_type,
-              'module_subtype': target.version, 'parameterisation': target.instance,
+              'module_subtype': target.version, 'parameterisation': target.parameterisation,
               'inp_instances': [], 'out_instances': []}
     with open(os.path.join(resources_dir, f'{file_prefix}_module_array.json'), 'w') as f:
         json.dump([record], f, indent=1)

@@ -1024,12 +1024,13 @@ or from Python:
 ```python
 from libcuflynx.calibration_workflow import run_calibration_workflow
 result = run_calibration_workflow(path, module_library_dirs=[library], output_dir='wf_out')
-result['merged_parameters']    # [{'instance_name': 'g_leak_i_leak_Na', 'value': ..., 'from_step': ...}]
+result['merged_parameters']    # [{'parameterisation_name': 'g_leak_i_leak_Na', 'value': ..., 'from_step': ...}]
 ```
 
-It is built on [module instances](design-model.md): every step calibrates **one instance** of a
-module library, against that instance's own `<instance>_obs_data.json` and
-`<instance>_params_for_id.csv`, through the ordinary param_id path. To redo a calibration, edit
+It is built on [module parameterisations](design-model.md#module-versions-and-parameterisations):
+every step calibrates **one parameterisation** of a module in a module library, against that
+parameterisation's own `<parameterisation>_obs_data.json` and
+`<parameterisation>_params_for_id.csv`, through the ordinary param_id path. To redo a calibration, edit
 the obs_data and run the workflow again -- every step after it is redone with the new values.
 
 !!! note
@@ -1038,9 +1039,10 @@ the obs_data and run the workflow again -- every step after it is redone with th
 
 ### The file
 
-The file usually lives in the directory of the supermodule instance it calibrates
-(`<module_type>/versions/<version>/instances/<instance>/calibration_workflow.json`); that instance
-is then its **target**, the instance whose parameters the results are merged into.
+The file usually lives in the directory of the supermodule parameterisation it calibrates
+(`<module_type>/versions/<version>/parameterisations/<parameterisation>/calibration_workflow.json`);
+that parameterisation is then its **target**, the one whose parameters the results are merged
+into.
 
 ```json
 {
@@ -1052,9 +1054,11 @@ is then its **target**, the instance whose parameters the results are merged int
                "optimiser_options": {"num_calls_to_function": 400}},
   "steps": [
     {"id": "i_M_g",
-     "target": {"module_type": "i_M", "version": "Argus2026_v01", "instance": "davis2020_wistar"}},
+     "target": {"module_type": "i_M", "version": "Argus2026_v01",
+                "parameterisation": "davis2020_wistar"}},
     {"id": "rest_balance",
-     "target": {"module_type": "soma", "version": "sympathetic", "instance": "rest_balance"},
+     "target": {"module_type": "soma", "version": "sympathetic",
+                "parameterisation": "rest_balance"},
      "depends_on": ["i_M_g"], "fixed_from": ["i_M_g"]}
   ]
 }
@@ -1062,11 +1066,11 @@ is then its **target**, the instance whose parameters the results are merged int
 
 | Key | Meaning |
 |---|---|
-| `target` | the supermodule instance results are merged into; defaults to the instance holding the file |
+| `target` | the supermodule parameterisation (`module_type`, `version`, `parameterisation`) results are merged into; defaults to the parameterisation holding the file |
 | `module_library_dirs` | module libraries, relative to the file (more with `--module-library-dir`) |
 | `settings` | user_inputs settings for every step: `param_id_method`, `optimiser_options`, `solver`, `solver_info`, `dt`, `pre_time`, `sim_time`, `UQ_options`, `DEBUG`, ... (the model, obs_data, params_for_id and output paths are the workflow's, and cannot be set) |
 | step `id` | unique; also the step's output directory |
-| step `target` | the instance the step calibrates |
+| step `target` | the parameterisation the step calibrates |
 | step `submodule` | where that module sits in the workflow's target (`i_M`, or `soma_i_M` when nested); inferred unless the module occurs twice |
 | step `depends_on` | steps that run first; steps run in dependency order |
 | step `fixed_from` | earlier steps whose calibrated values -- and the values they were themselves given -- are fixed in this step's model |
@@ -1074,8 +1078,9 @@ is then its **target**, the instance whose parameters the results are merged int
 | step `store_distribution` | sample the posterior by MCMC after the fit and store it |
 | step `settings` | merged over the workflow's (one level deep, so `optimiser_options` add up) |
 
-The checks: each step has its own instance (two steps cannot calibrate the same instance, and
-each instance must have its obs_data and params_for_id); no parameter is calibrated by two steps;
+The checks: a target names its parameter set with `parameterisation` (`instance` is an
+error); each step has its own parameterisation (two steps cannot calibrate the same one, and
+each must have its obs_data and params_for_id); no parameter is calibrated by two steps;
 every step's module is the target or one of its submodules; values only pass into a model that
 contains the module they were calibrated on. `--dry-run` runs every check and prints the plan --
 which parameter of each step lands where -- without calibrating anything. The schema is
@@ -1086,7 +1091,7 @@ which parameter of each step lands where -- without calibrating anything. The sc
 Every step model is generated alone as a single vessel named `mod`, so a params_for_id row
 `mod, rho_M` names `rho_M_mod` in the step's model. In the target, where that module is the
 submodule `i_M`, supermodule expansion renames it `rho_M_mod_i_M` (and `rho_M_i_M` in the target
-instance's parameters CSV). A supermodule step's own params_for_id therefore names its
+parameterisation's parameters CSV). A supermodule step's own params_for_id therefore names its
 submodules' parameters `mod_<submodule>, <param>`, and its obs_data their outputs
 `mod_<submodule>/<variable>`.
 
@@ -1105,7 +1110,7 @@ submodules' parameters `mod_<submodule>, <param>`, and its obs_data their output
 
 `--from-step X` reruns X and everything after it, reusing the earlier results (and refusing if
 their obs_data, params_for_id or parameters changed since); `--only X` reruns one step.
-`--write-calibrated` writes the merged set as the target's `<instance>_calibrated_parameters.csv`.
+`--write-calibrated` writes the merged set as the target's `<parameterisation>_calibrated_parameters.csv`.
 
 ### Distributions and priors
 

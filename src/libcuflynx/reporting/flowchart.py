@@ -119,8 +119,8 @@ def workflow_graph(steps):
     nodes, edges = [], []
     for s in step_list:
         t = s['target']
-        lines = [r'\texttt{' + escape(t['module_type']) + '}, instance \\texttt{'
-                 + escape(t['instance']) + '}',
+        lines = [r'\texttt{' + escape(t['module_type']) + '}, parameterisation \\texttt{'
+                 + escape(t['parameterisation']) + '}',
                  f'{_count(s["n_parameters"], "parameter")}, '
                  f'{_count(s["n_data_items"], "observable")}',
                  escape(_method_label(s['settings']))]
@@ -139,7 +139,7 @@ def workflow_graph(steps):
                           ('fixed' if kinds else 'order')})
     t = target['target']
     nodes.append({'id': '__target__', 'title': 'Merged: ' + escape(t['module_type']),
-                  'lines': [r'instance \texttt{' + escape(t['instance']) + '}',
+                  'lines': [r'parameterisation \texttt{' + escape(t['parameterisation']) + '}',
                             f'{_count(target["n_merged"], "calibrated value")}'],
                   'kind': 'target'})
     referenced = {d for s in step_list for d in s['depends_on']}

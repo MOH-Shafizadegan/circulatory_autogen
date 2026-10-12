@@ -2,15 +2,15 @@
 Reading and checking a ``calibration_workflow.json`` (schema:
 ``libcuflynx/schemas/calibration_workflow.schema.json``).
 
-A workflow is an ordered set of calibrations of module *instances* of a module library, each
-against that instance's own ``<instance>_obs_data.json`` and ``<instance>_params_for_id.csv``,
-whose results are merged into the parameters of one supermodule instance, the workflow's
-``target``. A step may take the calibrated values of earlier steps as fixed parameter values
-(``fixed_from``) or, from steps that stored their posterior (``store_distribution``), as
-priors (``priors_from``).
+A workflow is an ordered set of calibrations of module *parameterisations* of a module library,
+each against that parameterisation's own ``<parameterisation>_obs_data.json`` and
+``<parameterisation>_params_for_id.csv``, whose results are merged into the parameters of one
+supermodule parameterisation, the workflow's ``target``. A step may take the calibrated values
+of earlier steps as fixed parameter values (``fixed_from``) or, from steps that stored their
+posterior (``store_distribution``), as priors (``priors_from``).
 
-Only the file is checked here. Whether its instances exist, and where a step's module sits in
-the target, needs the module library: see ``resolve.py``.
+Only the file is checked here. Whether its parameterisations exist, and where a step's module
+sits in the target, needs the module library: see ``resolve.py``.
 '''
 
 import copy
@@ -20,7 +20,8 @@ from dataclasses import dataclass, field
 
 from libcuflynx.utilities.config_schemas import load_module_config
 from libcuflynx.utilities.parameterisations import (INSTANCES_DIR, PARAMETERISATIONS_DIR,
-                                                    check_parameterisation_name)
+                                                    check_parameterisation_name,
+                                                    reject_instance_key)
 
 SCHEMA_VERSION = 1
 WORKFLOW_FILE_NAME = 'calibration_workflow.json'
@@ -42,7 +43,7 @@ _TOP_KEYS = {'schema_version', 'workflow_name', 'description', 'target', 'module
              'settings', 'steps', 'comment'}
 _STEP_KEYS = {'id', 'target', 'submodule', 'depends_on', 'fixed_from', 'priors_from',
               'store_distribution', 'settings', 'description', 'comment'}
-_TARGET_KEYS = {'module_type', 'version', 'instance'}
+_TARGET_KEYS = {'module_type', 'version', 'parameterisation'}
 _PRIOR_KEYS = {'step', 'kind', 'inflate', 'parameters'}
 
 
@@ -54,14 +55,14 @@ class WorkflowError(ValueError):
 class Target:
     module_type: str
     version: str
-    instance: str
+    parameterisation: str
 
     def label(self):
-        return f'{self.module_type}/{self.version}/{self.instance}'
+        return f'{self.module_type}/{self.version}/{self.parameterisation}'
 
     def as_dict(self):
         return {'module_type': self.module_type, 'version': self.version,
-                'instance': self.instance}
+                'parameterisation': self.parameterisation}
 
 
 @dataclass(frozen=True)
@@ -194,9 +195,9 @@ def parse_workflow(raw, path=None, module_library_dirs=None):
         target = target_from_location(path)
         if target is None:
             raise WorkflowError(
-                f'{where}: no "target". Name the supermodule instance whose parameters the '
-                f'workflow calibrates, or keep the file in that instance\'s directory '
-                f'(<module_type>/versions/<version>/{PARAMETERISATIONS_DIR}/<instance>/).')
+                f'{where}: no "target". Name the supermodule parameterisation whose parameters '
+                f'the workflow calibrates, or keep the file in that parameterisation\'s directory '
+                f'(<module_type>/versions/<version>/{PARAMETERISATIONS_DIR}/<parameterisation>/).')
 
     settings = _settings(raw.get('settings', {}), f'{where}: "settings"')
 
@@ -213,23 +214,24 @@ def parse_workflow(raw, path=None, module_library_dirs=None):
 
 
 def target_from_location(path):
-    '''The instance whose directory holds ``path``:
-    ``.../<type>/versions/<version>/parameterisations/<instance>/calibration_workflow.json``
+    '''The parameterisation whose directory holds ``path``:
+    ``.../<type>/versions/<version>/parameterisations/<name>/calibration_workflow.json``
     (or an older library's ``instances/``), with
     the module type and version read from the version's ``*_modules_config.json``.'''
     if not path:
         return None
-    instance_dir = os.path.dirname(os.path.abspath(path))
-    instances = os.path.dirname(instance_dir)
-    if os.path.basename(instances) not in (PARAMETERISATIONS_DIR, INSTANCES_DIR):
+    parameterisation_dir = os.path.dirname(os.path.abspath(path))
+    parent = os.path.dirname(parameterisation_dir)
+    if os.path.basename(parent) not in (PARAMETERISATIONS_DIR, INSTANCES_DIR):
         return None
-    version_dir = os.path.dirname(instances)
+    version_dir = os.path.dirname(parent)
     configs = sorted(f for f in os.listdir(version_dir) if f.endswith('_modules_config.json'))
     for config in configs:
         entries = load_module_config(os.path.join(version_dir, config), include_supermodules=True)
         if len(entries) == 1:
             entry = entries[0]
-            return Target(entry['vessel_type'], entry['BC_type'], os.path.basename(instance_dir))
+            return Target(entry['vessel_type'], entry['BC_type'],
+                          os.path.basename(parameterisation_dir))
     return None
 
 
@@ -249,6 +251,10 @@ def _string_list(obj, key, where):
 def _target(value, where):
     if not isinstance(value, dict):
         raise WorkflowError(f'{where} must be an object with {sorted(_TARGET_KEYS)}.')
+    try:
+        reject_instance_key(value, where, what='A workflow target')
+    except ValueError as exc:
+        raise WorkflowError(str(exc)) from exc
     _no_unknown_keys(value, _TARGET_KEYS, where)
     missing = sorted(_TARGET_KEYS - set(value))
     if missing:
@@ -257,10 +263,10 @@ def _target(value, where):
         if not isinstance(value[key], str) or not value[key].strip():
             raise WorkflowError(f'{where}: "{key}" must be a non-empty string.')
     try:
-        instance = check_parameterisation_name(value['instance'], where, key='instance')
+        parameterisation = check_parameterisation_name(value['parameterisation'], where)
     except ValueError as exc:
         raise WorkflowError(str(exc)) from exc
-    return Target(value['module_type'].strip(), value['version'].strip(), instance)
+    return Target(value['module_type'].strip(), value['version'].strip(), parameterisation)
 
 
 def _settings(value, where):
@@ -349,9 +355,9 @@ def check_workflow(workflow):
         if step.target in targets:
             raise WorkflowError(
                 f'workflow "{workflow.name}": steps "{targets[step.target]}" and "{step.id}" '
-                f'both calibrate {step.target.label()}. Each step calibrates its own instance, '
-                f'with that instance\'s own obs_data and params_for_id; make a second instance '
-                f'for the second calibration.')
+                f'both calibrate {step.target.label()}. Each step calibrates its own '
+                f'parameterisation, with its own obs_data and params_for_id; make a second '
+                f'parameterisation for the second calibration.')
         targets[step.target] = step.id
         for dep in step.depends_on:
             if dep not in ids:

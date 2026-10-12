@@ -76,9 +76,10 @@ the old name still works with a `FutureWarning`. The 0D/1D split writes `[file_p
 
 `cuflynx-calibration-workflow <calibration_workflow.json>` (and
 `libcuflynx.calibration_workflow.run_calibration_workflow`) runs ordered calibrations of module
-instances in a module library, typically a supermodule's submodules and then the supermodule,
-and merges the results into one supermodule instance. Each step is an ordinary param_id run
-against its instance's own obs_data and params_for_id.
+parameterisations in a module library, typically a supermodule's submodules and then the
+supermodule, and merges the results into one supermodule parameterisation. A target is
+`{module_type, version, parameterisation}`. Each step is an ordinary param_id run against its
+parameterisation's own obs_data and params_for_id.
 
 - **Fixed values.** A step can take earlier steps' calibrated values as fixed parameter values
   (`fixed_from`). Names map from submodule to supermodule as supermodule expansion renames them.
@@ -88,7 +89,7 @@ against its instance's own obs_data and params_for_id.
   a KDE, each on a bounds-respecting scale.
 - **Reruns.** `--from-step` / `--only` rerun part of a workflow, refusing when an input it would
   reuse has changed. `--dry-run` checks everything against the library and prints the plan.
-  `--write-calibrated` writes the merged set as the target's `<instance>_calibrated_parameters.csv`.
+  `--write-calibrated` writes the merged set as the target's `<parameterisation>_calibrated_parameters.csv`.
 - **Schema.** `libcuflynx/schemas/calibration_workflow.schema.json`.
 - **param_id.** `ParamID.set_joint_priors` / `CVS0DParamID.set_joint_priors` add log densities
   over several parameters to the log prior. `run_param_id` passes `joint_priors` from its input
