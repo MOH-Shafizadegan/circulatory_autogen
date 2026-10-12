@@ -1,15 +1,15 @@
-"""Module versions and instances (utilities/module_instances.py).
+"""Module versions and their parameterisations (utilities/parameterisations.py).
 
 A module library lays a module version out as ``<module_type>/versions/<version>/`` with its
 CellML, a one-entry ``*_modules_config.json`` (module_subtype == version) and named parameter
-sets, *parameterisations*, in ``parameterisations/<name>/<name>_parameters.csv`` (older name
-``instances/``). A module-array record (or a supermodule's submodule) picks one with
-``"parameterisation"`` (older name ``"instance"``); without it, the entry's
-``default_parameterisation`` (``default_instance``) is used when its file exists. Most tests
-here use the older names; the *parameterisations* section checks that the new ones load the
-same. Rows ``{var}`` become ``{var}_{vessel}``,
+sets, *parameterisations*, in ``parameterisations/<name>/<name>_parameters.csv`` (an older
+library's ``instances/`` is read too). A module-array record (or a supermodule's submodule)
+picks one with ``"parameterisation"``; without it, the entry's ``default_parameterisation``
+(``default_instance`` in older configs) is used when its file exists. The synthetic library
+here keeps the older folder and default key; the *parameterisations* section checks that the
+new layout loads the same. Rows ``{var}`` become ``{var}_{vessel}``,
 except the module's global constants, and are default parameters: the host parameters file
-wins, then a supermodule's instance, its default_parameters, then submodule instances.
+wins, then a supermodule's parameterisation, its default_parameters, then submodules'.
 
 obs_data files may carry a top-level ``obs_data_name``; one filed under ``instances/<name>/``
 is warned about when the name differs.
@@ -50,9 +50,9 @@ from libcuflynx.utilities.config_schemas import (load_component_registry,
                                                  load_supermodule_registry,
                                                  normalise_module_config_entry,
                                                  normalise_vessel_record)
-from libcuflynx.utilities.module_instances import (ConflictingGlobalWarning,
-                                                   available_instances, global_constants,
-                                                   instance_parameters_path, read_parameter_rows)
+from libcuflynx.utilities.parameterisations import (ConflictingGlobalWarning,
+                                                   available_parameterisations, global_constants,
+                                                   parameterisation_parameters_path, read_parameter_rows)
 from libcuflynx.utilities.supermodules import rename_default_parameter
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -86,9 +86,9 @@ def _entry(lib, key):
     return lib.supermodules.get(key) or lib.components[key]
 
 
-def _instance_values(lib, key, instance):
+def _parameterisation_values(lib, key, instance):
     """``{variable_name: (value, data_reference)}`` of one real instance's file."""
-    path = instance_parameters_path(_entry(lib, key)['config_path'], instance)
+    path = parameterisation_parameters_path(_entry(lib, key)['config_path'], instance)
     return {row['variable_name']: (row['value'], row['data_reference'])
             for row in read_parameter_rows(path, 'test')}
 
@@ -128,16 +128,16 @@ def _pulse_entry(version, **extra):
     return entry
 
 
-def _sub(name, instance=None):
+def _sub(name, parameterisation=None):
     record = {'name': name, 'module_type': 'pulse_src', 'module_subtype': 'v1',
               'inp_instances': [], 'out_instances': []}
-    if instance is not None:
-        record['instance'] = instance
+    if parameterisation is not None:
+        record['parameterisation'] = parameterisation
     return record
 
 
 PAIR = {'module_type': 'pair', 'module_subtype': 'v1', 'module_format': 'supermodule',
-        'submodules': [_sub('a', instance='other'), _sub('b')],
+        'submodules': [_sub('a', parameterisation='other'), _sub('b')],
         'default_instance': 'base', 'default_parameters': 'pair_defaults.csv'}
 
 # instance -> rows (variable_name, units, value)
@@ -231,9 +231,9 @@ def _two_sources(first_instance='other', second_instance=None):
     s1 = _rec('s1', 'pulse_src', 'v1', out=['coll'])
     s2 = _rec('s2', 'pulse_src', 'v1', out=['coll'])
     if first_instance is not None:
-        s1['instance'] = first_instance
+        s1['parameterisation'] = first_instance
     if second_instance is not None:
-        s2['instance'] = second_instance
+        s2['parameterisation'] = second_instance
     return [s1, s2, _rec('coll', 'collector', inp=['s1', 's2'])]
 
 
@@ -249,16 +249,16 @@ def _pair_host(**instance):
 # --------------------------------------------------------------------------------------------
 
 @pytest.mark.unit
-def test_a_named_instance_and_the_default_instance_are_applied_with_the_vessel_suffix(
+def test_a_named_parameterisation_and_the_default_one_are_applied_with_the_vessel_suffix(
         tmp_path, real_library):
     lib = real_library
-    named = _instance_values(lib, I_M, I_M_NAMED)
-    default = _instance_values(lib, I_M, _entry(lib, I_M)['default_instance'])
+    named = _parameterisation_values(lib, I_M, I_M_NAMED)
+    default = _parameterisation_values(lib, I_M, _entry(lib, I_M)['default_parameterisation'])
     assert named['rho_M'] != default['rho_M'], 'the library no longer tells them apart'
     globals_ = global_constants(_entry(lib, I_M))
     assert globals_, 'i_M has no global constants left to test with'
 
-    _, rows = _real_load(tmp_path, lib, [_rec('s1', *I_M, instance=I_M_NAMED), _rec('s2', *I_M)])
+    _, rows = _real_load(tmp_path, lib, [_rec('s1', *I_M, parameterisation=I_M_NAMED), _rec('s2', *I_M)])
 
     expected = {}
     for vessel, values in (('s1', named), ('s2', default)):
@@ -285,7 +285,7 @@ def _load_caught(tmp_path, library, records):
 
 
 @pytest.mark.unit
-def test_the_first_record_sets_a_global_shared_by_several_instances(tmp_path, library):
+def test_the_first_record_sets_a_global_shared_by_several_parameterisations(tmp_path, library):
     # synthetic: no two instances in the real library set a global to different values
     rows, conflicts = _load_caught(tmp_path, library, _two_sources(None, 'other'))
     assert _values(rows)['omega'] == ('6.0', 'default_ref')
@@ -302,13 +302,13 @@ def test_the_first_record_sets_a_global_shared_by_several_instances(tmp_path, li
 
 
 @pytest.mark.unit
-def test_instances_that_agree_on_a_global_do_not_warn(tmp_path, library):
+def test_parameterisations_that_agree_on_a_global_do_not_warn(tmp_path, library):
     _, conflicts = _load_caught(tmp_path, library, _two_sources('other', 'other'))
     assert not conflicts
 
 
 @pytest.mark.unit
-def test_a_global_a_supermodule_instance_sets_is_not_a_conflict_of_its_submodules(tmp_path,
+def test_a_global_a_supermodule_parameterisation_sets_is_not_a_conflict_of_its_submodules(tmp_path,
                                                                                   library):
     # pair's submodules' instances set omega to 4.0 (a: other) and 6.0 (b: default), but pair's
     # own instance sets 5.0, which outranks both
@@ -321,9 +321,9 @@ def test_a_global_a_supermodule_instance_sets_is_not_a_conflict_of_its_submodule
 def test_a_supermodule_s_global_used_for_modules_outside_it_warns(tmp_path, library):
     # pr1 (instance base) sets omega 5.0; pr2 (alt) sets none, so its submodules' instances
     # chose 4.0 and 6.0 -- but a global is one value for the model, and pr2's modules run at 5.0
-    records = [_rec('pr1', 'pair', 'v1', out=['coll'], instance='base',
+    records = [_rec('pr1', 'pair', 'v1', out=['coll'], parameterisation='base',
                     per_submodule_outputs={'a': ['coll'], 'b': ['coll']}),
-               _rec('pr2', 'pair', 'v1', out=['coll'], instance='alt',
+               _rec('pr2', 'pair', 'v1', out=['coll'], parameterisation='alt',
                     per_submodule_outputs={'a': ['coll'], 'b': ['coll']}),
                _rec('coll', 'collector', inp=['pr1', 'pr2'])]
     rows, conflicts = _load_caught(tmp_path, library, records)
@@ -338,7 +338,7 @@ def test_a_supermodule_s_global_used_for_modules_outside_it_warns(tmp_path, libr
 
 @pytest.mark.unit
 def test_the_host_file_settles_a_conflicting_global():
-    from libcuflynx.utilities.module_instances import reissue_warnings, warn_conflicting_globals
+    from libcuflynx.utilities.parameterisations import reissue_warnings, warn_conflicting_globals
     settings = [('T', '295.15', 'kelvin', '"a"', 'a'), ('T', '310', 'kelvin', '"b"', 'b')]
     for settled, expected in (((), 1), ({'T'}, 0)):
         with warnings.catch_warnings(record=True) as held:
@@ -363,7 +363,7 @@ def test_the_host_file_settles_a_conflicting_global():
 
 
 @pytest.mark.unit
-def test_nothing_is_loaded_without_an_instance_or_an_existing_default(tmp_path, library):
+def test_nothing_is_loaded_without_a_parameterisation_or_an_existing_default(tmp_path, library):
     # synthetic: v2 declares default_instance "missing" but has no instances/: nothing, as
     # before (the real library's structure test forbids such a version)
     records = [_rec('s', 'pulse_src', 'v2', out=['coll']), _rec('coll', 'collector', inp=['s'])]
@@ -372,21 +372,21 @@ def test_nothing_is_loaded_without_an_instance_or_an_existing_default(tmp_path, 
 
 
 @pytest.mark.unit
-def test_an_unknown_instance_names_the_version_directory_and_its_instances(tmp_path,
+def test_an_unknown_parameterisation_names_the_version_directory_and_its_parameterisations(tmp_path,
                                                                             real_library):
     with pytest.raises(ValueError) as error:
-        _real_load(tmp_path, real_library, [_rec('s1', *I_M, instance='nope')])
+        _real_load(tmp_path, real_library, [_rec('s1', *I_M, parameterisation='nope')])
     message = str(error.value)
     assert 'unknown parameterisation "nope"' in message and '"s1"' in message
     assert os.path.join('i_M', 'versions', 'Argus2026_v01') in message
-    existing = available_instances(_entry(real_library, I_M)['config_path'])
+    existing = available_parameterisations(_entry(real_library, I_M)['config_path'])
     assert I_M_NAMED in existing and str(existing) in message
 
 
 @pytest.mark.unit
-def test_an_instance_of_a_config_without_instances_is_an_error(tmp_path, library):
+def test_a_parameterisation_of_a_config_without_parameterisations_is_an_error(tmp_path, library):
     # synthetic: every real module version has an instances/ directory
-    records = [_rec('s', 'pulse_src', 'v2', out=['coll'], instance='default'),
+    records = [_rec('s', 'pulse_src', 'v2', out=['coll'], parameterisation='default'),
                _rec('coll', 'collector', inp=['s'])]
     with pytest.raises(ValueError,
                        match=r'has no parameterisations/ \(or older instances/\) directory'):
@@ -394,22 +394,22 @@ def test_an_instance_of_a_config_without_instances_is_an_error(tmp_path, library
 
 
 @pytest.mark.unit
-def test_an_instance_of_a_type_with_no_config_is_an_error(tmp_path, real_library):
+def test_a_parameterisation_of_a_type_with_no_config_is_an_error(tmp_path, real_library):
     with pytest.raises(ValueError, match=r'no module config entry of that type'):
-        _real_load(tmp_path, real_library, [_rec('s', 'i_M', 'v9', instance='default')])
+        _real_load(tmp_path, real_library, [_rec('s', 'i_M', 'v9', parameterisation='default')])
 
 
 @pytest.mark.unit
 @pytest.mark.parametrize('value', ['', '   ', 3, 'a/b', '..'])
-def test_a_bad_instance_name_is_rejected(value):
-    with pytest.raises(ValueError, match='instance'):
-        normalise_vessel_record(_rec('s', 'pulse_src', 'v1', instance=value), 'test', 0)
+def test_a_bad_parameterisation_name_is_rejected(value):
+    with pytest.raises(ValueError, match='parameterisation'):
+        normalise_vessel_record(_rec('s', 'pulse_src', 'v1', parameterisation=value), 'test', 0)
 
 
 @pytest.mark.unit
 @pytest.mark.parametrize('entry', [_pulse_entry('v1', default_instance=''),
                                    dict(PAIR, default_instance=['base'])])
-def test_a_bad_default_instance_is_rejected(entry):
+def test_a_bad_default_parameterisation_is_rejected(entry):
     with pytest.raises(ValueError, match='default_instance'):
         normalise_module_config_entry(entry, 'test')
 
@@ -432,7 +432,7 @@ def test_merge_default_parameters_uses_the_first_of_repeated_extra_rows():
 # --------------------------------------------------------------------------------------------
 
 @pytest.mark.unit
-def test_a_supermodule_instance_beats_its_submodules_instances(tmp_path, real_library):
+def test_a_supermodule_s_parameterisation_beats_its_submodules(tmp_path, real_library):
     lib = real_library
     soma = lib.supermodules[SOMA]
     subs = [s['name'] for s in soma['submodules']]
@@ -441,7 +441,7 @@ def test_a_supermodule_instance_beats_its_submodules_instances(tmp_path, real_li
     values = _values(rows)
 
     own = {rename_default_parameter(name, 'soma', subs): value for name, value in
-           _instance_values(lib, SOMA, soma['default_instance']).items()}
+           _parameterisation_values(lib, SOMA, soma['default_parameterisation']).items()}
     for name, value in own.items():
         assert values[name] == value, name
 
@@ -449,8 +449,8 @@ def test_a_supermodule_instance_beats_its_submodules_instances(tmp_path, real_li
     for sub in soma['submodules']:
         key = (sub['vessel_type'], sub['BC_type'])
         globals_ = global_constants(_entry(lib, key))
-        instance = sub.get('instance') or _entry(lib, key).get('default_instance')
-        for name, value in _instance_values(lib, key, instance).items():
+        instance = sub.get('parameterisation') or _entry(lib, key).get('default_parameterisation')
+        for name, value in _parameterisation_values(lib, key, instance).items():
             if name in globals_:
                 continue
             model_name = f'{name}_soma_{sub["name"]}'
@@ -463,7 +463,7 @@ def test_a_supermodule_instance_beats_its_submodules_instances(tmp_path, real_li
 
 
 @pytest.mark.unit
-def test_a_nested_supermodule_s_instance_is_renamed_through_the_nesting(tmp_path, real_library):
+def test_a_nested_supermodule_s_parameterisation_is_renamed_through_the_nesting(tmp_path, real_library):
     lib = real_library
     soma = lib.supermodules[SOMA]
     subs = [s['name'] for s in soma['submodules']]
@@ -475,9 +475,9 @@ def test_a_nested_supermodule_s_instance_is_renamed_through_the_nesting(tmp_path
     assert f'neuron_{soma_path}_{subs[0]}' in names
     values = _values(rows)
     neuron_own = {rename_default_parameter(n, 'neuron', [s['name'] for s in neuron['submodules']])
-                  for n in _instance_values(lib, NEURON, neuron['default_instance'])}
+                  for n in _parameterisation_values(lib, NEURON, neuron['default_parameterisation'])}
     checked = 0
-    for name, value in _instance_values(lib, SOMA, soma['default_instance']).items():
+    for name, value in _parameterisation_values(lib, SOMA, soma['default_parameterisation']).items():
         renamed = rename_default_parameter(name, 'soma', subs)
         if renamed == name:
             continue                     # a global
@@ -490,7 +490,7 @@ def test_a_nested_supermodule_s_instance_is_renamed_through_the_nesting(tmp_path
 
 
 @pytest.mark.unit
-def test_supermodule_instance_beats_its_default_parameters_which_beat_submodule_instances(
+def test_supermodule_parameterisation_beats_its_default_parameters_which_beat_submodules(
         tmp_path, library):
     # synthetic: no real supermodule has legacy default_parameters
     records, rows = _load(tmp_path, library, _pair_host())
@@ -507,10 +507,10 @@ def test_supermodule_instance_beats_its_default_parameters_which_beat_submodule_
 
 
 @pytest.mark.unit
-def test_a_named_supermodule_instance_replaces_its_default_instance(tmp_path, library):
+def test_a_named_supermodule_parameterisation_replaces_its_default(tmp_path, library):
     # synthetic: the real supermodules have one instance each, and this one has
     # default_parameters too
-    _, rows = _load(tmp_path, library, _pair_host(instance='alt'))
+    _, rows = _load(tmp_path, library, _pair_host(parameterisation='alt'))
     assert _values(rows) == {
         'amp_pr_b': ('0.1', 'alt_ref'),
         'amp_pr_a': ('0.77', 'pair_defaults'), 'mean_pr_b': ('3e-05', 'pair_defaults'),
@@ -519,17 +519,17 @@ def test_a_named_supermodule_instance_replaces_its_default_instance(tmp_path, li
 
 
 @pytest.mark.unit
-def test_an_unknown_supermodule_instance_lists_its_instances(tmp_path, real_library):
+def test_an_unknown_supermodule_parameterisation_lists_its_parameterisations(tmp_path, real_library):
     with pytest.raises(ValueError) as error:
-        _real_load(tmp_path, real_library, [_rec('soma', *SOMA, instance='nope')])
+        _real_load(tmp_path, real_library, [_rec('soma', *SOMA, parameterisation='nope')])
     message = str(error.value)
-    existing = available_instances(real_library.supermodules[SOMA]['config_path'])
+    existing = available_parameterisations(real_library.supermodules[SOMA]['config_path'])
     assert 'unknown parameterisation "nope"' in message and str(existing) in message
     assert os.path.join('soma', 'versions', 'sympathetic') in message
 
 
 @pytest.mark.unit
-def test_an_unknown_submodule_instance_is_an_error(tmp_path, real_library):
+def test_an_unknown_submodule_parameterisation_is_an_error(tmp_path, real_library):
     lib = real_library
     # a supermodule config of its own whose one submodule is the real i_M, naming an instance
     # i_M does not have
@@ -537,7 +537,7 @@ def test_an_unknown_submodule_instance_is_an_error(tmp_path, real_library):
     _write_json(str(config), [{
         'module_type': 'probe', 'module_subtype': 'v1', 'module_format': 'supermodule',
         'submodules': [{'name': 'm', 'module_type': I_M[0], 'module_subtype': I_M[1],
-                        'instance': 'nope', 'inp_instances': [], 'out_instances': []}]}])
+                        'parameterisation': 'nope', 'inp_instances': [], 'out_instances': []}]}])
     files = lib.files + [str(config)]
     path = str(tmp_path / 'm_module_array.json')
     _write_json(path, [_rec('pr', 'probe', 'v1')])
@@ -551,16 +551,16 @@ def test_an_unknown_submodule_instance_is_an_error(tmp_path, real_library):
 # --------------------------------------------------------------------------------------------
 
 @pytest.mark.integration
-def test_generation_uses_instances_and_the_host_file_wins(tmp_path, real_library):
+def test_generation_uses_parameterisations_and_the_host_file_wins(tmp_path, real_library):
     lib = real_library
-    named = _instance_values(lib, I_M, I_M_NAMED)
-    default = _instance_values(lib, I_M, _entry(lib, I_M)['default_instance'])
+    named = _parameterisation_values(lib, I_M, I_M_NAMED)
+    default = _parameterisation_values(lib, I_M, _entry(lib, I_M)['default_parameterisation'])
     units = {row['variable_name']: row['units'] for row in read_parameter_rows(
-        instance_parameters_path(_entry(lib, I_M)['config_path'], I_M_NAMED), 'test')}
+        parameterisation_parameters_path(_entry(lib, I_M)['config_path'], I_M_NAMED), 'test')}
     prefix = 'mi_gen'
     resources = tmp_path / 'resources'
     _write_json(str(resources / f'{prefix}_module_array.json'),
-                [_rec('s1', *I_M, instance=I_M_NAMED), _rec('s2', *I_M)])
+                [_rec('s1', *I_M, parameterisation=I_M_NAMED), _rec('s2', *I_M)])
     # host values that differ from every instance's, under the module's own units
     _write_parameters(str(resources / f'{prefix}_parameters.csv'),
                       [('tau_w_num_s1', units['tau_w_num'], '999'),
@@ -588,7 +588,7 @@ def test_generation_uses_instances_and_the_host_file_wins(tmp_path, real_library
 # --------------------------------------------------------------------------------------------
 
 @pytest.mark.unit
-def test_the_json_schemas_accept_instances_and_obs_data_names(real_library):
+def test_the_json_schemas_accept_parameterisations_and_obs_data_names(real_library):
     jsonschema = pytest.importorskip('jsonschema')
     from libcuflynx.schemas import (MODULE_CONFIG_SCHEMA, OBS_DATA_SCHEMA, MODULE_ARRAY_SCHEMA,
                                     load_schema)
@@ -614,12 +614,12 @@ def test_the_json_schemas_accept_instances_and_obs_data_names(real_library):
         with open(path) as f:
             obs.validate(json.load(f))
 
-    arrays.validate([_rec('s1', *I_M, instance=I_M_NAMED), _rec('s2', *I_M),
-                     _rec('soma', *SOMA, instance='default')])
+    arrays.validate([_rec('s1', *I_M, parameterisation=I_M_NAMED), _rec('s2', *I_M),
+                     _rec('soma', *SOMA, parameterisation='default')])
     for bad in ('', ' ', 'a/b', '..', 3):
-        assert not arrays.is_valid([_rec('s', *I_M, instance=bad)]), bad
+        assert not arrays.is_valid([_rec('s', *I_M, parameterisation=bad)]), bad
     assert not configs.is_valid([_pulse_entry('v1', default_instance='a/b')])
-    assert not configs.is_valid([dict(PAIR, submodules=[_sub('a', instance='')])])
+    assert not configs.is_valid([dict(PAIR, submodules=[_sub('a', parameterisation='')])])
 
     obs.validate({'obs_data_name': 'other', 'data_items': [], 'protocol_info': {}})
     obs.validate({'data_items': []})
@@ -670,7 +670,7 @@ def test_a_bad_obs_data_name_is_rejected(bad):
 @pytest.mark.parametrize('top, warns', [({'obs_data_name': 'other'}, False),
                                         ({'obs_data_name': 'default'}, True),
                                         ({}, True)])
-def test_obs_data_in_an_instance_directory_is_checked_against_its_name(tmp_path, top, warns,
+def test_obs_data_in_a_parameterisation_directory_is_checked_against_its_name(tmp_path, top, warns,
                                                                        directory):
     path = str(tmp_path / 'v1' / directory / 'other' / 'other_obs_data.json')
     _write_json(path, _obs_doc(**top))
@@ -686,8 +686,8 @@ def test_obs_data_in_an_instance_directory_is_checked_against_its_name(tmp_path,
 
 
 @pytest.mark.unit
-def test_a_real_instance_s_obs_data_names_its_instance(real_library):
-    path = os.path.join(os.path.dirname(instance_parameters_path(
+def test_a_real_parameterisation_s_obs_data_names_it(real_library):
+    path = os.path.join(os.path.dirname(parameterisation_parameters_path(
         _entry(real_library, I_M)['config_path'], I_M_NAMED)), f'{I_M_NAMED}_obs_data.json')
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter('always')
@@ -696,7 +696,7 @@ def test_a_real_instance_s_obs_data_names_its_instance(real_library):
 
 
 @pytest.mark.unit
-def test_obs_data_outside_an_instance_directory_is_not_checked(tmp_path):
+def test_obs_data_outside_a_parameterisation_directory_is_not_checked(tmp_path):
     path = str(tmp_path / 'resources' / 'm_obs_data.json')
     _write_json(path, _obs_doc(obs_data_name='anything'))
     with warnings.catch_warnings(record=True) as caught:
@@ -745,7 +745,7 @@ def _records_both_spellings():
     """Two pulse sources (s1 names "other", s2 uses the default) and a pair supermodule
     naming "alt", all feeding one collector: ``{'old': records with "instance", 'new': the
     same with "parameterisation"}``."""
-    records = _two_sources('other', None)[:2] + _pair_host(instance='alt')[:1] + [
+    records = _two_sources('other', None)[:2] + _pair_host(parameterisation='alt')[:1] + [
         _rec('coll', 'collector', inp=['s1', 's2', 'pr'])]
     return {'old': records, 'new': _renamed(records)}
 
@@ -764,7 +764,8 @@ def test_the_new_layout_loads_the_same_parameters_as_the_old_one(tmp_path, libra
             with warnings.catch_warnings():
                 warnings.simplefilter('ignore', ConflictingGlobalWarning)
                 expanded, rows = _load(work, lib, records)
-            found[layout, spelling] = ([r.get('instance') for r in expanded], _values(rows))
+            found[layout, spelling] = ([r.get('parameterisation') for r in expanded],
+                                       _values(rows))
     reference = found['old', 'old']
     # a named parameterisation (s1: other), the default (s2), and a supermodule's named one
     assert reference[1]['mean_s1'] == ('2e-05', 'other_ref')
@@ -777,16 +778,16 @@ def test_the_new_layout_loads_the_same_parameters_as_the_old_one(tmp_path, libra
 
 @pytest.mark.unit
 def test_parameterisations_dir_is_preferred_and_instances_is_the_fallback(tmp_path):
-    from libcuflynx.utilities.module_instances import instances_dir
+    from libcuflynx.utilities.parameterisations import parameterisations_dir
     config = tmp_path / 'm_v1_modules_config.json'
     config.write_text('[]')
-    assert instances_dir(str(config)) == str(tmp_path / 'parameterisations')
+    assert parameterisations_dir(str(config)) == str(tmp_path / 'parameterisations')
     for directory, rows in (('instances', [('a', 'm', '1')]),
                             ('parameterisations', [('a', 'm', '2')])):
         _write_parameters(str(tmp_path / directory / 'p' / 'p_parameters.csv'), rows, directory)
-        assert instances_dir(str(config)) == str(tmp_path / directory)
-        assert available_instances(str(config)) == ['p']
-        assert read_parameter_rows(instance_parameters_path(str(config), 'p'),
+        assert parameterisations_dir(str(config)) == str(tmp_path / directory)
+        assert available_parameterisations(str(config)) == ['p']
+        assert read_parameter_rows(parameterisation_parameters_path(str(config), 'p'),
                                    'test')[0]['data_reference'] == directory
 
 
@@ -820,37 +821,34 @@ def test_the_new_layout_generates_the_same_model_as_the_old_one(tmp_path, librar
 
 
 @pytest.mark.unit
-def test_record_parameterisation_and_instance_are_the_same_key():
-    for record in (_rec('s', 'pulse_src', 'v1', parameterisation=' other '),
-                   _rec('s', 'pulse_src', 'v1', instance='other'),
+def test_a_record_names_its_parameterisation_with_parameterisation_only(tmp_path, library):
+    normalised = normalise_vessel_record(_rec('s', 'pulse_src', 'v1', parameterisation=' other '),
+                                         'test', 0)
+    assert normalised['parameterisation'] == 'other' and 'instance' not in normalised
+    for record in (_rec('s', 'pulse_src', 'v1', instance='other'),
                    _rec('s', 'pulse_src', 'v1', instance='other', parameterisation='other')):
-        normalised = normalise_vessel_record(record, 'test', 0)
-        assert normalised['instance'] == 'other' and 'parameterisation' not in normalised
-    entry = normalise_module_config_entry(_pulse_entry('v1', default_parameterisation='default'))
-    assert entry['default_instance'] == 'default' and 'default_parameterisation' not in entry
-    pair = normalise_module_config_entry(_renamed(PAIR))
-    assert pair['default_instance'] == 'base' and 'default_parameterisation' not in pair
-    assert pair['submodules'][0]['instance'] == 'other'
+        with pytest.raises(ValueError, match=r'has "instance".*"parameterisation"; rename'):
+            normalise_vessel_record(record, 'test', 0)
+    with pytest.raises(ValueError, match=r'submodules.*has "instance"'):
+        normalise_module_config_entry(dict(PAIR, submodules=[dict(_sub('a'), instance='x')]))
+    records = _two_sources(None, None)
+    records[0]['instance'] = 'other'
+    with pytest.raises(ValueError, match=r'"s1".*has "instance"'):
+        _load(tmp_path, library, records)
 
 
 @pytest.mark.unit
-def test_conflicting_old_and_new_keys_are_an_error(tmp_path, library):
-    with pytest.raises(ValueError, match=r'"parameterisation".*"instance"'):
-        normalise_vessel_record(_rec('s', 'pulse_src', 'v1', instance='default',
-                                     parameterisation='other'), 'test', 0)
+def test_default_instance_is_read_as_default_parameterisation():
+    entry = normalise_module_config_entry(_pulse_entry('v1', default_instance='default'))
+    assert entry['default_parameterisation'] == 'default' and 'default_instance' not in entry
+    pair = normalise_module_config_entry(PAIR)
+    assert pair['default_parameterisation'] == 'base' and 'default_instance' not in pair
+    assert pair['submodules'][0]['parameterisation'] == 'other'
     with pytest.raises(ValueError, match=r'"default_parameterisation".*"default_instance"'):
         normalise_module_config_entry(_pulse_entry('v1', default_instance='default',
                                                    default_parameterisation='other'))
     with pytest.raises(ValueError, match=r'"default_parameterisation".*"default_instance"'):
         normalise_module_config_entry(dict(PAIR, default_parameterisation='alt'))
-    with pytest.raises(ValueError, match=r'"parameterisation".*"instance"'):
-        normalise_module_config_entry(
-            dict(PAIR, submodules=[dict(_sub('a', instance='other'), parameterisation='x'),
-                                   _sub('b')]))
-    records = _two_sources('other', None)
-    records[0]['parameterisation'] = 'default'
-    with pytest.raises(ValueError, match=r'"s1".*"parameterisation".*"instance"'):
-        _load(tmp_path, library, records)
     # a bad name is reported under the key it was given as
     with pytest.raises(ValueError, match=r'"parameterisation" is "a/b"'):
         normalise_vessel_record(_rec('s', 'pulse_src', 'v1', parameterisation='a/b'), 'test', 0)
@@ -859,19 +857,20 @@ def test_conflicting_old_and_new_keys_are_an_error(tmp_path, library):
 
 
 @pytest.mark.unit
-def test_the_json_schemas_accept_parameterisations():
+def test_the_json_schemas_require_parameterisation_on_records():
     jsonschema = pytest.importorskip('jsonschema')
     from libcuflynx.schemas import MODULE_CONFIG_SCHEMA, MODULE_ARRAY_SCHEMA, load_schema
     arrays = jsonschema.Draft202012Validator(load_schema(MODULE_ARRAY_SCHEMA))
     configs = jsonschema.Draft202012Validator(load_schema(MODULE_CONFIG_SCHEMA))
-    arrays.validate([_rec('s1', 'pulse_src', 'v1', parameterisation='other'),
-                     _rec('s2', 'pulse_src', 'v1', instance='other')])
+    arrays.validate([_rec('s1', 'pulse_src', 'v1', parameterisation='other')])
     configs.validate([_pulse_entry('v1', default_parameterisation='default'), _renamed(PAIR)])
+    assert not arrays.is_valid([_rec('s2', 'pulse_src', 'v1', instance='other')])
+    assert not configs.is_valid([dict(_renamed(PAIR), submodules=[dict(_sub('a'), instance='x')])])
     for bad in ('', ' ', 'a/b', '..', 3):
         assert not arrays.is_valid([_rec('s', 'pulse_src', 'v1', parameterisation=bad)]), bad
     assert not configs.is_valid([_pulse_entry('v1', default_parameterisation='a/b')])
     assert not configs.is_valid([dict(_renamed(PAIR),
-                                      submodules=[_renamed(_sub('a', instance=''))])])
+                                      submodules=[_sub('a', parameterisation='')])])
 
 
 # --------------------------------------------------------------------------------------------
@@ -903,7 +902,7 @@ def _generate_resource(work_dir, prefix):
 @pytest.mark.slow
 @pytest.mark.usefixtures('skip_generated_model_checks')
 @pytest.mark.parametrize('prefix', _resource_prefixes())
-def test_resources_models_generate_identically_without_the_instance_lookup(
+def test_resources_models_generate_identically_without_the_parameterisation_lookup(
         tmp_path, monkeypatch, prefix):
     if not os.path.exists(os.path.join(RESOURCES_DIR, f'{prefix}_parameters.csv')):
         pytest.skip(f'{prefix} has no parameters file')
@@ -965,14 +964,14 @@ def test_0d_1d_split_accepts_records_with_extra_keys(tmp_path):
 
 
 def test_an_empty_optional_csv_cell_is_not_set(tmp_path):
-    '''An empty "instance" cell in a CSV module array (e.g. the 0D part libcuflynx writes itself
-    for the 1D split, where appended rows have no instance) leaves the key unset rather than
-    giving an invalid empty instance name.'''
+    '''An empty "parameterisation" cell in a CSV module array (e.g. the 0D part libcuflynx
+    writes itself for the 1D split, where appended rows have none) leaves the key unset rather
+    than giving an invalid empty name.'''
     from libcuflynx.utilities.config_schemas import read_module_array_records
     p = tmp_path / 'm_module_array.csv'
-    p.write_text('name,BC_type,vessel_type,inp_vessels,out_vessels,instance\n'
+    p.write_text('name,BC_type,vessel_type,inp_vessels,out_vessels,parameterisation\n'
                  'a,nn,pulse_src,,b,other\n'
                  'b,nn,volume_sum,a,,\n')
     recs = read_module_array_records(str(p))
-    assert recs[0]['instance'] == 'other'
-    assert 'instance' not in recs[1]
+    assert recs[0]['parameterisation'] == 'other'
+    assert 'parameterisation' not in recs[1]

@@ -19,7 +19,7 @@ import re
 import os
 
 from libcuflynx.utilities.module_library import ModuleSources
-from libcuflynx.utilities.module_instances import reissue_warnings
+from libcuflynx.utilities.parameterisations import reissue_warnings
 from libcuflynx.utilities.vessel_bc import is_vessel_bc
 
 # The columns a {prefix}_parameters.csv must provide. They are looked up by header name, so a file
@@ -55,7 +55,7 @@ def merge_default_parameters(parameters_array, extra_param_rows):
 
 def _append_vessel_row(df, name, BC_type, vessel_type, inp_vessels, out_vessels, blank=''):
     """Append a vessel row by column name. Any other column (a module array's extra keys, e.g.
-    ``instance``) gets ``blank``: ``''`` in a string frame, ``[]`` in the list-form one. Appending
+    ``parameterisation``) gets ``blank``: ``''`` in a string frame, ``[]`` in the list-form one. Appending
     a fixed 5-element list failed with "cannot set a row with mismatched columns" as soon as the
     array had one."""
     values = {'name': name, 'BC_type': BC_type, 'vessel_type': vessel_type,
@@ -96,7 +96,7 @@ class CSV0DModelParser(object):
         '''
         Writes the 0D and 1D parts of the module array (JSON or CSV, either layout, with its
         supermodule instances expanded) to vessel_filename_0d and vessel_filename_1d, as CSV.
-        Returns the default parameter rows of the supermodules and module instances (see
+        Returns the default parameter rows of the supermodules and parameterisations (see
         config_schemas.load_module_array).
         '''
         records, extra_param_rows = load_expanded_vessel_records(self.vessel_filename,
@@ -466,15 +466,15 @@ class CSV0DModelParser(object):
         # before anything below (the heart special case, the module-config join) sees it.
         supermodule_registry = self.module_sources.supermodule_registry()
         # Component entries with the config file each came from: a record's parameterisation
-        # ("parameterisation"/"instance", or the entry's default) is read from
+        # ("parameterisation", or the entry's default) is read from
         # parameterisations/ (or the older instances/) next to it
-        # (utilities/module_instances.py).
+        # (utilities/parameterisations.py).
         component_registry = self.module_sources.component_registry()
         # The module array is JSON records or a CSV converted to the same records
         # (utilities/config_schemas.py). extra_param_rows are the default parameters under
-        # the expanded names -- supermodule instances and default_parameters, then module
-        # instances -- and are merged into the parameters below.
-        # Instances that set one global to different values warn; those warnings are held
+        # the expanded names -- supermodule parameterisations and default_parameters, then
+        # module parameterisations -- and are merged into the parameters below.
+        # Parameterisations that set one global to different values warn; those warnings are held
         # until the host parameters are read, since a host value settles the conflict.
         with warnings.catch_warnings(record=True) as held:
             warnings.simplefilter('always')
@@ -536,7 +536,7 @@ class CSV0DModelParser(object):
         # TODO change to using a pandas dataframe
         parameters_array_orig = self.csv_parser.get_data_as_nparray(self.parameter_filename, True)
         reissue_warnings(held, settled=set(parameters_array_orig['variable_name'].tolist()))
-        # Supermodule and module-instance parameters fill in whatever the parameters file does not set,
+        # Supermodule and parameterisation parameters fill in whatever the parameters file does not set,
         # before the reduction, so everything downstream (generation, parameter id) sees them.
         parameters_array_orig = merge_default_parameters(parameters_array_orig, extra_param_rows)
         # Reduce parameters_array so that it only includes the required parameters for
