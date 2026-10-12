@@ -40,11 +40,14 @@ Fixture modules (in an ``external_modules_dir``):
 * ``reader_out`` / ``reader_in`` -- ``reader`` with a plain exit / entrance flow_port [y];
   ``reader_out_mul`` has a Multiply exit flow_port (factor 2) instead.
 * ``collector2`` -- ``collector`` with a second "Sum" port (gain_port) on the same variable.
+* ``gain_bc_label`` -- ``gain`` with a plain exit flow_port whose config calls the ``x`` its
+  CellML computes a boundary_condition.
 """
 import copy
 import filecmp
 import json
 import os
+import re
 
 import numpy as np
 import pandas as pd
@@ -198,6 +201,8 @@ def modules_config(volume_sum="sum", gain_factor=2.5):
         _module("collector2", "collector_type",
                 [_port("flow_port", ["v_in_sum"], "Sum"), _port("gain_port", ["v_in_sum"], "Sum")],
                 [], _seen_vars("v_in_sum")),
+        _module("gain_bc_label", "gain_type", [], [_port("flow_port", ["x"])],
+                [["x", "m3_per_s", "access", "boundary_condition"]] + _prescribed_vars("x")[1:]),
     ]
     if gain_factor is None:
         del config[6]["exit_ports"][0]["multiply_factor"]
@@ -580,6 +585,19 @@ def test_bcs_connected_only_to_each_other_are_rejected(tmp_path, library_dir):
     with pytest.raises(ValueError, match='"y" of "a", "y" of "b" are connected only to each other'):
         _generate(str(tmp_path), library_dir, "schema_bc_only", rows,
                   [("y_a", "m3_per_s", 1.0), ("y_b", "m3_per_s", 2.0)])
+
+
+@pytest.mark.integration
+def test_a_bc_its_cellml_computes_supplies_the_bc_it_is_connected_to(tmp_path, library_dir,
+                                                                     capsys):
+    rows = [("g", "gain_bc_label", [], ["r"]), ("r", "reader_in", ["g"], [])]
+    path = _generate(str(tmp_path), library_dir, "schema_bc_label", rows,
+                     _prescribed_params("g", 1.0e-5, 0.5, 3.0))
+    assert re.search(r'WARNING: "x" of "g" is a boundary_condition.*its CellML computes it',
+                     capsys.readouterr().out)
+    res = _simulate(path, ["g/x", "r/v_seen"])
+    np.testing.assert_allclose(res["r/v_seen"], res["g/x"], **EXACT)
+    assert np.ptp(res["g/x"]) > 0
 
 
 @pytest.mark.integration

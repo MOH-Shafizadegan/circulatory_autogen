@@ -663,7 +663,7 @@ class CVS0DCellMLGenerator(object):
 
         # a list-form multi_port "sum" variable with no neighbour through its port is zero
         self.__register_unconnected_multiport_sums(module_df)
-        self.__check_bc_only_groups()
+        self.__check_bc_only_groups(module_df)
 
         # check whether the BC variables have been set with a matched module, if so, remove them from 
         # parameters array and if not, set them to constant
@@ -1191,9 +1191,13 @@ class CVS0DCellMLGenerator(object):
             pending_mappings[key][0].extend(variables_1)
             pending_mappings[key][1].extend(variables_2)
 
-    def __check_bc_only_groups(self):
+    def __check_bc_only_groups(self, module_df):
         """Raise ValueError for boundary_condition variables mapped only to each other: once
-        they are removed nothing computes them."""
+        they are removed nothing computes them.
+
+        A group is accepted when one of its variables is declared public_interface="out" in its
+        module's CellML, i.e. the module computes it although its config calls it a
+        boundary_condition."""
         parent = {}
 
         def find(node):
@@ -1214,13 +1218,40 @@ class CVS0DCellMLGenerator(object):
         groups = {}
         for node in parent:
             groups.setdefault(find(node), []).append(node)
+        module_types = dict(zip(module_df["name"], module_df["module_type"]))
         for group in groups.values():
-            if not any(node in supplied for node in group):
+            if any(node in supplied for node in group):
+                continue
+            computed = [(module, variable) for module, variable in sorted(group)
+                        if variable in self.__cellml_outputs(module_types.get(module))]
+            if computed:
+                module, variable = computed[0]
+                print(f'WARNING: "{variable}" of "{module}" is a boundary_condition in its module '
+                      f'config, but its CellML computes it (public_interface="out"); it supplies '
+                      f'the boundary_condition variables it is connected to.')
+            else:
                 names = ', '.join(f'"{variable}" of "{module}"' for module, variable in sorted(group))
                 raise ValueError(
                     f'The boundary_condition variables {names} are connected only to each other, '
                     f'so nothing computes them. Connect one of them to a module that computes it, '
                     f'or make one a constant.')
+
+    def __cellml_outputs(self, module_type):
+        """The variables the CellML component ``module_type`` declares public_interface="out"."""
+        outputs = set()
+        for path in self.module_scripts:
+            if not self.module_sources.uses_component(path, module_type):
+                continue
+            with open(path) as f:
+                block = re.search(rf'<component\s+name="{re.escape(str(module_type))}"\s*>(.*?)</component>',
+                                  f.read(), re.S)
+            if block is None:
+                continue
+            for tag in re.findall(r'<variable\b[^>]*>', block.group(1)):
+                name = re.search(r'\bname="([^"]*)"', tag)
+                if name and re.search(r'\bpublic_interface="out"', tag):
+                    outputs.add(name.group(1))
+        return outputs
 
     def __map_list_multi_port_pair(self, main_module, out_module, main_port, out_port,
                                    variables_1, variables_2, pending_mappings):
