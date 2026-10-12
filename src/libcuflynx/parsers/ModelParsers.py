@@ -568,7 +568,7 @@ class CSV0DModelParser(object):
         # here on every name is the model's {variable}_{vessel}.
         parameters_array_orig = _with_model_names(parameters_array_orig, vessels_df,
                                                   self.parameter_filename)
-        # a host value settles a conflict between instances (written global/T or T)
+        # a host value settles a conflict between parameterisations (written global/T or T)
         reissue_warnings(held, settled=set(parameters_array_orig['variable_name'].tolist()))
         # Supermodule and parameterisation parameters fill in whatever the parameters file does not set,
         # before the reduction, so everything downstream (generation, parameter id) sees them.
