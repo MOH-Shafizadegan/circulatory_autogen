@@ -19,8 +19,8 @@ PhLynx's ``name,module_type,module_subtype,inp_instances,out_instances``, which 
 multi_port values are case-insensitive. A whole-port "Sum" on a port other than a
 volume_port makes the port's single variable the sum of the neighbours' variables (read as
 the list form ``["sum"]``); on a volume_port it keeps the legacy sum_blood_volume sum.
-"Multiply" on an upstream port sets each neighbour's variable to ``multiply_factor`` times
-this module's.
+"Multiply" on a port, at either end of a connection, sets each neighbour's variable to
+``multiply_factor`` times this module's.
 
 Fixture modules (in an ``external_modules_dir``):
 
@@ -35,6 +35,11 @@ Fixture modules (in an ``external_modules_dir``):
 * ``reader`` -- entrance gain_port [y]; ``y_seen = y``. ``reader_multi`` has a "True" port.
 * ``gain_sum`` -- entrance gain_port [y_sum], multi_port "Sum"; ``y_seen = y_sum``.
 * ``gain_vp`` / ``reader_vp`` -- ``gain`` (factor 3) and ``reader`` on vessel_ports.
+* ``gain_in`` -- ``gain`` with its Multiply port (factor 2) an entrance flow_port, so it is
+  the downstream end; ``gain_flow`` has a Multiply exit flow_port.
+* ``reader_out`` / ``reader_in`` -- ``reader`` with a plain exit / entrance flow_port [y];
+  ``reader_out_mul`` has a Multiply exit flow_port (factor 2) instead.
+* ``collector2`` -- ``collector`` with a second "Sum" port (gain_port) on the same variable.
 """
 import copy
 import filecmp
@@ -182,6 +187,17 @@ def modules_config(volume_sum="sum", gain_factor=2.5):
         _module("reader_vp", "reader_type", [_port("vessel_port", ["y"])], [], _seen_vars("y")),
         _module("gain_sum", "gain_sum_type", [_port("gain_port", ["y_sum"], "Sum")], [],
                 _seen_vars("y_sum")),
+        _module("gain_in", "gain_type",
+                [_port("flow_port", ["x"], "Multiply", multiply_factor=2)], [], _prescribed_vars("x")),
+        _module("gain_flow", "gain_type", [], [_port("flow_port", ["x"], "Multiply")],
+                _prescribed_vars("x")),
+        _module("reader_out", "reader_type", [], [_port("flow_port", ["y"])], _seen_vars("y")),
+        _module("reader_in", "reader_type", [_port("flow_port", ["y"])], [], _seen_vars("y")),
+        _module("reader_out_mul", "reader_type", [],
+                [_port("flow_port", ["y"], "Multiply", multiply_factor=2)], _seen_vars("y")),
+        _module("collector2", "collector_type",
+                [_port("flow_port", ["v_in_sum"], "Sum"), _port("gain_port", ["v_in_sum"], "Sum")],
+                [], _seen_vars("v_in_sum")),
     ]
     if gain_factor is None:
         del config[6]["exit_ports"][0]["multiply_factor"]
@@ -504,6 +520,66 @@ def test_multiply_on_vessel_ports(tmp_path, library_dir):
     for reader in ["rd_a", "rd_b"]:
         np.testing.assert_allclose(res[f"{reader}/v_seen"], 3.0 * res["g/x"], **EXACT)
     assert np.ptp(res["g/x"]) > 0
+
+
+@pytest.mark.integration
+def test_multiply_on_the_downstream_end(tmp_path, library_dir):
+    """A Multiply entrance port scales its variable into the upstream neighbour: into a plain
+    port (y = 2 x) and into a "Sum" port (one term of the sum)."""
+    rows = [("rd", "reader_out", [], ["g"]), ("g", "gain_in", ["rd"], []),
+            ("dist", "distributor", [], ["g2", "sink"]), ("g2", "gain_in", ["dist"], []),
+            ("sink", "flow_sink", ["dist"], [])]
+    params = (_prescribed_params("g", 1.0e-5, 0.5, 3.0) + _prescribed_params("g2", 2.0e-5, 0.4, 8.0) +
+              _prescribed_params("sink", 3.0e-6, 0.4, 5.0))
+    path = _generate(str(tmp_path), library_dir, "schema_mul_down", rows, params)
+    res = _simulate(path, ["g/x", "rd/v_seen", "g2/x", "sink/v", "dist/v_seen"])
+    np.testing.assert_allclose(res["rd/v_seen"], 2.0 * res["g/x"], **EXACT)
+    np.testing.assert_allclose(res["dist/v_seen"], 2.0 * res["g2/x"] + res["sink/v"], **EXACT)
+    assert np.ptp(res["rd/v_seen"]) > 0
+
+
+@pytest.mark.integration
+def test_multiply_on_both_ends_is_rejected(tmp_path, library_dir):
+    rows = [("g1", "gain_flow", [], ["g2"]), ("g2", "gain_in", ["g1"], [])]
+    params = _prescribed_params("g1", 1.0e-5, 0.5, 3.0) + _prescribed_params("g2", 2.0e-5, 0.4, 8.0)
+    with pytest.raises(ValueError, match='both ports are "Multiply"'):
+        _generate(str(tmp_path), library_dir, "schema_mul_both", rows, params)
+
+
+@pytest.mark.integration
+def test_a_variable_summed_through_two_ports_is_rejected(tmp_path, library_dir):
+    rows = [("src", "flow_src", [], ["coll"]), ("g", "gain", [], ["coll"]),
+            ("coll", "collector2", ["src", "g"], [])]
+    params = _prescribed_params("src", 1.0e-5, 0.5, 6.0) + _prescribed_params("g", 2.0e-5, 0.4, 8.0)
+    with pytest.raises(ValueError, match='"coll" sums "v_in_sum" through ports "flow_port" and '
+                                         '"gain_port"; a variable can be summed through one port only'):
+        _generate(str(tmp_path), library_dir, "schema_sum_two_ports", rows, params)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("rows, expected", [
+    # a BC that is only a sum term
+    ([("b", "reader_out", [], ["coll"]), ("coll", "collector", ["b"], [])],
+     {"b/v_seen": 3.0e-6, "coll/v_seen": 3.0e-6}),
+    # a BC that is the source of a Multiply; its target BC is computed
+    ([("b", "reader_out_mul", [], ["r"]), ("r", "reader_in", ["b"], [])],
+     {"b/v_seen": 3.0e-6, "r/v_seen": 6.0e-6}),
+])
+def test_a_bc_that_only_feeds_a_sum_or_multiply_keeps_its_value(tmp_path, library_dir, rows,
+                                                                 expected):
+    path = _generate(str(tmp_path), library_dir, "schema_bc_term", rows,
+                     [("y_b", "m3_per_s", 3.0e-6)])
+    res = _simulate(path, list(expected), sim_time=0.1)
+    for name, value in expected.items():
+        np.testing.assert_allclose(res[name], value, rtol=1e-12, err_msg=name)
+
+
+@pytest.mark.integration
+def test_bcs_connected_only_to_each_other_are_rejected(tmp_path, library_dir):
+    rows = [("a", "reader_out", [], ["b"]), ("b", "reader_in", ["a"], [])]
+    with pytest.raises(ValueError, match='"y" of "a", "y" of "b" are connected only to each other'):
+        _generate(str(tmp_path), library_dir, "schema_bc_only", rows,
+                  [("y_a", "m3_per_s", 1.0), ("y_b", "m3_per_s", 2.0)])
 
 
 @pytest.mark.integration

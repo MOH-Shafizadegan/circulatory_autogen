@@ -10,13 +10,12 @@ case-insensitive (``"sum"``, ``"Sum"`` and ``"SUM"`` are the same):
 * ``"sum"`` on any other port -- the port must map exactly one variable, which is the sum, over
   every module connected through the port, of the neighbour's corresponding variable. It is
   read as the list form ``["sum"]`` (below). This is PhLynx's ``"Sum"``.
-* ``"Multiply"`` -- the port must map exactly one variable. On the upstream side of a
-  connection (an exit or general port of the module listing the neighbour in its
-  out_vessels), each connected module's corresponding variable is set to
-  ``multiply_factor`` (an optional number on the port, default 1) times this module's
-  variable; if the neighbour's port is a "sum", the scaled value is one term of its sum. On
-  the downstream side of a connection a Multiply port is mapped like ``"True"``. This is
-  PhLynx's ``"Multiply"``, whose factor PhLynx keeps in its UI rather than the config.
+* ``"Multiply"`` -- the port must map exactly one variable. Whichever end of a connection
+  it is on, each connected module's corresponding variable is set to ``multiply_factor`` (an
+  optional number on the port, default 1) times this module's variable; if the neighbour's
+  port is a "sum", the scaled value is one term of its sum. A connection cannot have
+  Multiply on both ends. This is PhLynx's ``"Multiply"``, whose factor PhLynx keeps in its UI
+  rather than the config.
 
 The list form gives one entry per port variable, aligned with the port's ``variables``::
 
@@ -28,7 +27,7 @@ The list form gives one entry per port variable, aligned with the port's ``varia
   connected neighbour (normally an output: one source, many sinks).
 
 A list-form port accepts any number of neighbours, on entrance, exit or general ports.
-Only one side of a connection can sum.
+Only one side of a connection can sum, and a variable can be summed through one port only.
 
 ``normalise_port_multi_port`` puts a port's multi_port in canonical form when the module
 config is loaded (utilities/config_schemas.py), so the generator only sees ``"True"``,
@@ -61,6 +60,11 @@ def list_multi_port(port):
     if not isinstance(value, (list, tuple)):
         return None
     return [_canonical_entry(entry) for entry in value]
+
+
+def is_blank_variable(variable):
+    """Whether a port variable slot is empty ('' or None), i.e. maps nothing."""
+    return variable in ('', None, 'None', 'none')
 
 
 def is_multiply_port(port):
