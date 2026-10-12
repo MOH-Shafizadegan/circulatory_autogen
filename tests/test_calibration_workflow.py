@@ -198,11 +198,11 @@ def test_a_step_must_land_in_the_target(library):
 def test_an_ambiguous_submodule_must_be_named(library):
     version_dir = os.path.join(library['modules'], 'double', 'versions', 'v1')
     os.makedirs(os.path.join(version_dir, 'instances', 'default'))
-    sub = {'module_type': 'lin_a', 'module_subtype': 'v1', 'instance': 'default',
+    sub = {'module_type': 'lin_a', 'module_subtype': 'v1', 'parameterisation': 'default',
            'inp_instances': [], 'out_instances': []}
     _write_json(os.path.join(version_dir, 'double_v1_modules_config.json'), [{
         'module_type': 'double', 'module_subtype': 'v1', 'module_format': 'supermodule',
-        'default_instance': 'default',
+        'default_parameterisation': 'default',
         'submodules': [dict(sub, name='A1'), dict(sub, name='A2')]}])
     with open(os.path.join(version_dir, 'instances', 'default', 'default_parameters.csv'),
               'w') as f:

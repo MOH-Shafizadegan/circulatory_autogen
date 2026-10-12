@@ -531,7 +531,7 @@ def target_module_info(resolved):
             path = prefix + sub['name']
             info[f'{STEP_VESSEL}_{path}'] = {'module_type': sub['vessel_type'],
                                              'version': sub['BC_type'],
-                                             'instance': sub.get('instance')}
+                                             'instance': sub.get('parameterisation')}
             nested = _supermodule(resolved, sub)
             if nested is not None:
                 walk(nested, path + '_')

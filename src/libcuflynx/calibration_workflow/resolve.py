@@ -10,7 +10,7 @@ from libcuflynx.calibration_workflow import naming
 from libcuflynx.calibration_workflow.spec import WorkflowError
 from libcuflynx.parsers.PrimitiveParsers import ObsAndParamDataParser
 from libcuflynx.utilities.config_schemas import is_supermodule_entry
-from libcuflynx.utilities.module_instances import instances_dir
+from libcuflynx.utilities.parameterisations import parameterisations_dir
 from libcuflynx.utilities.module_library import ModuleSources
 
 
@@ -185,7 +185,7 @@ def _resolve_instance(target, components, supermodules, where, need_parameters):
         raise WorkflowError(
             f'{where}: no module {target.module_type} version {target.version} in the module '
             f'library (known: {known[:40]}{" ..." if len(known) > 40 else ""}).')
-    instance_dir = os.path.join(instances_dir(entry['config_path']), target.instance)
+    instance_dir = os.path.join(parameterisations_dir(entry['config_path']), target.instance)
     resolved = ResolvedInstance(target=target, entry=entry, instance_dir=instance_dir)
     if not os.path.isdir(instance_dir):
         raise WorkflowError(f'{where}: {target.label()} has no instance directory '

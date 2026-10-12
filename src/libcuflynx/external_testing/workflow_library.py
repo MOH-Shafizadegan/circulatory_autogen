@@ -117,7 +117,7 @@ def _params_for_id(path, rows):
 
 
 def _instance(modules, module_type, instance, parameters, obs=None, params_for_id=None):
-    directory = os.path.join(modules, module_type, 'versions', 'v1', 'instances', instance)
+    directory = os.path.join(modules, module_type, 'versions', 'v1', 'parameterisations', instance)
     _parameters(os.path.join(directory, f'{instance}_parameters.csv'), parameters)
     if obs is not None:
         _write_json(os.path.join(directory, f'{instance}_obs_data.json'), _obs(instance, obs))
@@ -147,14 +147,14 @@ def build_workflow_library(root, settings=None):
             'module_type': module_type, 'module_subtype': 'v1',
             'component_file': f'{module_type}_v1_modules.cellml',
             'component_type': f'{module_type}_type', 'module_format': 'cellml',
-            'default_instance': 'default', 'entrance_ports': entrance, 'exit_ports': exit_,
+            'default_parameterisation': 'default', 'entrance_ports': entrance, 'exit_ports': exit_,
             'general_ports': [], 'variables_and_units': variables}])
         param = 'q' if module_type == 'lin_c' else 'p'
         _instance(modules, module_type, 'default', [(param, 1.0)])
 
     def submodule(name, module_type, inp=(), out=()):
         return {'name': name, 'module_type': module_type, 'module_subtype': 'v1',
-                'instance': 'default', 'inp_instances': list(inp), 'out_instances': list(out)}
+                'parameterisation': 'default', 'inp_instances': list(inp), 'out_instances': list(out)}
 
     for module_type, submodules in (
             ('twin', [submodule('A', 'lin_a'), submodule('B', 'lin_b')]),
@@ -162,7 +162,7 @@ def build_workflow_library(root, settings=None):
         _write_json(os.path.join(modules, module_type, 'versions', 'v1',
                                  f'{module_type}_v1_modules_config.json'),
                     [{'module_type': module_type, 'module_subtype': 'v1',
-                      'module_format': 'supermodule', 'default_instance': 'default',
+                      'module_format': 'supermodule', 'default_parameterisation': 'default',
                       'submodules': submodules}])
 
     paths = {'modules': modules}

@@ -19,7 +19,8 @@ import os
 from dataclasses import dataclass, field
 
 from libcuflynx.utilities.config_schemas import load_module_config
-from libcuflynx.utilities.module_instances import INSTANCES_DIR, check_instance_name
+from libcuflynx.utilities.parameterisations import (INSTANCES_DIR, PARAMETERISATIONS_DIR,
+                                                    check_parameterisation_name)
 
 SCHEMA_VERSION = 1
 WORKFLOW_FILE_NAME = 'calibration_workflow.json'
@@ -195,7 +196,7 @@ def parse_workflow(raw, path=None, module_library_dirs=None):
             raise WorkflowError(
                 f'{where}: no "target". Name the supermodule instance whose parameters the '
                 f'workflow calibrates, or keep the file in that instance\'s directory '
-                f'(<module_type>/versions/<version>/{INSTANCES_DIR}/<instance>/).')
+                f'(<module_type>/versions/<version>/{PARAMETERISATIONS_DIR}/<instance>/).')
 
     settings = _settings(raw.get('settings', {}), f'{where}: "settings"')
 
@@ -213,13 +214,14 @@ def parse_workflow(raw, path=None, module_library_dirs=None):
 
 def target_from_location(path):
     '''The instance whose directory holds ``path``:
-    ``.../<type>/versions/<version>/instances/<instance>/calibration_workflow.json``, with
+    ``.../<type>/versions/<version>/parameterisations/<instance>/calibration_workflow.json``
+    (or an older library's ``instances/``), with
     the module type and version read from the version's ``*_modules_config.json``.'''
     if not path:
         return None
     instance_dir = os.path.dirname(os.path.abspath(path))
     instances = os.path.dirname(instance_dir)
-    if os.path.basename(instances) != INSTANCES_DIR:
+    if os.path.basename(instances) not in (PARAMETERISATIONS_DIR, INSTANCES_DIR):
         return None
     version_dir = os.path.dirname(instances)
     configs = sorted(f for f in os.listdir(version_dir) if f.endswith('_modules_config.json'))
@@ -255,7 +257,7 @@ def _target(value, where):
         if not isinstance(value[key], str) or not value[key].strip():
             raise WorkflowError(f'{where}: "{key}" must be a non-empty string.')
     try:
-        instance = check_instance_name(value['instance'], where)
+        instance = check_parameterisation_name(value['instance'], where, key='instance')
     except ValueError as exc:
         raise WorkflowError(str(exc)) from exc
     return Target(value['module_type'].strip(), value['version'].strip(), instance)
@@ -307,7 +309,7 @@ def _step(value, index, where):
     if not isinstance(step_id, str) or not step_id.strip():
         raise WorkflowError(f'{label}: "id" must be a non-empty string.')
     try:
-        check_instance_name(step_id, label, key='id')  # it names an output directory
+        check_parameterisation_name(step_id, label, key='id')  # it names an output directory
     except ValueError as exc:
         raise WorkflowError(str(exc)) from exc
     label = f'{where}: step "{step_id}"'

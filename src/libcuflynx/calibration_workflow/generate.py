@@ -52,7 +52,7 @@ def generate_module_instance(target, work_dir, file_prefix, overrides=(), librar
     generated_models_dir = os.path.join(work_dir, 'generated_models')
     os.makedirs(resources_dir, exist_ok=True)
     record = {'name': vessel, 'module_type': target.module_type,
-              'module_subtype': target.version, 'instance': target.instance,
+              'module_subtype': target.version, 'parameterisation': target.instance,
               'inp_instances': [], 'out_instances': []}
     with open(os.path.join(resources_dir, f'{file_prefix}_module_array.json'), 'w') as f:
         json.dump([record], f, indent=1)
