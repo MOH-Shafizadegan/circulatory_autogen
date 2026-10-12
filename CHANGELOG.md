@@ -16,6 +16,8 @@ next release; add to that section as you land a change.
   that is a sum result or Multiply output, is removed. A BC that is only a sum term, the source
   of a Multiply, or mapped to a blank (`""`) slot keeps its own value (it used to lose it and
   leave the model underdetermined). BCs connected only to each other are a `ValueError`.
+  The built-in `pulmonary_GE` computes `C_CO2_a` and `C_O2_a`, so they are now `variable`, not
+  `boundary_condition`.
 - **Units.** A coupling between different but compatible units is mapped directly, and the
   solver converts it in the direction the value flows; the generated `unit_converter_*`
   components are gone. Couplings between affine units (kelvin and celsius) are a `ValueError`.
