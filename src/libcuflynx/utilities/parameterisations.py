@@ -324,6 +324,12 @@ def component_parameterisation_rows(records, component_registry, source=None, se
         globals_ = global_constants(entry)
         for row in raw:
             row = dict(row)
+            if '/' in row['variable_name']:
+                raise ValueError(
+                    f'{where}: parameterisation "{used}" names "{row["variable_name"]}", but a '
+                    f'parameterisation\'s parameters are the module\'s own variables, named '
+                    f'without a vessel ("C", not "lv/C"); the vessel is the module-array record '
+                    f'that uses it.')
             if row['variable_name'] not in globals_:
                 row['variable_name'] = f'{row["variable_name"]}_{record["name"]}'
             else:

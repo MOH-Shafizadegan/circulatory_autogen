@@ -136,6 +136,7 @@ class SensitivityAnalysis():
         self._obs_data_dict = None
         self._params_for_id = None
         self._local_engine = None
+        self._prediction_engine = None
         self.local_sensitivities = None
 
     @classmethod
@@ -302,17 +303,20 @@ class SensitivityAnalysis():
         """
         if self._local_engine is not None:
             return self._local_engine
-        from libcuflynx.param_id.paramID import CVS0DParamID
         if self._inp_data_dict is None or self._obs_data_dict is None or self._params_for_id is None:
             raise RuntimeError(
                 "Local SA needs the config, ground-truth data and params for id: build via "
                 "init_from_dict and call set_ground_truth_data / set_params_for_id first.")
+        self._local_engine = self._new_local_engine(self._obs_data_dict)
+        return self._local_engine
+
+    def _new_local_engine(self, obs_data_dict):
+        from libcuflynx.param_id.paramID import CVS0DParamID
         inp = dict(self._inp_data_dict)
         inp['do_ad'] = True  # local SA is derivative-based
         engine = CVS0DParamID.init_from_dict(inp)
-        engine.set_ground_truth_data(self._obs_data_dict)
+        engine.set_ground_truth_data(obs_data_dict)
         engine.set_params_for_id(self._params_for_id)
-        self._local_engine = engine
         return engine
 
     def run_local_sensitivity(self, sa_options=None):
@@ -417,10 +421,10 @@ class SensitivityAnalysis():
     def _prediction_feature_sensitivities(self, engine, nominal, data_sens):
         """d(prediction feature)/d(param) for the prediction items with an operation.
 
-        Always central finite differences (``fd_rel_step``, default 1e-3), whichever arm gave
-        the data_item rows: the analytic arms differentiate the cost's observables, and a
-        prediction item is not one. Costs 2M extra simulations (emulator evaluations with
-        use_emulator, which then must have been trained with include_prediction_items).
+        By the same arm as the data_item rows (see ``_analytic_prediction_sensitivities``),
+        and by central finite differences (``fd_rel_step``, default 1e-3; 2M extra simulations)
+        with ``gradient_method: FD``, over an emulator (which then must have been trained with
+        include_prediction_items), or when that arm cannot handle the prediction features.
         Returns ``(sensitivities, nominal values, row names)``.
         """
         from libcuflynx.param_id import prediction_features
@@ -439,10 +443,20 @@ class SensitivityAnalysis():
                             engine.model_path, prediction_info=info,
                             prediction_indices=indices),
                 min_r2=engine._use_time_setting('min_r2', 0.9))
-        # the same step the FD arm of the data_item rows reads
-        fd_rel_step = (self.sa_options or {}).get('fd_rel_step') or 1e-3
-        psens, pnominal = prediction_features.feature_sensitivities(
-            engine, nominal, info, indices, h=float(fd_rel_step))
+        method = (self.sa_options or {}).get('gradient_method')
+        psens = None
+        if not getattr(engine, 'emulates_features', False) and str(method or '').upper() != 'FD':
+            psens = self._analytic_prediction_sensitivities(engine, info, indices, nominal, method)
+        if psens is None:
+            # the same step the FD arm of the data_item rows reads
+            fd_rel_step = (self.sa_options or {}).get('fd_rel_step') or 1e-3
+            psens, pnominal = prediction_features.feature_sensitivities(
+                engine, nominal, info, indices, h=float(fd_rel_step))
+        else:
+            _, values = prediction_features.simulate_features(engine, nominal, info, indices)
+            if values is None:
+                raise RuntimeError('Local sensitivity nominal simulation failed to converge.')
+            pnominal = dict(zip(names, values))
         # A prediction's name is unique among data_item_names, but a data_item's *label* is
         # free text; never let a prediction row overwrite a data_item row.
         rows, out, values = [], {}, {}
@@ -452,6 +466,39 @@ class SensitivityAnalysis():
             out[row] = psens[name]
             values[row] = pnominal[name]
         return out, values, rows
+
+    def _analytic_prediction_sensitivities(self, engine, info, indices, nominal, method):
+        """The prediction features' sensitivities by the engine's own analytic arm.
+
+        The arms (CasADi jacobian, Myokit CVODES sensitivities) differentiate the data_items'
+        features -- not through the cost, but only for the variables the data_items name. So
+        the prediction features are written as the data_items of a second engine (each over
+        its own experiment and sub-experiment, value and std placeholders the arms do not
+        read) and differentiated by the same code. An operation_kwargs reference to an earlier
+        prediction feature becomes one to an earlier data_item, which resolves the same way.
+        Returns None, after a warning, when the arm cannot take them (Myokit's needs every
+        feature in one and the same sub-experiment); the caller then uses finite differences.
+        """
+        from libcuflynx.param_id import prediction_features
+        if self._prediction_engine is None:
+            segments = prediction_features.feature_segments(info, indices, engine.protocol_info)
+            raw = self._obs_data_dict['prediction_items']
+            items = [dict({k: v for k, v in raw[i].items() if k != 'obs_dt'},
+                          experiment_idx=exp, subexperiment_idx=sub, data_type='constant',
+                          value=0.0, std=1.0, weight=1.0)
+                     for i, (exp, sub) in zip(indices, segments)]
+            self._prediction_engine = self._new_local_engine(
+                dict(self._obs_data_dict, data_items=items, prediction_items=[]))
+        view = self._prediction_engine.param_id
+        try:
+            sens = view.get_observable_sensitivities(nominal, gradient_method=method)
+        except NotImplementedError as error:
+            warnings.warn(f'{error} The prediction features\' local sensitivities are computed '
+                          f'by central finite differences instead.', stacklevel=3)
+            return None
+        names = view.obs_info['data_item_names']
+        return {str(names[i]): sens[view._observable_label(i)]
+                for i in view.obs_info['const_idx_to_obs_idx']}
 
     def _nominal_feature_magnitudes(self, engine, nominal, output_names):
         """|feature| at the nominal params, keyed by observable label, for relative scaling."""

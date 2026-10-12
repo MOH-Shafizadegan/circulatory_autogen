@@ -5,6 +5,28 @@ next release; add to that section as you land a change.
 
 ## Unreleased
 
+### Added — parameter names written `<vessel>/<variable>`
+
+- **The `/` form.** A parameters file may name a module's parameter `aortic_root/C` (or `heart/lv/E`, for a supermodule's expanded submodule; `global/R` or `R` for a global). A supermodule's parameterisation and `default_parameters` rows name a submodule's parameter `lv/E`, or `soma/i_M/rho_M` when nested.
+  - Generated models keep their names (`C_aortic_root`), because CellML names cannot contain `/`.
+- **Why.** The `_` form cannot be split reliably when names contain `_`, which supermodule rows had to do: `g_leak_Na` is `g` of `leak_Na` or `g_leak` of `Na`.
+- **The old form still works.** In host parameters files it is read as before; setting a parameter both ways is an error. In supermodule rows it is read with a `FutureWarning`.
+- **Checks on the new form.**
+  - A host `/` row naming a vessel or variable the model does not have, or a global constant through a vessel, is an error.
+  - A supermodule row naming a path that is not a submodule is an error.
+  - A parameterisation's rows must stay bare variable names.
+- **`cuflynx-migrate-parameter-names`** rewrites old names, in a host file (`--module-array`) or in a supermodule's files (`--supermodule-config`). It rewrites a name only when exactly one reading of it names a real variable of that module, and reports the others.
+
+### Changed — local SA differentiates prediction features analytically
+
+With `sa_options.include_prediction_items`, local SA's prediction-feature rows now use the same
+arm as the data_item rows (CasADi jacobian, or Myokit CVODES sensitivities) instead of always
+central finite differences: one extra solve rather than 2M. The prediction features are written
+as the data_items of a second engine and differentiated by the existing code. Finite
+differences are still used with `gradient_method: FD`, over an emulator, and, with a warning,
+when Myokit's arm cannot take them: it needs every prediction feature in one and the same
+sub-experiment.
+
 ### Changed — a module type several sources define comes from the most specific one
 
 A `(vessel_type, BC_type)` defined in more than one module source used to keep the first entry
