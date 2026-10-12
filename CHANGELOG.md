@@ -68,6 +68,10 @@ the old name still works with a `FutureWarning`. The 0D/1D split writes `[file_p
   - Regenerating the file keeps edited symbols.
 - **`cuflynx-methods-latex`** writes a methods section in LaTeX, for a calibration workflow or for one calibration:
   - the equations of each module in the mapped symbols, with their parameter tables;
+  - a table of every parameter with its value and source: BibTeX keys in a parameter's
+    `data_reference` are cited (from the modules' `*_references.bib`, or `--bib`), the cited
+    entries are written to a `.bib` beside the `.tex`, and a calibrated parameter names the
+    step that calibrated it;
   - a TikZ flow chart of the calibration;
   - the protocol, observables, parameters, method, cost function, fixed values, priors, MCMC settings and results of each step.
 - **`libcuflynx.reporting`** is the Python API for both.
@@ -89,7 +93,11 @@ parameterisation's own obs_data and params_for_id.
   a KDE, each on a bounds-respecting scale.
 - **Reruns.** `--from-step` / `--only` rerun part of a workflow, refusing when an input it would
   reuse has changed. `--dry-run` checks everything against the library and prints the plan.
-  `--write-calibrated` writes the merged set as the target's `<parameterisation>_calibrated_parameters.csv`.
+  `--write-calibrated` writes the merged set as the target's `<parameterisation>_calibrated_parameters.csv`,
+  naming parameters `<submodule>/<variable>` and replacing rows written in either form.
+- **A parameter calibrated by two steps** takes the later step's value, with a warning that
+  suggests `priors_from` for a Bayesian update instead.
+- **A step's `submodule`** is written `soma/i_M` when nested (`soma_i_M` is also read).
 - **Schema.** `libcuflynx/schemas/calibration_workflow.schema.json`.
 - **param_id.** `ParamID.set_joint_priors` / `CVS0DParamID.set_joint_priors` add log densities
   over several parameters to the log prior. `run_param_id` passes `joint_priors` from its input

@@ -3,10 +3,14 @@
 Two commands turn a model and its calibration into the methods section of a paper:
 
 1. `cuflynx-variable-mapping` lists every variable and parameter of the model with the LaTeX symbol it is written as;
-2. `cuflynx-methods-latex` writes a methods section in LaTeX. It has three parts:
+2. `cuflynx-methods-latex` writes a methods section in LaTeX. It has four parts:
     - the model's equations, one subsection per module;
+    - a table of every parameter with its value and source, citing your references;
     - a flow chart of the calibration;
     - what was done in each step of the flow chart.
+
+To see one without setting anything up, run the workflow example in
+[Calibration workflows → Try it](parameter-identification.md#try-it).
 
 ## The variable mapping
 
@@ -46,7 +50,7 @@ cuflynx-methods-latex --model <prefix>_flat.cellml --obs-data <obs>.json \
     --run-dir param_id_output/<method>_<prefix>_<obs> -o methods.tex
 ```
 
-The document has three parts.
+The document has four parts.
 
 1. **Model.** Each module gets a subsection with:
     - its ODEs and algebraic equations, as written by Myokit's LaTeX writer in the mapping's symbols, with conditionals set as `cases`;
@@ -54,10 +58,11 @@ The document has three parts.
     - a table of the parameters it uses (symbol, value, units, name in the model).
 
     For a workflow, the model is the target supermodule, and each module is labelled with its module type, version and parameterisation from the supermodule config.
-2. **Flow chart.** This is a TikZ figure.
+2. **Parameters and sources.** One table of every parameter of the model: symbol, value, units and source (see [Citations](#citations)). A parameter that was calibrated names the step that calibrated it, with a link to that step's subsection.
+3. **Flow chart.** This is a TikZ figure.
     - **For a workflow:** one box per step (its parameterisation, how many parameters and observables, the method). Arrows run from each step to the steps after it: solid for values passed on as fixed values, dashed for priors. A last box shows the merge into the target.
     - **For one calibration:** the model, observables and parameters feed the optimisation, followed by MCMC and identifiability when they were run.
-3. **One subsection per step.** Each covers:
+4. **One subsection per step.** Each covers:
     - which parameterisation the step calibrates and against which observations;
     - the values it was given by earlier steps, and the priors it was given;
     - the protocol (experiments, pre-times, segment durations, inputs set per segment);
@@ -67,9 +72,35 @@ The document has three parts.
     - MCMC settings when the step stored its posterior;
     - with `--run-dir`, the calibrated values and the best cost. A step that used priors reports its posterior medians.
 
-`--body-only` writes the sections without a preamble, to `\input` into a paper. The packages it needs are listed in its first line. `--flowchart-only` writes just the figure.
+### Citations
 
-The full document needs `amsmath`, `amssymb`, `booktabs`, `graphicx` and `tikz`. Compile it twice, or with `latexmk` (`--pdf` does this), so the figure reference resolves.
+A parameter's source is the `data_reference` column of the model's parameters CSV. By convention it starts with the BibTeX key of the source, followed by a note: `martin2023modelling; Methods (p. 16): w_inf k = 10 mV`. Every word in it that is a key of the bibliography becomes `\cite{key}`; other words, such as `definitional` or `user_defined`, stay as text.
+
+- **For a workflow,** the bibliography is the `*_references.bib` (and `*_references_proposed.bib`) of every module version in the target, as the module library keeps them. Pass `--bib` to use other files instead.
+- **For one calibration,** pass the `.bib` files with `--bib` (repeatable). The parameters CSV is `<prefix>_parameters.csv` beside the model, or `--parameters`.
+
+The command writes the cited entries to a `.bib` beside the `.tex` (`methods.bib` for `-o methods.tex`), and the document ends with `\bibliography{methods}`. `--pdf` compiles it with `latexmk`, which runs BibTeX.
+
+### Options
+
+| Option | Meaning |
+|---|---|
+| `--workflow` | a `calibration_workflow.json`; with `--module-library-dir` for libraries the file does not list |
+| `--model`, `--obs-data`, `--params-for-id` | one calibration instead of a workflow |
+| `--settings` | the `user_inputs.yaml` of that calibration (method, optimiser options, solver, UQ) |
+| `--run-dir` | a workflow's output directory, or a param_id run directory: adds the results |
+| `--mapping` | the variable mapping CSV (default: the one `cuflynx-variable-mapping` writes) |
+| `--parameters` | the model's parameters CSV (one calibration) |
+| `--bib` | a `.bib` file the sources cite (repeatable) |
+| `-o` | the `.tex` to write |
+| `--title` | the document title |
+| `--body-only` | the sections without a preamble, to `\input` into a paper; the packages it needs are listed in its first line |
+| `--flowchart-only` | just the figure |
+| `--pdf` | also compile it with `latexmk` |
+
+`cuflynx-variable-mapping` writes beside the model by default, or where `-o` says.
+
+The full document needs `amsmath`, `amssymb`, `booktabs`, `longtable`, `graphicx` and `tikz`. Compile it with `latexmk` (`--pdf` does this), or run pdflatex, BibTeX and pdflatex twice, so the references and the figure resolve.
 
 From Python:
 

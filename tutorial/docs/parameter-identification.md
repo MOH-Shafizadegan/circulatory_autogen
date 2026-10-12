@@ -1037,9 +1037,29 @@ the obs_data and run the workflow again -- every step after it is redone with th
     This is not `cuflynx-sequential-param-id`, which was the idea of fitting *one* model in
     stages (fit, drop the unidentifiable parameters, refit) and is not implemented.
 
+### Try it
+
+libcuflynx ships a small module library for trying workflows. Its models are algebraic, so a
+run takes seconds, and every answer is known. Write it anywhere:
+
+```
+python -c "from libcuflynx.external_testing.workflow_library import build_workflow_library as b; b('wf_example')"
+WF=wf_example/modules/chain/versions/v1/parameterisations/rest/calibration_workflow.json
+cuflynx-calibration-workflow $WF --dry-run              # the plan: where each parameter lands
+cuflynx-calibration-workflow $WF --output-dir wf_run    # A/p = 2, C/q = 3
+cuflynx-methods-latex --workflow $WF --run-dir wf_run -o methods.tex --pdf
+```
+
+`chain` is a supermodule of `A` (`lin_a`, `y = 2 p^2`) feeding `C` (`lin_c`,
+`z = y + k q^2`). Step `fit_a` calibrates `p` of `lin_a` alone; step `rest` then calibrates
+`q` in the assembled `chain`, with `p` fixed. Read `$WF` and the parameterisation directories
+next to it for the layout to copy. The same run, with the LaTeX written and compiled, is the
+test `tests/test_reporting.py::test_methods_of_a_workflow_report_each_step_and_its_results`.
+
 ### The file
 
-The file usually lives in the directory of the supermodule parameterisation it calibrates
+The example below is from a neuron model, to show the shape of a real workflow. The file
+usually lives in the directory of the supermodule parameterisation it calibrates
 (`<module_type>/versions/<version>/parameterisations/<parameterisation>/calibration_workflow.json`);
 that parameterisation is then its **target**, the one whose parameters the results are merged
 into.
@@ -1071,7 +1091,7 @@ into.
 | `settings` | user_inputs settings for every step: `param_id_method`, `optimiser_options`, `solver`, `solver_info`, `dt`, `pre_time`, `sim_time`, `UQ_options`, `DEBUG`, ... (the model, obs_data, params_for_id and output paths are the workflow's, and cannot be set) |
 | step `id` | unique; also the step's output directory |
 | step `target` | the parameterisation the step calibrates |
-| step `submodule` | where that module sits in the workflow's target (`i_M`, or `soma_i_M` when nested); inferred unless the module occurs twice |
+| step `submodule` | where that module sits in the workflow's target: `i_M`, or `soma/i_M` when nested (`soma_i_M` is also read); inferred unless the module occurs twice |
 | step `depends_on` | steps that run first; steps run in dependency order |
 | step `fixed_from` | earlier steps whose calibrated values -- and the values they were themselves given -- are fixed in this step's model, except those it calibrates itself |
 | step `priors_from` | earlier steps whose stored posterior becomes this step's prior (below) |
@@ -1094,6 +1114,24 @@ calibration with new data instead, take the parameter out of the later step's pa
 and list the earlier step in its `priors_from` (below), so the earlier posterior becomes the
 prior.
 
+### Preparing a step
+
+Each step calibrates one parameterisation, in its own directory of the module library:
+
+```
+<module_type>/versions/<version>/parameterisations/<name>/
+    <name>_parameters.csv        the starting values of the module's parameters
+    <name>_obs_data.json         what this step is fitted to
+    <name>_params_for_id.csv     what this step calibrates
+```
+
+1. Make the directory, for example by copying `default/`.
+2. Write the obs_data for the module alone. Its operands name the module's outputs
+   `mod/<variable>`, or `mod_<submodule>/<variable>` for a supermodule (see Naming).
+3. Write the params_for_id, with `vessel_name` `mod`, `mod_<submodule>` or `global`.
+4. Add the step to the workflow, with `depends_on`, `fixed_from` or `priors_from` as needed,
+   and check it with `--dry-run`.
+
 ### Naming
 
 Every step model is generated alone as a single vessel named `mod`, so a params_for_id row
@@ -1106,7 +1144,7 @@ submodules' parameters `mod_<submodule>, <param>`, and its obs_data their output
 ### Outputs
 
 ```
-<output_dir>/                         default ./workflow_output/<workflow_name>
+<output_dir>/                         --output-dir; default ./workflow_output/<workflow_name>
     calibration_workflow.json         the workflow as run
     workflow_result.json              order, provenance (obs_data/params_for_id hashes, times), merged parameters
     <step_id>/step_result.json        calibrated values, the fixed values and priors it was given, input hashes
@@ -1138,7 +1176,9 @@ d.mapped_into('i_M').names          # named as in the supermodule: ['rho_M_mod_i
 ```
 
 A later step lists it in `priors_from`, either by id or as
-`{"step": "i_M_g", "kind": "mvnormal", "inflate": 1.0, "parameters": [...]}`. Those parameters
+`{"step": "i_M_g", "kind": "mvnormal", "inflate": 1.0, "parameters": [...]}`. `parameters`
+picks some of the stored parameters, by their names in the earlier step's model (`rho_M_mod`;
+its `step_result.json` lists them as `calibrated[].model_name`); without it, all of them. Those parameters
 are then calibrated again in the later step, with the stored posterior as a prior over all of
 them jointly. `kind` is how the samples are represented, each on a scale on which the parameter's
 bounds are unbounded (logit for `[min, max]`, log for a lower bound only), so the density respects
