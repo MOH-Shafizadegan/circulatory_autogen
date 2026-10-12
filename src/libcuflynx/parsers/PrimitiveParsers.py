@@ -1950,6 +1950,15 @@ ANALYSIS_OPTIONS = {
             {'name': 'fd_rel_step', 'type': 'float', 'default': 1e-3, 'required': False,
              'description': ('Relative step for the finite-difference gradient over the '
                              'emulator, which is the only gradient source an emulator has.')},
+            {'name': 'emulated_params_to_change', 'type': 'dict', 'default': None,
+             'required': False,
+             'description': ('Boundary conditions (params_to_change entries) to make emulator '
+                             'inputs, as {key: {range: [min, max]}}. A key is a params_to_change '
+                             'name with numeric values (one input shared by every experiment), '
+                             'or a protocol_shapes field: "<shape>.events[<i>].<level|start|'
+                             'length|period>" or "<shape>.from"/"<shape>.to". Training samples '
+                             'each over its range; a run using the emulator reads its value from '
+                             'its own obs_data. Unlisted BCs stay fixed at their trained values.')},
         ],
     },
 }
@@ -2656,7 +2665,19 @@ class YamlFileParser(object):
         emulator_settings.setdefault('min_r2', 0.9)
         emulator_settings.setdefault('out_of_bounds', 'error')
         emulator_settings.setdefault('fd_rel_step', 1e-3)
-
+        emulator_settings.setdefault('emulated_params_to_change', None)
+        emulated = emulator_settings['emulated_params_to_change']
+        if emulated is not None and not isinstance(emulated, dict):
+            raise ValueError(
+                f"emulator_settings.emulated_params_to_change must map each boundary condition "
+                f"to {{range: [min, max]}}, got {type(emulated).__name__}. Leave it out to keep "
+                f"every params_to_change entry fixed.")
+        for name in ('vary_params_to_change', 'params_to_change_ranges'):
+            if emulator_settings.get(name) not in (None, False):
+                raise ValueError(
+                    f"emulator_settings.{name} has been replaced by emulated_params_to_change: "
+                    f"list each boundary condition to emulate as {{key: {{range: [min, max]}}}}.")
+            emulator_settings.pop(name, None)
         # Parse optimiser_options - this is the new unified way to specify options
         # Handle backwards compatibility: if ga_options or debug_ga_options is specified, merge into optimiser_options
         if 'optimiser_options' not in inp_data_dict.keys():

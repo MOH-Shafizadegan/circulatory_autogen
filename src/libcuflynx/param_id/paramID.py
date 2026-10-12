@@ -2144,10 +2144,17 @@ class ParamID():
                 f'yet -- give them weight 0 if they are only there to be plotted, run with '
                 f'use_emulator: false, or drop those items.')
 
+        from libcuflynx.emulators.bc_inputs import configure_bc_inputs
+
+        # BC inputs come from the bundle, not from this run's settings: the run that uses an
+        # emulator need not repeat how it was trained. Their values come from this obs_data.
         bundle.check_matches(
-            fingerprint(self.param_id_info, self.obs_info, self.protocol_info, self.model_path),
-            param_entry_labels=param_entry_labels(self.param_id_info),
+            fingerprint(self.param_id_info, self.obs_info, self.protocol_info, self.model_path,
+                        bc_inputs=bundle.bc_inputs),
+            param_entry_labels=(list(param_entry_labels(self.param_id_info))
+                                + [item['label'] for item in bundle.bc_inputs]),
             feature_labels=emulated_feature_labels(self.obs_info))
+        configure_bc_inputs(self.sim_helper, self.protocol_info)
         bundle.check_quality(self._use_time_setting('min_r2', 0.9, bundle))
         self.sim_helper.set_obs_map(self.obs_info['const_idx_to_obs_idx'],
                                     num_obs=self.obs_info['num_obs'])
@@ -2223,6 +2230,10 @@ class ParamID():
         self.protocol_info = protocol_info
         # set the protocol_info in the sim_helper so that the protocol traces can be accessed.
         self.sim_helper.set_protocol_info(self.protocol_info)
+        if self.emulates_features:
+            # A new protocol may carry new values for the emulator's BC inputs.
+            from libcuflynx.emulators.bc_inputs import configure_bc_inputs
+            configure_bc_inputs(self.sim_helper, self.protocol_info)
         self._refresh_num_weighted_obs_tables()
 
     def set_prediction_info(self, prediction_info):
@@ -2485,6 +2496,7 @@ class ParamID():
             # set_param_vals these values have been expanded to one per model parameter, and a
             # modifier entry's expansion (theta * baseline) is not the theta it was trained on
             # -- so theta is handed over here, before any of that.
+            # Any BC inputs the emulator takes are appended by the helper from the protocol.
             self.sim_helper.set_theta(param_vals)
 
         # Run the protocol loop via the shared ProtocolExecutor.

@@ -572,7 +572,7 @@ def test_analysis_options_schema_well_formed():
         'emulator_dir', 'model_serialiser', 'models', 'num_train_samples', 'reuse_samples',
         'sample_type', 'num_stages', 'frac_per_stage', 'method_per_stage', 'weight_per_stage',
         'log_scale_params', 'random_seed', 'test_fraction', 'n_splits', 'n_iter', 'min_r2',
-        'out_of_bounds', 'fd_rel_step'}
+        'out_of_bounds', 'fd_rel_step', 'emulated_params_to_change'}
     assert analysis_options('not_a_mode') == []
     # the enabling flags match the documented user_inputs feature flags
     assert {m['enable_flag'] for m in ANALYSIS_OPTIONS.values()} == {

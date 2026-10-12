@@ -72,6 +72,11 @@ class SimulationHelper:
         self.param_names = self.bundle.meta.get('param_names') or []
         self.param_defaults = self.bundle.meta.get('param_defaults') or {}
         self.num_params = len(self.bundle.param_entry_labels)
+        # BC inputs (emulated_params_to_change) sit after theta. The caller only knows theta,
+        # so their values are set once from the protocol and appended here.
+        self.num_bc_inputs = len(self.bundle.bc_inputs)
+        self.num_theta = self.num_params - self.num_bc_inputs
+        self._bc_values = None
         self._has_modifiers = bool(self.bundle.meta.get('has_modifiers'))
         self._theta = None
         self._theta_is_authoritative = False
@@ -84,6 +89,39 @@ class SimulationHelper:
 
     # ------------------------------------------------------------------ inputs
 
+    def set_bc_values(self, values):
+        """The values of the BC inputs, read from the run's own protocol.
+
+        Set once per protocol rather than per evaluation: a calibration moves theta, never the
+        boundary conditions of the experiments it is fitting.
+        """
+        values = np.asarray(values, dtype=float).reshape(-1)
+        if values.size != self.num_bc_inputs:
+            raise ValueError(
+                f'the emulator takes {self.num_bc_inputs} BC input(s) '
+                f'({[item["label"] for item in self.bundle.bc_inputs]}) but was given '
+                f'{values.size} value(s).')
+        if self._bc_values is None or not np.array_equal(values, self._bc_values):
+            self._features = None
+            self._ensemble_features = None
+        self._bc_values = values
+
+    def _full_input(self, theta):
+        """theta as the emulator sees it: with the BC inputs appended, when it has any."""
+        theta = np.asarray(theta, dtype=float)
+        if not self.num_bc_inputs or theta.shape[-1] == self.num_params:
+            return theta
+        if theta.shape[-1] != self.num_theta:
+            return theta                      # wrong length; the caller's size check names it
+        if self._bc_values is None:
+            raise RuntimeError(
+                f'this emulator takes the BC input(s) '
+                f'{[item["label"] for item in self.bundle.bc_inputs]}, and no values for them '
+                f'have been set. Use it through a param-id / SA run, which reads them from the '
+                f'obs_data, or call set_bc_values(...) first.')
+        bcs = np.broadcast_to(self._bc_values, theta.shape[:-1] + (self.num_bc_inputs,))
+        return np.concatenate([theta, bcs], axis=-1)
+
     def set_theta(self, theta):
         """Set the calibration vector directly, in ``params_for_id`` entry order.
 
@@ -93,7 +131,7 @@ class SimulationHelper:
         which is the wrong thing to feed a surrogate trained on theta. CA's call sites set theta
         here before the protocol runs, so no inversion is ever needed.
         """
-        theta = np.asarray(theta, dtype=float).reshape(-1)
+        theta = self._full_input(np.asarray(theta, dtype=float).reshape(-1))
         if theta.size != self.num_params:
             raise ValueError(
                 f'the emulator was trained on {self.num_params} parameters '
@@ -168,7 +206,7 @@ class SimulationHelper:
         path changes: :meth:`select_from_ensemble` hands one member back at a time, and
         the protocol loop and cost reduction run per member as they always have.
         """
-        thetas = np.atleast_2d(np.asarray(thetas, dtype=float))
+        thetas = self._full_input(np.atleast_2d(np.asarray(thetas, dtype=float)))
         if thetas.shape[1] != self.num_params:
             raise ValueError(
                 f'the emulator was trained on {self.num_params} parameters '

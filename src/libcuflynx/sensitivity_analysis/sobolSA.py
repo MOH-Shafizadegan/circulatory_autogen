@@ -336,8 +336,13 @@ class sobol_SA():
                 f'use_emulator is set, but obs_data.json has data_type(s) '
                 f'{sorted(set(bad.values()))} at data_item index(es) {sorted(bad)}. The emulator '
                 f'predicts scalar data_item features only.')
+        from libcuflynx.emulators.bc_inputs import configure_bc_inputs
+        bc_inputs = getattr(helper.bundle, 'bc_inputs', None) or []
         helper.bundle.check_matches(
-            fingerprint(self.param_id_info, self.obs_info, self.protocol_info, self.model_path))
+            fingerprint(self.param_id_info, self.obs_info, self.protocol_info, self.model_path,
+                        bc_inputs=bc_inputs))
+        # SA varies theta only; the BC inputs stay at this obs_data's values.
+        configure_bc_inputs(helper, self.protocol_info)
         helper.bundle.check_quality(self.emulator_settings.get('min_r2', 0.9))
         helper.set_obs_map(self.obs_info['const_idx_to_obs_idx'],
                            num_obs=len(self.obs_info['operations']))

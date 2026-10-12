@@ -212,5 +212,12 @@ emulator_settings:
   out_of_bounds: error
   # Relative step for the finite-difference gradient over the emulator
   fd_rel_step: 1.0e-3
+  # Boundary conditions (params_to_change) to make emulator inputs. Each is sampled over its
+  # range in training, and read from the obs_data of a run that uses the emulator, so one
+  # emulator serves any protocol whose BCs fall in the range. Unlisted BCs stay fixed.
+  # Keys: a params_to_change name with numeric values, or a protocol_shapes field
+  # ("<shape>.events[0].level", "<shape>.from").
+  emulated_params_to_change: null
+  #   heart/u_ext: {range: [0.5, 1.5]}
 
 plot_predictions: true

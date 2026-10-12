@@ -22,6 +22,8 @@ from scipy.stats import qmc
 
 from libcuflynx.emulators.emulator_bundle import (METADATA_FILE, TRAINING_DATA_FILE, EmulatorBundle,
                                        EmulatorQualityError, EmulatorReuseError, fingerprint)
+from libcuflynx.emulators.bc_inputs import (apply_bc_values, preserved_protocol,
+                                            resolve_bc_inputs)
 
 AUTOEMULATE_MISSING_MESSAGE = (
     'autoemulate is not installed. Install it with `pip install '
@@ -186,6 +188,30 @@ class EmulatorTrainer:
         from libcuflynx.param_id.paramID import emulated_feature_labels
         return emulated_feature_labels(self.pid.obs_info)
 
+    @property
+    def bc_inputs(self):
+        """The params_to_change entries trained over as extra inputs, after theta.
+
+        Resolved against the protocol each time it is asked for rather than cached, so a
+        protocol set after construction (the programmatic API) is the one that counts.
+        """
+        return resolve_bc_inputs(self.pid.protocol_info,
+                                 self._setting('emulated_params_to_change', None))
+
+    def input_labels(self):
+        """Every emulator input, in column order: the params_for_id entries, then the BCs."""
+        return ([str(label) for label in _param_labels(self.pid)]
+                + [item['label'] for item in self.bc_inputs])
+
+    def input_box(self):
+        """``(mins, maxs)`` of every emulator input -- the box the design is drawn in."""
+        bcs = self.bc_inputs
+        mins = np.concatenate([np.asarray(self.pid.param_id_info['param_mins'], dtype=float),
+                               np.asarray([item['min'] for item in bcs], dtype=float)])
+        maxs = np.concatenate([np.asarray(self.pid.param_id_info['param_maxs'], dtype=float),
+                               np.asarray([item['max'] for item in bcs], dtype=float)])
+        return mins, maxs
+
     # ------------------------------------------------------------------ stages
 
     @property
@@ -259,15 +285,17 @@ class EmulatorTrainer:
                 for method, count, weight in zip(methods, counts, weights)]
 
     def design(self, n_samples=None, sample_type=None, seed_offset=0):
-        """Training points over the ``params_for_id`` box, shape ``(n_samples, num_params)``.
+        """Training points over the input box, shape ``(n_samples, num_inputs)``.
+
+        The box is the ``params_for_id`` bounds followed by the range of every BC in
+        ``emulated_params_to_change``.
 
         Deterministic given the seed, so every rank builds the identical design and no
         broadcast is needed to agree on who evaluates which sample. ``seed_offset``
         separates one stage from the next: two stages of the same method on the same seed
         would otherwise draw the same points twice.
         """
-        mins = np.asarray(self.pid.param_id_info['param_mins'], dtype=float)
-        maxs = np.asarray(self.pid.param_id_info['param_maxs'], dtype=float)
+        mins, maxs = self.input_box()
         num_params = mins.size
         n_samples = self.num_train_samples if n_samples is None else int(n_samples)
         sample_type = sample_type or self._setting('sample_type', 'sobol')
@@ -291,7 +319,7 @@ class EmulatorTrainer:
             if np.any(mins <= 0):
                 raise ValueError(
                     'log_scale_params needs every parameter min to be positive; '
-                    f'{[self.pid.param_id_info["param_mins"][i] for i in np.where(mins <= 0)[0]]} '
+                    f'{[self.input_labels()[i] for i in np.where(mins <= 0)[0]]} '
                     'are not. Set it false, or raise those mins above zero.')
             return np.exp(np.log(mins) + unit * (np.log(maxs) - np.log(mins)))
         return mins + unit * (maxs - mins)
@@ -308,17 +336,28 @@ class EmulatorTrainer:
         # solver_wrappers, which every CA run imports, and fd_backend pulls in the parsers.
         from libcuflynx.param_id.fd_backend import observable_features
 
+        bcs = self.bc_inputs
+        n_bc = len(bcs)
+        num_theta = len(design[0]) - n_bc if len(design) else 0
         n_samples = len(design)
         start, end = _block_for_rank(n_samples, self.rank, self.num_procs)
         local_rows = []
-        for local_idx, theta in enumerate(design[start:end]):
-            features = observable_features(self.pid, theta)
-            if features is None or not np.all(np.isfinite(features)):
-                print(f'[emulator rank {self.rank}] sample {start + local_idx} failed; dropping it')
-                continue
-            local_rows.append((start + local_idx, np.asarray(features, dtype=float)))
-            if self.rank == 0 and (local_idx + 1) % 10 == 0:
-                print(f'[emulator] rank 0 has run {local_idx + 1}/{end - start} of its samples')
+        # Every sample writes its BCs into the engine's own protocol (the solver helper holds
+        # that dict, so a copy would change nothing it sees); put the obs_data back afterwards.
+        with preserved_protocol(self.pid.protocol_info):
+            for local_idx, row in enumerate(design[start:end]):
+                theta = row[:num_theta]
+                if n_bc:
+                    apply_bc_values(self.pid.protocol_info, bcs, row[num_theta:])
+                features = observable_features(self.pid, theta)
+                if features is None or not np.all(np.isfinite(features)):
+                    print(f'[emulator rank {self.rank}] sample {start + local_idx} failed; '
+                          f'dropping it')
+                    continue
+                local_rows.append((start + local_idx, np.asarray(features, dtype=float)))
+                if self.rank == 0 and (local_idx + 1) % 10 == 0:
+                    print(f'[emulator] rank 0 has run {local_idx + 1}/{end - start} of its '
+                          f'samples')
 
         gathered = self.comm.gather(local_rows, root=0) if self.comm is not None else [local_rows]
         if self.rank != 0:
@@ -354,10 +393,9 @@ class EmulatorTrainer:
                 builder = (adaptive_design.gradient_weighted_design
                            if method == GRADIENT_WEIGHTED
                            else adaptive_design.error_weighted_design)
+                box_mins, box_maxs = self.input_box()
                 points = builder(
-                    x, y, n_samples,
-                    self.pid.param_id_info['param_mins'],
-                    self.pid.param_id_info['param_maxs'],
+                    x, y, n_samples, box_mins, box_maxs,
                     seed=int(self._setting('random_seed', 0)) + index,
                     log_scale=bool(self._setting('log_scale_params', False)),
                     weight=float(stage.get('weight', DEFAULT_STAGE_WEIGHT)))
@@ -571,10 +609,10 @@ class EmulatorTrainer:
         try:
             bundle.check_matches(
                 fingerprint(self.pid.param_id_info, self.pid.obs_info, self.pid.protocol_info,
-                            self.pid.model_path),
+                            self.pid.model_path, bc_inputs=self.bc_inputs),
                 # str() to match how train() writes them, or an equal set of labels of a
                 # different type would read as a changed parameter list.
-                param_entry_labels=[str(label) for label in _param_labels(self.pid)],
+                param_entry_labels=self.input_labels(),
                 feature_labels=self.feature_labels)
         except EmulatorQualityError as error:
             raise EmulatorQualityError(
@@ -586,7 +624,7 @@ class EmulatorTrainer:
 
         x = np.asarray(bundle.x_train, dtype=float)
         y = np.asarray(bundle.y_train, dtype=float)
-        num_params = len(np.asarray(self.pid.param_id_info['param_mins'], dtype=float).reshape(-1))
+        num_params = len(self.input_labels())
         if x.ndim != 2 or y.ndim != 2 or len(x) != len(y) or x.shape[1] != num_params \
                 or y.shape[1] != len(self.feature_labels):
             raise EmulatorReuseError(
@@ -658,10 +696,14 @@ class EmulatorTrainer:
 
         model, validation, model_name, x_scale, y_scale = self.fit(
             x, y, space_filling=space_filling)
+        bc_inputs = self.bc_inputs
+        box_mins, box_maxs = self.input_box()
         meta = {
-            'param_entry_labels': [str(label) for label in _param_labels(self.pid)],
-            'param_mins': [float(v) for v in self.pid.param_id_info['param_mins']],
-            'param_maxs': [float(v) for v in self.pid.param_id_info['param_maxs']],
+            # theta first, then the BC inputs: the order the design's columns are in.
+            'param_entry_labels': self.input_labels(),
+            'param_mins': [float(v) for v in box_mins],
+            'param_maxs': [float(v) for v in box_maxs],
+            'bc_inputs': bc_inputs,
             'param_names': _jsonable_names(self.pid.param_id_info['param_names']),
             # A modifier entry's one theta slot expands to theta * baseline per target before
             # it reaches a solver, so the helper cannot recover theta from what it is handed
@@ -693,9 +735,11 @@ class EmulatorTrainer:
             # configuration; see _use_time_setting in param_id/paramID.py.
             'settings': _jsonable_settings(self.settings),
             'fingerprint': fingerprint(self.pid.param_id_info, self.pid.obs_info,
-                                       self.pid.protocol_info, self.pid.model_path),
+                                       self.pid.protocol_info, self.pid.model_path,
+                                       bc_inputs=bc_inputs),
             'provenance': _provenance(self.pid),
         }
+
         bundle = EmulatorBundle(model, meta, x_train=x, y_train=y,
                                 validation=validation)
         output_dir = self.output_directory()

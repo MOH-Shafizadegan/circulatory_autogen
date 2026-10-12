@@ -88,7 +88,7 @@ def weighted_non_scalar_obs(obs_info):
             if dtype != 'constant' and jj not in unweighted}
 
 
-def fingerprint(param_id_info, obs_info, protocol_info, model_path=None):
+def fingerprint(param_id_info, obs_info, protocol_info, model_path=None, bc_inputs=None):
     """A stable digest of everything an emulator was trained against.
 
     Changing a parameter's bounds, adding a data_item, editing an operation, moving a
@@ -98,6 +98,11 @@ def fingerprint(param_id_info, obs_info, protocol_info, model_path=None):
 
     ``model_path`` is hashed by content when it exists, so a regenerated CellML invalidates the
     emulator even if the inputs that produced it are unchanged.
+
+    ``bc_inputs`` are the params_to_change entries the emulator takes as inputs (see
+    :mod:`libcuflynx.emulators.bc_inputs`). Their *values* are masked out -- they are read from
+    each run's obs_data -- but their trained ranges are hashed, and every other BC value is
+    hashed as before, so changing a BC the emulator was trained *at* still makes it stale.
     """
     payload = {
         'param_labels': [str(x) for x in _param_entry_labels(param_id_info)],
@@ -113,6 +118,14 @@ def fingerprint(param_id_info, obs_info, protocol_info, model_path=None):
         'sim_times': _jsonable(protocol_info.get('sim_times')),
         'params_to_change': _jsonable(protocol_info.get('params_to_change')),
     }
+    if bc_inputs:
+        # Only when there are BC inputs, so the digest of every emulator trained without them
+        # is unchanged and none is reported stale by an upgrade.
+        from libcuflynx.emulators.bc_inputs import fingerprint_entries, masked_protocol
+        params_to_change, shapes = masked_protocol(protocol_info, bc_inputs)
+        payload['params_to_change'] = _jsonable(params_to_change)
+        payload['protocol_shapes'] = _jsonable(shapes)
+        payload['bc_inputs'] = fingerprint_entries(bc_inputs)
     blob = json.dumps(payload, sort_keys=True, default=str).encode('utf-8')
     digest = {'inputs_sha256': hashlib.sha256(blob).hexdigest()}
     if model_path and os.path.isfile(model_path):
@@ -185,6 +198,8 @@ class EmulatorBundle:
         self.param_maxs = np.asarray(meta['param_maxs'], dtype=float)
         self.param_entry_labels = list(meta['param_entry_labels'])
         self.feature_labels = list(meta['feature_labels'])
+        #: params_to_change entries this emulator takes as inputs, after the calibrated ones.
+        self.bc_inputs = list(meta.get('bc_inputs') or [])
         self._x_shift = np.asarray(meta['x_scale']['shift'], dtype=float)
         self._x_span = np.asarray(meta['x_scale']['span'], dtype=float)
         self._y_shift = np.asarray(meta['y_scale']['shift'], dtype=float)
