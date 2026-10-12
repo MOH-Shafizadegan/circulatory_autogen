@@ -86,7 +86,8 @@ def test_the_cvodes_runtime_exports_every_function_of_be_batched_c(tmp_path):
     be, cv = (batched.sources(am, km, solver=s) for s in ('BE_batched_c', SOLVER))
     assert _exported(cv['batched_runtime.c']) - _exported(be['batched_runtime.c']) == {'bk_block_cvodes_flag'}
     assert _exported(be['batched_runtime.c']) <= _exported(cv['batched_runtime.c'])
-    assert {'bk_instance_advance', 'bk_instances_advance', 'bk_set_trace', 'bk_solver_name'} <= _exported(
+    assert {'bk_instance_advance', 'bk_instances_advance', 'bk_set_trace', 'bk_solver_name',
+            'bk_set_stop_at_outputs'} <= _exported(
         cv['batched_runtime.c'])
     for name in ('batched_kernels.c', 'batched_kernels.h', 'model0d_core.c', 'blocks.json'):
         assert be[name] == cv[name]
@@ -537,3 +538,18 @@ def test_a_user_inputs_config_selects_it(base_user_inputs, temp_output_dir, temp
     info = parsed['solver_info']
     assert info['solver'] == SOLVER and info['method'] == 'CVODE'
     assert info['rtol'] == 1e-7 and info['threads'] == 4 and info['MaximumNumberOfSteps'] == 10_000_000
+
+
+@needs_c
+@pytest.mark.solver
+def test_stop_at_outputs_is_accepted_and_changes_nothing(tmp_path):
+    """BE_batched_c's stop_at_outputs is a no-op here (CVODES steps past outputs and interpolates), so callers can
+    set it on either library."""
+    results = []
+    for stop in (False, True):
+        helper = _helper(tmp_path, CELLS, rtol=1e-6)
+        helper.sim.set_stop_at_outputs(stop)
+        for j in range(10):
+            assert helper.sim.run(helper.states, helper.variables, 0.1 * j, [0.1 * (j + 1)]) == []
+        results.append(helper.states.copy())
+    assert np.array_equal(results[0], results[1])

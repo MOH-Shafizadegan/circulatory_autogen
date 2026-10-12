@@ -381,7 +381,7 @@ class BatchedLibrary:
             'bk_outputs': ([i, dp, dp, dp, dp, i], None),
             'bk_set_trace': ([p, i, i, dp, dp], None), 'bk_clear_trace': ([p, i], None),
             'bk_sim_outputs': ([p, i, dp, dp, dp, dp, i], None), 'bk_solver_name': ([], ctypes.c_char_p),
-            'bk_instances_advance': ([i, ctypes.POINTER(p), d, i], i),
+            'bk_instances_advance': ([i, ctypes.POINTER(p), d, i], i), 'bk_set_stop_at_outputs': ([p, i], None),
         }
         for name, (argtypes, restype) in sigs.items():
             fn = getattr(lib, name)
@@ -432,6 +432,12 @@ class BatchedSimulation:
         self.lib.bk_set_options(self._h, rtol, atol, max_step or 0.0, min_step, newton_tol, max_newton,
                                 max_jacobian_age, int(max_steps), int(bool(finite_difference_jacobian)),
                                 methods.index(method))
+
+    def set_stop_at_outputs(self, on):
+        """BE_batched_c: steps end on each run's last output time, and a block whose inputs changed there keeps its
+        step size, Jacobian and LU factors (faster when inputs change at every run; off by default). CVODES_batched_c
+        ignores it."""
+        self.lib.bk_set_stop_at_outputs(self._h, int(bool(on)))
 
     def invalidate(self):
         self.lib.bk_invalidate(self._h)

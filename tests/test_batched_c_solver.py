@@ -823,3 +823,107 @@ def test_a_user_inputs_config_with_another_solvers_method_is_refused(base_user_i
                   generated_models_dir=temp_generated_models_dir, param_id_output_dir=temp_output_dir)
     with pytest.raises(SystemExit):
         YamlFileParser().parse_user_inputs_file(config, obs_path_needed=False)
+
+
+# Two unconnected decays, slow enough for long steps: x = x0 exp(-k t).
+DECAYS = _cellml(_cell('cell_a', 0.05, 2.0) + _cell('cell_b', 0.2, 1.0) + """
+  <component name="environment"><variable name="t" units="second" interface="public"/></component>
+  <connection component_1="environment" component_2="cell_a"><map_variables variable_1="t" variable_2="t"/></connection>
+  <connection component_1="environment" component_2="cell_b"><map_variables variable_1="t" variable_2="t"/></connection>
+""")
+
+
+def _stepper(tmp_path, model, stop_at_outputs, rtol=1e-6):
+    """A BE_batched_c (TR-BDF2) helper whose BatchedSimulation the test runs itself, a call at a time."""
+    helper = _helper(tmp_path, model, rtol=rtol, atol=1e-12, method='trbdf2')
+    helper.sim.set_stop_at_outputs(stop_at_outputs)
+    return helper
+
+
+def _index(helper, name):
+    return helper._index(name)[1]
+
+
+@needs_c
+@pytest.mark.solver
+def test_the_step_size_holds_while_the_error_control_asks_for_little_growth(tmp_path):
+    """The step grows only when the error control allows more than 20%, so most steps reuse the last LU
+    factors (one factorisation per step without it), and the solutions keep their accuracy."""
+    t = np.linspace(0.0, 20.0, 41)
+    helper = _helper(tmp_path, CELLS, sim_time=20.0, dt=0.5, rtol=1e-6, atol=1e-12, method='trbdf2')
+    assert helper.run()
+    stats = helper.stats()
+    assert stats['factorisations'] < stats['steps'] / 4
+    a, b, p = (helper.get_results([[n]])[0][0] for n in ('cell_a/x', 'cell_b/x', 'pair/p'))
+    assert np.max(np.abs(a - 2.0 * np.exp(-0.5 * t))) / 2.0 < 2e-5     # 1.6e-5 with a new LU every step
+    assert np.max(np.abs(b - np.exp(-0.2 * t))) < 2e-5
+    assert np.max(np.abs(p - np.cos(3.0 * t))) < 2e-3
+
+
+@needs_c
+@pytest.mark.solver
+def test_with_stop_at_outputs_each_run_ends_on_a_step(tmp_path):
+    """Twenty runs of 0.1 s: by default steps far longer than 0.1 s pass the runs' ends; with stop_at_outputs every
+    run ends on a step of its own. The solutions are as accurate either way."""
+    steps = {}
+    for stop in (False, True):
+        helper = _stepper(tmp_path, DECAYS, stop, rtol=1e-4)
+        for k in range(20):
+            assert helper.sim.run(helper.states, helper.variables, 0.1 * k, [0.1 * (k + 1)]) == []
+        steps[stop] = helper.stats()['steps']
+        assert helper.states[_index(helper, 'cell_a/x')] == pytest.approx(2.0 * math.exp(-0.1), rel=1e-3)
+    assert steps[False] < 20 and steps[True] >= 2 * 20
+
+
+@needs_c
+@pytest.mark.solver
+def test_an_input_changed_where_a_run_stopped_keeps_the_jacobian_and_factors(tmp_path):
+    """cell_b's k changes from 0.2 to 0.21 at t = 1. With stop_at_outputs the block restarts softly from the end of
+    its own step (its Jacobian kept, its factors redone only as its step size changes); by default it restarts
+    afresh. Both follow the new k."""
+    new = {}
+    for stop in (False, True):
+        helper = _stepper(tmp_path, DECAYS, stop)
+        x, k = _index(helper, 'cell_b/x'), _index(helper, 'cell_b/k')
+        assert helper.sim.run(helper.states, helper.variables, 0.0, [1.0]) == []
+        before = helper.stats()
+        helper.variables[k] = 0.21
+        assert helper.sim.run(helper.states, helper.variables, 1.0, [2.0]) == []
+        after = helper.stats()
+        new[stop] = {s: after[s] - before[s] for s in ('jacobians', 'factorisations')}
+        assert helper.states[x] == pytest.approx(math.exp(-0.2 - 0.21), rel=1e-4)
+    assert new[True]['jacobians'] == 0 and new[False]['jacobians'] >= 1
+    assert new[True]['factorisations'] < new[False]['factorisations']
+
+
+@needs_c
+@pytest.mark.solver
+def test_a_restart_from_an_interpolated_state_is_never_soft(tmp_path):
+    """A run from t = 0.95, inside the block's last step to 1.0, starts from interpolated states: with an input
+    changed there it restarts afresh, with a new Jacobian, even with stop_at_outputs."""
+    helper = _stepper(tmp_path, DECAYS, True)
+    x, k = _index(helper, 'cell_b/x'), _index(helper, 'cell_b/k')
+    out = np.empty((2, helper.STATE_COUNT))
+    assert helper.sim.run(helper.states, helper.variables, 0.0, [0.95, 1.0], out) == []
+    before = helper.stats()
+    states = out[0].copy()
+    helper.variables[k] = 0.21
+    assert helper.sim.run(states, helper.variables, 0.95, [1.95]) == []
+    assert helper.stats()['jacobians'] > before['jacobians']
+    assert states[x] == pytest.approx(math.exp(-0.2 * 0.95 - 0.21), rel=1e-4)
+
+
+@needs_c
+@pytest.mark.solver
+def test_soft_restarts_give_the_same_bits_on_any_number_of_threads(tmp_path):
+    """With stop_at_outputs and both cells' k changed at every 0.1 s run, results do not depend on the threads."""
+    results = []
+    for threads in (1, 3):
+        helper = _stepper(tmp_path, CELLS, True, rtol=1e-5)
+        ka, kb = _index(helper, 'cell_a/k'), _index(helper, 'cell_b/k')
+        for j in range(30):
+            helper.variables[ka] = 0.5 + 0.05 * math.sin(j)
+            helper.variables[kb] = 0.2 + 0.02 * math.cos(j)
+            assert helper.sim.run(helper.states, helper.variables, 0.1 * j, [0.1 * (j + 1)], threads=threads) == []
+        results.append(helper.states.copy())
+    assert np.array_equal(results[0], results[1])

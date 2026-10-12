@@ -25,7 +25,14 @@ as `CVODE_myokit`.
   - `backward_euler`, the default;
   - `trbdf2`, second order, which is far more accurate at the same tolerance and usually faster.
 
-  Both use modified Newton, with the Jacobian and LU factors kept across steps.
+  Both use modified Newton, with the Jacobian and LU factors kept across steps. The step size changes only
+  when the error control allows more than 20% growth (or asks for any shrink), so the factors serve several
+  steps: 1.10-1.14x faster on AdaptOrDeity's colonies at the same error.
+- **Inputs that change at every call.** `bk_set_stop_at_outputs` (`BatchedSimulation.set_stop_at_outputs`, off
+  by default) ends steps on each run's last output time; a block whose inputs changed there restarts softly,
+  keeping its step size, Jacobian and LU factors (never from an interpolated state). With an input changed every
+  0.1 s, as a game's macro step does, that is 4.3-4.6x faster; with inputs that rarely change, 0.93-1.02x, hence
+  off. `CVODES_batched_c` accepts the call and ignores it.
 - **Threads and restarts.** OpenMP runs over the blocks, and results are the same for any number
   of threads. A block whose inputs did not change between sub-experiments keeps its steps.
 - **Protocol traces.** A `params_to_change` entry naming a trace drives that constant along it, as on

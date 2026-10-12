@@ -96,6 +96,11 @@ BK_API const char *bk_solver_name(void) { return "CVODES_batched_c"; }
         sim->blocks[b].options_stale = 1;
 {% endblock %}
 {% block invalidate_block %}{% endblock %}
+{% block stop_at_outputs %}
+/* BE_batched_c's setting, accepted so the two libraries stay swappable: CVODES steps past output times and
+   interpolates, and restarts from scratch whenever a block's inputs change. */
+BK_API void bk_set_stop_at_outputs(BkSim *sim, int on) { (void) sim; (void) on; }
+{% endblock %}
 {% block integrator %}
 
 /* dy = f(t, y) for CVODES; a non-finite rate is a recoverable failure (CVODES retries with a shorter step). */
