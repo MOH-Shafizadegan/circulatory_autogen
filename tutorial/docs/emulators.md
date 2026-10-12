@@ -78,6 +78,7 @@ emulator_settings:
   min_r2: 0.9                # refuse to USE an emulator worse than this
   out_of_bounds: error       # error | warn | clip
   fd_rel_step: 1.0e-3        # step for the finite-difference gradient over the emulator
+  emulated_params_to_change: null   # boundary conditions to make inputs -- see below
 ```
 
 The available `models` names come from the installed autoemulate and are discoverable in code:
@@ -212,6 +213,68 @@ Set `use_emulator: true` and run any of the usual scripts unchanged:
 Nothing else in the configuration changes. To sanity-check a result, run the same analysis with
 `use_emulator: false` and compare — that is what keeping `solver:` meaningful is for.
 
+## Boundary conditions as inputs: `emulated_params_to_change`
+
+By default the protocol is part of what an emulator was trained *at*: every `params_to_change`
+value (a terminal resistance, an inflow level, a stimulus amplitude) is a hidden constant of the
+surrogate, and changing one in `obs_data.json` makes CA refuse the emulator as stale. That is
+right for one study, but it means a new patient or protocol needs a new emulator.
+
+List a boundary condition under `emulated_params_to_change` and it becomes an extra emulator
+input instead. Training samples it over the range you give, and a run that uses the emulator
+reads its value from that run's own `obs_data.json`:
+
+```yaml
+emulator_settings:
+  emulated_params_to_change:
+    systemic_T/R_T: {range: [0.88e8, 1.54e8]}     # a params_to_change entry
+    stim.events[0].level: {range: [0.5, 2.0]}     # a field of a protocol_shapes entry
+```
+
+The emulator then serves any obs_data whose listed BCs fall inside those ranges, without
+retraining.
+
+**What a key can be**
+
+| Key | Becomes |
+|---|---|
+| a `params_to_change` name with numeric values | **one** input, shared by every experiment and sub-experiment it appears in |
+| `<shape>.events[<i>].<field>` (`level`, `start`, `length`, `period`) | that field of a pacing shape; its trace is regenerated per sample |
+| `<shape>.from` / `<shape>.to` | an end of a ramp shape |
+
+Only the BCs you list become inputs, in the order you list them, after the `params_for_id`
+parameters. Nothing is varied automatically, because each input costs training samples: list the
+BCs that actually move your features, and give each a physically meaningful `range` (required).
+Every BC you do not list stays fixed at its trained value and is still checked by the
+fingerprint, so changing it still makes the emulator stale. The ranges are part of the trained
+box: an obs_data whose BC lies outside its range is handled by `out_of_bounds`, exactly as a
+parameter would be.
+
+The run that uses the emulator needs no emulation settings of its own: the trained emulator
+records which BCs it takes, and calibration, sensitivity analysis and MCMC append their values
+from the obs_data. Those analyses vary θ only; the BCs stay at the obs_data's values.
+
+!!! example "What it buys you"
+    Both examples are in `tests/test_emulator_bc_inputs.py`. Each trains two emulators on an
+    obs_data with the nominal BC, one with the BC as an input and one without, and compares them
+    with simulations at a moved BC:
+
+    | Model | BC moved | Error without the BC input | Error with it |
+    |---|---|---|---|
+    | `dx/dt = -x + p·u_bc` (`x_ss = p·u_bc`) | `u_bc` 1.0 → 1.8 | 44.5% (max) | 0.8% (max) |
+    | `3compartment`, terminal resistance `systemic_T/R_T` | ×1.3 | 8.5% (mean) | 0.6% (mean) |
+
+    At the nominal BC both are accurate. The emulator without the input is refused as stale at
+    the new BC, which is what saves you from that 44%.
+
+!!! warning "One value per BC, across all experiments"
+    A listed BC is a single input. An obs_data that gives it different values in different
+    experiments (`[[1.0], [1.5]]`) is refused: emulating a BC per experiment is not supported
+    yet. Give it one value everywhere, or leave it out of the list.
+
+Values driven by a tabular `protocol_traces` waveform cannot be listed. Vary a
+`protocol_shapes` field instead, or give the entry numeric values.
+
 ## When CA refuses
 
 An unvalidated emulator does not fail loudly; it returns plausible wrong numbers, and every
@@ -221,7 +284,9 @@ refuses rather than proceeding quietly:
 | Situation | What happens |
 |---|---|
 | Worst held-out R² below `min_r2` | refused at setup, naming the observable and its R² |
-| A parameter outside the training box | refused (or warns/clips, per `out_of_bounds`) |
+| A parameter, or an emulated BC, outside the training box | refused (or warns/clips, per `out_of_bounds`) |
+| An emulated BC with different values in different experiments | refused: one shared input cannot hold two values |
+| An `emulated_params_to_change` key that names no `params_to_change` entry or shape field, has no range, or points at a tabular trace | refused at training, naming the key |
 | Parameter bounds, observables, operations, protocol or the model file changed since training | refused as **stale** — retrain |
 | A `series` or `frequency` data item | refused: the emulator predicts scalars only |
 | `reuse_samples: true` with no previous emulator, or one saved without its samples | refused, naming the directory it looked in — train once without the setting first |
@@ -331,5 +396,6 @@ training runs the real solver even when the config asks for an emulator elsewher
   works in float32; the transforms are stored in the bundle and inverted on prediction.
 * Modifier and grouped parameters are supported: the emulator is trained on θ — one value per
   `params_for_id` entry — not on the expanded per-parameter values.
-* `params_to_change` from your protocol are held at the values they had during training. Change
-  the protocol and the emulator is refused as stale.
+* `params_to_change` from your protocol are held at the values they had during training, unless
+  listed in `emulated_params_to_change`. Change an unlisted one and the emulator is refused as
+  stale.
