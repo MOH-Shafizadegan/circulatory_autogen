@@ -87,8 +87,9 @@ sa_options:
   lists them under `prediction_feature_names`. They are computed the same way as the
   data_item rows: by the analytic arm (CasADi, or Myokit CVODES sensitivities), or by central
   finite differences with `fd_rel_step` (2M more simulations) when `gradient_method: FD` or over
-  an emulator. Myokit's arm needs a single sub-experiment; a prediction feature in an
-  experiment with several falls back to finite differences, with a warning.
+  an emulator. Myokit's arm needs every prediction feature in one and the same
+  sub-experiment; otherwise (features in two experiments, or in an experiment with several
+  sub-experiments) they fall back to finite differences, with a warning.
 - `choose_most_impactful_params_sobol` ranks over every column in the CSV, prediction features
   included.
 - With `use_emulator: true` the emulator must have been trained with

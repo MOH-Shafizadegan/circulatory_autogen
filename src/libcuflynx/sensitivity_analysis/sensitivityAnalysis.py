@@ -476,8 +476,8 @@ class SensitivityAnalysis():
         its own experiment and sub-experiment, value and std placeholders the arms do not
         read) and differentiated by the same code. An operation_kwargs reference to an earlier
         prediction feature becomes one to an earlier data_item, which resolves the same way.
-        Returns None, after a warning, when the arm cannot take them (Myokit's needs a single
-        sub-experiment); the caller then uses finite differences.
+        Returns None, after a warning, when the arm cannot take them (Myokit's needs every
+        feature in one and the same sub-experiment); the caller then uses finite differences.
         """
         from libcuflynx.param_id import prediction_features
         if self._prediction_engine is None:

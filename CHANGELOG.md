@@ -12,7 +12,8 @@ arm as the data_item rows (CasADi jacobian, or Myokit CVODES sensitivities) inst
 central finite differences: one extra solve rather than 2M. The prediction features are written
 as the data_items of a second engine and differentiated by the existing code. Finite
 differences are still used with `gradient_method: FD`, over an emulator, and, with a warning,
-when Myokit's arm cannot take them (a feature in an experiment with several sub-experiments).
+when Myokit's arm cannot take them: it needs every prediction feature in one and the same
+sub-experiment.
 
 ### Changed — a module type several sources define comes from the most specific one
 
