@@ -639,3 +639,27 @@ def test_calibrated_values_replace_rows_written_in_either_name_form(tmp_path):
     with open(path, newline='') as f:
         rows = {r['variable_name']: float(r['value']) for r in csv.DictReader(f)}
     assert rows == {'p_A': 2.0, 'C/q': 3.0, 'A/r': 4.0}
+
+
+@pytest.mark.unit
+def test_a_nested_submodule_is_named_as_a_path():
+    from types import SimpleNamespace
+    from libcuflynx.calibration_workflow.resolve import _submodule_path
+    target = {'submodules': [{'name': 'soma', 'vessel_type': 'S', 'BC_type': 'v'},
+                             {'name': 'x', 'vessel_type': 'M', 'BC_type': 'v'}],
+              'module_format': 'supermodule'}
+    supermodules = {('S', 'v'): {'submodules': [{'name': 'i_M', 'vessel_type': 'M',
+                                                 'BC_type': 'v'}]}}
+
+    def step(submodule):
+        return SimpleNamespace(id='s', submodule=submodule,
+                               target=Target('M', 'v', 'p'))
+
+    workflow_target = Target('T', 'v', 'p')
+    for name in ('soma/i_M', 'soma_i_M'):
+        assert _submodule_path(step(name), workflow_target, target, supermodules) == 'soma_i_M'
+    assert _submodule_path(step('x'), workflow_target, target, supermodules) == 'x'
+    with pytest.raises(WorkflowError, match=r"is at \['soma/i_M', 'x'\]"):
+        _submodule_path(step('i_M'), workflow_target, target, supermodules)
+    with pytest.raises(WorkflowError, match='say which with "submodule"'):
+        _submodule_path(step(None), workflow_target, target, supermodules)

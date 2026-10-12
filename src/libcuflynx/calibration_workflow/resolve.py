@@ -223,21 +223,30 @@ def _resolve_parameterisation(target, components, supermodules, where, need_para
     return resolved
 
 
-def submodule_paths(container_entry, key, supermodules, prefix=''):
-    '''Every path (``a`` or ``a_b``) at which a module of ``key`` = (type, version) sits in the
-    supermodule ``container_entry``, nested supermodules included.'''
+def submodule_paths(container_entry, key, supermodules, prefix=()):
+    '''Every path (``('a',)`` or ``('a', 'b')``) at which a module of ``key`` = (type, version)
+    sits in the supermodule ``container_entry``, nested supermodules included.'''
     found = []
     for sub in container_entry.get('submodules', []):
         sub_key = (sub['vessel_type'], sub['BC_type'])
-        path = prefix + sub['name']
+        path = prefix + (sub['name'],)
         if sub_key == key:
             found.append(path)
         if sub_key in supermodules:
-            found += submodule_paths(supermodules[sub_key], key, supermodules, path + '_')
+            found += submodule_paths(supermodules[sub_key], key, supermodules, path)
     return found
 
 
+def _matches(submodule, path):
+    '''Whether a step's ``submodule`` (``soma/i_M``, or ``soma_i_M``) names ``path``.'''
+    if '/' in submodule:
+        return tuple(submodule.split('/')) == path
+    return submodule == '_'.join(path)
+
+
 def _submodule_path(step, workflow_target, target_entry, supermodules):
+    '''Where the step's module sits in the target, as the joined name its expanded vessel
+    carries (``i_M``, ``soma_i_M``); '' for the target itself.'''
     if (step.target.module_type, step.target.version) == \
             (workflow_target.module_type, workflow_target.version):
         if step.submodule:
@@ -247,13 +256,15 @@ def _submodule_path(step, workflow_target, target_entry, supermodules):
     key = (step.target.module_type, step.target.version)
     paths = submodule_paths(target_entry, key, supermodules) if \
         is_supermodule_entry(target_entry) else []
+    shown = ['/'.join(p) for p in paths] or 'nowhere'
     if step.submodule:
-        if step.submodule not in paths:
+        chosen = [p for p in paths if _matches(step.submodule, p)]
+        if len(chosen) != 1:
             raise WorkflowError(
                 f'step "{step.id}": "submodule" is "{step.submodule}", but '
-                f'{step.target.module_type} {step.target.version} is at {paths or "nowhere"} '
+                f'{step.target.module_type} {step.target.version} is at {shown} '
                 f'in {workflow_target.label()}.')
-        return step.submodule
+        return '_'.join(chosen[0])
     if not paths:
         raise WorkflowError(
             f'step "{step.id}": {step.target.module_type} {step.target.version} is not a '
@@ -262,5 +273,5 @@ def _submodule_path(step, workflow_target, target_entry, supermodules):
     if len(paths) > 1:
         raise WorkflowError(
             f'step "{step.id}": {step.target.module_type} {step.target.version} is at '
-            f'{paths} in {workflow_target.label()}; say which with "submodule".')
-    return paths[0]
+            f'{shown} in {workflow_target.label()}; say which with "submodule".')
+    return '_'.join(paths[0])

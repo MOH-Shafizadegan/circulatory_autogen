@@ -176,7 +176,7 @@
         },
         "submodule": {
           "type": "string",
-          "description": "where the module sits in the workflow target (a submodule name, or nested names joined by _). Inferred when the module type and version occur once."
+          "description": "where the module sits in the workflow target: a submodule name, or a nested one as soma/i_M (soma_i_M is also read). Inferred when the module type and version occur once."
         },
         "depends_on": {
           "type": "array",
