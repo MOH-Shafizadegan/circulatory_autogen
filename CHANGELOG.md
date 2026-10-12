@@ -57,9 +57,13 @@ A module version's named parameter sets live in `parameterisations/<name>/<name>
 (with `<name>_obs_data.json` and `<name>_params_for_id.csv`); a record or submodule picks one with
 `"parameterisation"`, and a config entry names its default with `"default_parameterisation"`.
 "Instance" now means one use of a version in a module array, as a PhLynx node does. The older
-names are still read: `instances/` is used when a version has no `parameterisations/`, and
-`"instance"`/`"default_instance"` are read as the new keys. Giving both spellings with different
-values is a ValueError. The JSON Schemas describe both.
+names are still read for module configs: `instances/` is used when a version has no
+`parameterisations/`, and `"default_instance"` is read as `"default_parameterisation"` (both with
+different values is a ValueError). A module-array record or submodule must use
+`"parameterisation"`: `"instance"` there is a ValueError, and invalid in the JSON Schemas. The
+module is `libcuflynx.utilities.parameterisations` (was `module_instances`), with
+`record_parameterisation`, `parameterisations_dir`, `parameterisation_parameters_path`,
+`available_parameterisations`, `parameterisation_rows` and `component_parameterisation_rows`.
 
 ### Added — prediction items as scalar features
 

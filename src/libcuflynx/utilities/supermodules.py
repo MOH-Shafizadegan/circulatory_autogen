@@ -28,16 +28,16 @@ supermodule's own ``per_submodule_*``, so an instance's ``per_submodule_*`` may 
 submodule that is itself a supermodule instance.
 
 The supermodule's parameters -- those of its *parameterisation* (the record's
-``"parameterisation"``, or the entry's ``default_parameterisation``; the older names
-``"instance"`` and ``default_instance`` still work; see ``utilities/module_instances.py``),
-then its legacy ``default_parameters`` file -- name a submodule's parameter ``<sub>/<var>``
-(one nested in a submodule ``<sub>/<subsub>/<var>``), and are renamed to
-``{var}_{instance}_{sub}``, ``instance`` being the supermodule record's name; ``global/<var>``
-or a plain name is a global and keeps its name, added only once. The older ``{var}_{sub}``
-form is still read, matching the suffix against the submodule paths longest first, with a
-FutureWarning (see ``utilities/parameter_names.py``). A submodule record may name its own
-parameterisation; it stays on the expanded record, whose parameterisation is read with the
-components' (``module_instances.component_instance_rows``), after the supermodule's, so the
+``"parameterisation"``, or the entry's ``default_parameterisation``; see
+``utilities/parameterisations.py``), then its legacy ``default_parameters`` file -- name a
+submodule's parameter ``<sub>/<var>`` (one nested in a submodule ``<sub>/<subsub>/<var>``), and
+are renamed to ``{var}_{instance}_{sub}``, ``instance`` being the supermodule record's name;
+``global/<var>`` or a plain name is a global and keeps its name, added only once. The older
+``{var}_{sub}`` form is still read, matching the suffix against the submodule paths longest
+first, with a FutureWarning (see ``utilities/parameter_names.py``). A submodule record may name
+its own parameterisation; it stays on the expanded record, whose parameterisation is read with
+the components' (``parameterisations.component_parameterisation_rows``), after the
+supermodule's, so the
 supermodule's values win.
 
 After expansion no record is a supermodule instance.
@@ -47,10 +47,10 @@ import copy
 import os
 
 from libcuflynx.utilities.config_schemas import PER_SUBMODULE_KEYS, SUPERMODULE_FORMAT
-from libcuflynx.utilities.module_instances import (first_rows_win, instance_parameter_rows,
-                                                   instance_parameters_path,
-                                                   warn_conflicting_globals,
-                                                   read_parameter_rows, record_instance)
+from libcuflynx.utilities.parameterisations import (first_rows_win, parameterisation_rows,
+                                                    parameterisation_parameters_path,
+                                                    warn_conflicting_globals,
+                                                    read_parameter_rows, record_parameterisation)
 from libcuflynx.utilities.parameter_names import (supermodule_row_name,
                                                   warn_old_supermodule_names)
 
@@ -161,13 +161,12 @@ def read_supermodule_parameters(supermodule, record, where, registry=None):
     default_parameters, each name once.
     '''
     name = record['name']
-    instance, instance_rows = instance_parameter_rows(supermodule, record_instance(record, where),
-                                                      where)
-    source = (instance_parameters_path(supermodule['config_path'], instance)
-              if instance else where)
-    instance_rows = _rename_rows(instance_rows, name,
-                                 submodule_path_parts(supermodule, registry), source)
-    return first_rows_win(instance_rows + read_default_parameters(supermodule, name, where, registry))
+    parameterisation, own_rows = parameterisation_rows(
+        supermodule, record_parameterisation(record, where), where)
+    source = (parameterisation_parameters_path(supermodule['config_path'], parameterisation)
+              if parameterisation else where)
+    own_rows = _rename_rows(own_rows, name, submodule_path_parts(supermodule, registry), source)
+    return first_rows_win(own_rows + read_default_parameters(supermodule, name, where, registry))
 
 
 def _expand_one(records, index, registry, source, ancestry):
@@ -299,7 +298,7 @@ def _global_settings(rows, instance, supermodule, registry):
     alone), as ``warn_conflicting_globals`` settings.'''
     name = instance['name']
     local = tuple(f'_{name}_{path}' for path in submodule_paths(supermodule, registry))
-    used = record_instance(instance, name) or supermodule.get('default_instance')
+    used = record_parameterisation(instance, name) or supermodule.get('default_parameterisation')
     who = f'supermodule "{name}"' + (f' (parameterisation "{used}")' if used else '')
     return [(row['variable_name'], row['value'], row['units'], who, name) for row in rows
             if not row['variable_name'].endswith(local)]
@@ -311,7 +310,7 @@ def expand_supermodules(records, registry, source=None, settings=None):
     ``(records, extra_param_rows)``: ``records`` (normalised vessel records, see
     ``config_schemas.normalise_vessel_record``) with every supermodule instance -- a record
     whose (vessel_type, BC_type) is in ``registry`` -- replaced by its prefixed submodules,
-    recursively, and the instances' renamed parameters -- module instance, then
+    recursively, and the instances' renamed parameters -- parameterisation, then
     default_parameters -- each name once, the first occurrence kept (so an outer supermodule's
     values win over a nested one's). ``records`` is not modified.
 

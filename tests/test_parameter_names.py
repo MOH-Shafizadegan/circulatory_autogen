@@ -4,7 +4,7 @@ cuflynx-migrate-parameter-names.
 A model names a module's constant {var}_{vessel}; a file a person writes may name it
 <vessel>/<variable> instead, which is never ambiguous -- {var}_{vessel} cannot be split back
 when names contain "_". The supermodule tests use the real module library (see
-tests/_module_library.py): its soma's instance, migrated, must give exactly what the old
+tests/_module_library.py): its soma's parameterisation, migrated, must give exactly what the old
 form gave.
 """
 import csv
@@ -206,7 +206,7 @@ def _soma_rows(tmp_path, files):
 
 
 @pytest.mark.integration
-def test_a_migrated_supermodule_instance_gives_the_same_parameters(tmp_path, library_files):
+def test_a_migrated_supermodule_parameterisation_gives_the_same_parameters(tmp_path, library_files):
     from libcuflynx.scripts import migrate_parameter_names
     modules, files = library_files
     original = next(f for f in files if f.endswith('soma_sympathetic_modules_config.json'))
@@ -220,8 +220,8 @@ def test_a_migrated_supermodule_instance_gives_the_same_parameters(tmp_path, lib
     config = str(copy / os.path.basename(original))
     assert migrate_parameter_names.main(['--supermodule-config', config, '--module-library-dir',
                                          modules, '--no-builtin-modules']) == 0
-    instance = copy / 'instances' / 'default' / 'default_parameters.csv'
-    names = [r['variable_name'] for r in _read(str(instance))]
+    parameterisation = copy / 'parameterisations' / 'default' / 'default_parameters.csv'
+    names = [r['variable_name'] for r in _read(str(parameterisation))]
     assert any(n.startswith('membrane/') for n in names) and 'R' in names
 
     files_with_copy = [f for f in files if f != original] + [config]
@@ -232,14 +232,14 @@ def test_a_migrated_supermodule_instance_gives_the_same_parameters(tmp_path, lib
 
 
 @pytest.mark.unit
-def test_a_component_instance_names_its_variables_without_a_vessel(tmp_path):
-    from libcuflynx.utilities.module_instances import component_instance_rows
+def test_a_parameterisation_names_its_variables_without_a_vessel(tmp_path):
+    from libcuflynx.utilities.parameterisations import component_parameterisation_rows
     directory = tmp_path / 'pulse' / 'versions' / 'v1'
-    os.makedirs(directory / 'instances' / 'x')
-    (directory / 'instances' / 'x' / 'x_parameters.csv').write_text(
+    os.makedirs(directory / 'parameterisations' / 'x')
+    (directory / 'parameterisations' / 'x' / 'x_parameters.csv').write_text(
         'variable_name,units,value,data_reference\ns1/mean,m3_per_s,1,r\n')
     entry = {'vessel_type': 'pulse_src', 'BC_type': 'v1', 'variables_and_units': [],
              'config_path': str(directory / 'pulse_v1_modules_config.json')}
-    record = {'name': 's1', 'vessel_type': 'pulse_src', 'BC_type': 'v1', 'instance': 'x'}
+    record = {'name': 's1', 'vessel_type': 'pulse_src', 'BC_type': 'v1', 'parameterisation': 'x'}
     with pytest.raises(ValueError, match='named without a vessel'):
-        component_instance_rows([record], {('pulse_src', 'v1'): entry})
+        component_parameterisation_rows([record], {('pulse_src', 'v1'): entry})

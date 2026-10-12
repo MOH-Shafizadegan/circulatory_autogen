@@ -283,7 +283,7 @@ modules/<category>/<module_type>/versions/<version>/
 ```
 
 !!! Note
-    Parameterisations used to be called *instances*. The older names are still read: an `instances/` directory is used when a version has no `parameterisations/` directory, `"instance"` is read as `"parameterisation"`, and `"default_instance"` as `"default_parameterisation"`. Giving both spellings with different values is an error.
+    Parameterisations used to be called *instances*. An `instances/` directory is still read when a version has no `parameterisations/` directory, and `"default_instance"` as `"default_parameterisation"` (giving both with different values is an error). A module-array record must use `"parameterisation"`: `"instance"` there is an error, since an instance is the record itself.
 
 A parameterisation changes only parameters, never the equations. Its parameter names carry no vessel suffix: `C`, not `C_[vessel]`.
 

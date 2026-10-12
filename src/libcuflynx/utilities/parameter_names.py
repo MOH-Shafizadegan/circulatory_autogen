@@ -14,8 +14,8 @@ written                                 where                           model na
 ``heart/lv/E``                          host file, a supermodule's      ``E_heart_lv``
                                         expanded submodule
 ``global/R`` or ``R``                   any                             ``R``
-``lv/E``                                a supermodule's instance or     ``E_<instance>_lv``
-                                        default_parameters              (record ``<instance>``)
+``lv/E``                                a supermodule's parameter set   ``E_<instance>_lv``
+                                        or default_parameters           (record ``<instance>``)
 ``soma/i_M/rho_M``                      same, a nested submodule        ``rho_M_<instance>_soma_i_M``
 ======================================  ==============================  =====================
 
@@ -62,7 +62,7 @@ def model_name(name, where=''):
 
 
 def supermodule_row_name(name, instance, submodule_paths, where=''):
-    '''The model name of a row of a supermodule's instance or default_parameters file, for the
+    '''The model name of a row of a supermodule's parameterisation or default_parameters file, for the
     supermodule record ``instance``. ``submodule_paths`` are the supermodule's submodules as
     tuples of names (``('lv',)``, and ``('soma', 'i_M')`` for one nested in a submodule).
     Returns ``(model name, old_form)``.

@@ -7,7 +7,7 @@ Two kinds of file:
 * a host parameters file, with ``--module-array <prefix>_module_array.json|csv``: each name
   ``{var}_{vessel}`` of a vessel in the (expanded) module array becomes ``<vessel>/<var>``,
   written ``<record>/<submodule>/<var>`` for a supermodule's expanded vessel;
-* a supermodule's instance files and default_parameters, with ``--supermodule-config
+* a supermodule's parameterisation files and default_parameters, with ``--supermodule-config
   <its *_modules_config.json>``: ``{var}_{sub}`` becomes ``<sub>/<var>``, and
   ``<sub>/<subsub>/<var>`` for a nested submodule.
 
@@ -27,7 +27,7 @@ from libcuflynx.utilities.config_schemas import (is_supermodule_entry, load_comp
                                                  load_expanded_vessel_records,
                                                  load_module_config, load_supermodule_registry,
                                                  read_module_array_records)
-from libcuflynx.utilities.module_instances import available_instances, instance_parameters_path
+from libcuflynx.utilities.parameterisations import available_parameterisations, parameterisation_parameters_path
 from libcuflynx.utilities.module_library import ModuleSources
 from libcuflynx.utilities.parameter_names import SEPARATOR
 from libcuflynx.utilities.supermodules import submodule_path_parts
@@ -149,7 +149,7 @@ def supermodule_files(config_path):
         raise ValueError(f'{config_path} holds {len(entries)} supermodule entries; give a config '
                          f'with exactly one.')
     entry = dict(entries[0], config_path=os.path.abspath(config_path))
-    files = [instance_parameters_path(config_path, i) for i in available_instances(config_path)]
+    files = [parameterisation_parameters_path(config_path, i) for i in available_parameterisations(config_path)]
     if entry.get('default_parameters'):
         files.append(os.path.join(os.path.dirname(os.path.abspath(config_path)),
                                   entry['default_parameters']))
@@ -159,7 +159,7 @@ def supermodule_files(config_path):
 def build_parser():
     parser = argparse.ArgumentParser(
         description='Rewrite {variable}_{vessel} parameter names as <vessel>/<variable>, in a '
-                    'host parameters file or in a supermodule\'s instance and default '
+                    'host parameters file or in a supermodule\'s parameterisation and default '
                     'parameters files.',
         epilog=EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
     kind = parser.add_mutually_exclusive_group(required=True)

@@ -12,12 +12,11 @@ A module library (e.g. circulatory-autogen-modules) lays a module out as::
             <name>_obs_data.json      optional; "obs_data_name": "<name>"
             <name>_params_for_id.csv  optional
 
-Parameterisations used to be called *instances* (the word now means one use of a version in
-a module array), and the old names are still read: an ``instances/`` directory is used when
-there is no ``parameterisations/`` one, ``"instance"`` is read as ``"parameterisation"`` and
-``"default_instance"`` as ``"default_parameterisation"``. The code below keeps the old names
-internally: the config loaders (``config_schemas.py``) normalise both spellings to
-``instance`` / ``default_instance``.
+An ``instances/`` directory is read when there is no ``parameterisations/`` one, and a config
+entry's ``"default_instance"`` as ``"default_parameterisation"`` (the config loaders in
+``config_schemas.py`` normalise it to ``default_parameterisation``). A
+module-array record names its parameterisation with ``"parameterisation"`` only: ``"instance"``
+there is an error, since an instance is the record itself.
 
 A parameterisation only changes parameters, never the math. Its parameter names carry no
 suffix: a row ``C`` becomes ``C_<vessel>`` for the module-array record that uses it, except a
@@ -63,12 +62,12 @@ DEFAULT_PARAMETERISATION_KEY = 'default_parameterisation'
 DEFAULT_INSTANCE_KEY = 'default_instance'
 GLOBAL_CONSTANT = 'global_constant'
 
-# the columns a parameters CSV (an instance's, or a supermodule's default_parameters) must
+# the columns a parameters CSV (a parameterisation's, or a supermodule's default_parameters) must
 # have; config_schemas.PARAMETER_COLUMNS re-exports this
 PARAMETER_COLUMNS = ('variable_name', 'units', 'value', 'data_reference')
 
 
-def check_instance_name(value, where, key='instance'):
+def check_parameterisation_name(value, where, key=PARAMETERISATION_KEY):
     '''``value`` if it is a usable parameterisation name; ValueError naming ``where``
     otherwise.'''
     if not isinstance(value, str) or not value.strip():
@@ -83,31 +82,40 @@ def check_instance_name(value, where, key='instance'):
 
 def merge_renamed_key(mapping, new_key, old_key, where):
     '''
-    A copy of ``mapping`` with its ``new_key`` (e.g. ``parameterisation``) stored under the
-    older ``old_key`` (``instance``), which the code reads. Either spelling may be given;
-    both with different values is a ValueError naming ``where``. ``mapping`` is returned
-    unchanged when it has no ``new_key``.
+    A copy of ``mapping`` with its older ``old_key`` (``default_instance``) stored under
+    ``new_key`` (``default_parameterisation``), the name the code reads. Either spelling may be
+    given; both with different values is a ValueError naming ``where``. ``mapping`` is
+    returned unchanged when it has no ``old_key``.
     '''
-    if new_key not in mapping:
+    if old_key not in mapping:
         return mapping
-    if old_key in mapping:
+    if new_key in mapping:
         new, old = mapping[new_key], mapping[old_key]
         same = (isinstance(new, str) and isinstance(old, str) and new.strip() == old.strip()) \
             or new == old
         if not same:
             raise ValueError(f'{where} has both "{new_key}" ({new!r}) and its older name '
                              f'"{old_key}" ({old!r}). Give only "{new_key}".')
-    return {(old_key if k == new_key else k): v for k, v in mapping.items() if k != old_key}
+    return {(new_key if k == old_key else k): v for k, v in mapping.items() if k != new_key}
 
 
-def record_instance(record, where):
-    '''The parameterisation a module-array record names (``"parameterisation"``, or the older
-    ``"instance"``), None when it names none. Normalised records only carry ``"instance"``;
-    this also takes records that were not normalised.'''
-    return merge_renamed_key(record, PARAMETERISATION_KEY, INSTANCE_KEY, where).get(INSTANCE_KEY)
+def reject_instance_key(record, where):
+    '''A module-array record names its parameter set with ``"parameterisation"``; an
+    ``"instance"`` key is a ValueError naming ``where``.'''
+    if INSTANCE_KEY in record:
+        raise ValueError(f'{where} has "{INSTANCE_KEY}": {record[INSTANCE_KEY]!r}. A module-array '
+                         f'record names its parameter set with "{PARAMETERISATION_KEY}"; rename '
+                         f'the key.')
 
 
-def instances_dir(config_path):
+def record_parameterisation(record, where):
+    '''The parameterisation a module-array record names (``"parameterisation"``), None when it
+    names none.'''
+    reject_instance_key(record, where)
+    return record.get(PARAMETERISATION_KEY)
+
+
+def parameterisations_dir(config_path):
     '''Where the parameterisations of the config at ``config_path`` live:
     ``<config dir>/parameterisations``, or the older ``<config dir>/instances`` when only that
     exists.'''
@@ -119,16 +127,16 @@ def instances_dir(config_path):
     return path
 
 
-def instance_parameters_path(config_path, instance):
+def parameterisation_parameters_path(config_path, name):
     '''``<config dir>/parameterisations/<name>/<name>_parameters.csv`` (or under
-    ``instances/``, see ``instances_dir``)'''
-    return os.path.join(instances_dir(config_path), instance, f'{instance}_parameters.csv')
+    ``instances/``, see ``parameterisations_dir``)'''
+    return os.path.join(parameterisations_dir(config_path), name, f'{name}_parameters.csv')
 
 
-def available_instances(config_path):
+def available_parameterisations(config_path):
     '''The parameterisations next to the config at ``config_path``: the subdirectories of
     ``parameterisations/`` (or ``instances/``) that hold a ``<name>_parameters.csv``, sorted.'''
-    root = instances_dir(config_path)
+    root = parameterisations_dir(config_path)
     if not os.path.isdir(root):
         return []
     return sorted(name for name in os.listdir(root)
@@ -160,26 +168,26 @@ def _entry_label(entry):
     return f'({entry.get("vessel_type")}, {entry.get("BC_type")})'
 
 
-def instance_parameter_rows(entry, instance, where):
+def parameterisation_rows(entry, parameterisation, where):
     '''
     ``(name, rows)`` for the config ``entry`` (a normalised module config entry, component or
     supermodule, carrying the ``config_path`` it was loaded from) and the record's
-    parameterisation ``instance`` (None when the record names none). The rows are the raw
+    ``parameterisation`` (None when the record names none). The rows are the raw
     ones of the parameterisation's parameters file, not yet renamed; ``(None, [])`` when
     nothing applies.
 
     * an explicit parameterisation must exist: ValueError naming the version directory and
       the parameterisations it has, or saying that the config has no parameterisations
       directory;
-    * with none, ``entry["default_instance"]`` (the normalised ``default_parameterisation``)
+    * with none, ``entry["default_parameterisation"]``
       is used if its parameters file exists.
     '''
     config_path = entry.get('config_path')
-    if instance is None:
-        default = entry.get('default_instance')
+    if parameterisation is None:
+        default = entry.get(DEFAULT_PARAMETERISATION_KEY)
         if not default or not config_path:
             return None, []
-        path = instance_parameters_path(config_path, default)
+        path = parameterisation_parameters_path(config_path, default)
         if not os.path.isfile(path):
             return None, []
         return default, read_parameter_rows(path, where,
@@ -188,25 +196,25 @@ def instance_parameter_rows(entry, instance, where):
     label = _entry_label(entry)
     if not config_path:
         raise ValueError(
-            f'{where}: names parameterisation "{instance}" of {label}, but that module config '
+            f'{where}: names parameterisation "{parameterisation}" of {label}, but that module config '
             f'was not loaded from a module library directory, so there is nowhere to look for '
             f'parameterisations. Parameterisations live in <module>/versions/<version>/'
             f'{PARAMETERISATIONS_DIR}/<name>/ next to the version\'s *_modules_config.json.')
     version_dir = os.path.dirname(os.path.abspath(config_path))
-    if not os.path.isdir(instances_dir(config_path)):
+    if not os.path.isdir(parameterisations_dir(config_path)):
         raise ValueError(
-            f'{where}: names parameterisation "{instance}" of {label}, but its module config '
+            f'{where}: names parameterisation "{parameterisation}" of {label}, but its module config '
             f'{config_path} has no {PARAMETERISATIONS_DIR}/ (or older {INSTANCES_DIR}/) '
             f'directory next to it, so {label} has no parameterisations. Parameterisations '
             f'live in {version_dir}/{PARAMETERISATIONS_DIR}/<name>/<name>_parameters.csv.')
-    path = instance_parameters_path(config_path, instance)
+    path = parameterisation_parameters_path(config_path, parameterisation)
     if not os.path.isfile(path):
-        existing = available_instances(config_path)
+        existing = available_parameterisations(config_path)
         raise ValueError(
-            f'{where}: unknown parameterisation "{instance}" of {label}: {path} does not '
-            f'exist. The parameterisations in {instances_dir(config_path)} are '
+            f'{where}: unknown parameterisation "{parameterisation}" of {label}: {path} does not '
+            f'exist. The parameterisations in {parameterisations_dir(config_path)} are '
             f'{existing or "none"}.')
-    return instance, read_parameter_rows(path, where, f'parameterisation "{instance}" file')
+    return parameterisation, read_parameter_rows(path, where, f'parameterisation "{parameterisation}" file')
 
 
 class ConflictingGlobalWarning(UserWarning):
@@ -282,10 +290,10 @@ def global_constants(entry):
     return names
 
 
-def component_instance_rows(records, component_registry, source=None, settings=None):
+def component_parameterisation_rows(records, component_registry, source=None, settings=None):
     '''
     The parameterisation rows of every record in ``records`` (the normalised records of an
-    expanded module array, whose parameterisation is in ``record["instance"]``) whose
+    expanded module array, whose parameterisation is in ``record["parameterisation"]``) whose
     (vessel_type, BC_type) is in ``component_registry`` (see
     ``config_schemas.load_component_registry``), in record order: each row ``{var}`` renamed
     to ``{var}_{record name}``, or kept if ``var`` is a global constant of the module.
@@ -304,24 +312,24 @@ def component_instance_rows(records, component_registry, source=None, settings=N
     for record in records:
         key = (record['vessel_type'], record['BC_type'])
         where = f'{source}: "{record["name"]}" {key}'
-        instance = record_instance(record, where)
+        parameterisation = record_parameterisation(record, where)
         entry = component_registry.get(key)
         if entry is None:
-            if instance is not None:
-                raise ValueError(f'{where}: names parameterisation "{instance}", but no module '
+            if parameterisation is not None:
+                raise ValueError(f'{where}: names parameterisation "{parameterisation}", but no module '
                                  f'config entry of that type was found, so there is no module '
                                  f'library directory to look for its parameterisations in.')
             continue
-        used, raw = instance_parameter_rows(entry, instance, where)
+        used, raw = parameterisation_rows(entry, parameterisation, where)
         globals_ = global_constants(entry)
         for row in raw:
             row = dict(row)
             if '/' in row['variable_name']:
                 raise ValueError(
-                    f'{where}: instance "{instance or entry.get("default_instance")}" names '
-                    f'"{row["variable_name"]}", but a module instance\'s parameters are the '
-                    f'module\'s own variables, named without a vessel ("C", not "lv/C"); the '
-                    f'vessel is the module-array record that uses the instance.')
+                    f'{where}: parameterisation "{used}" names "{row["variable_name"]}", but a '
+                    f'parameterisation\'s parameters are the module\'s own variables, named '
+                    f'without a vessel ("C", not "lv/C"); the vessel is the module-array record '
+                    f'that uses it.')
             if row['variable_name'] not in globals_:
                 row['variable_name'] = f'{row["variable_name"]}_{record["name"]}'
             else:
