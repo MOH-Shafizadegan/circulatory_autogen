@@ -927,3 +927,34 @@ def test_soft_restarts_give_the_same_bits_on_any_number_of_threads(tmp_path):
             assert helper.sim.run(helper.states, helper.variables, 0.1 * j, [0.1 * (j + 1)], threads=threads) == []
         results.append(helper.states.copy())
     assert np.array_equal(results[0], results[1])
+
+
+# A motor's activation a rises from 0 towards m with a 0.3 s time constant, beside a slow state c: a restart with a
+# at zero (weight 1/atol) must still take a step that moves t, however late the restart.
+MOTOR = _cellml(f"""
+  <component name="motor">
+    <variable name="t" units="second"/>
+    <variable name="a" units="dimensionless" initial_value="0"/>
+    <variable name="c" units="dimensionless" initial_value="1"/>
+    <variable name="m" units="dimensionless" initial_value="1"/>
+    <variable name="tau" units="second" initial_value="0.3"/>
+    <variable name="k" units="per_s" initial_value="0.01"/>
+    <math {MATHML}>
+      {_ode('a', '<apply><divide/><apply><minus/><ci>m</ci><ci>a</ci></apply><ci>tau</ci></apply>')}
+      {_ode('c', '<apply><minus/><apply><times/><ci>k</ci><ci>c</ci></apply></apply>')}
+    </math>
+  </component>""")
+
+
+@needs_c
+@pytest.mark.solver
+@pytest.mark.parametrize('t0', [1.0, 2040.0, 1e6])
+def test_a_restart_with_a_state_at_zero_takes_a_step_that_moves_time(tmp_path, t0):
+    """The first step after a restart comes from the norms over all the block's states (Hairer, Norsett & Wanner),
+    not from the state at zero alone: that gave ~3e-14 s, which t + h no longer resolves beyond t ~ 1000 s."""
+    helper = _stepper(tmp_path, MOTOR, False, rtol=1e-4)
+    a, c = _index(helper, 'motor/a'), _index(helper, 'motor/c')
+    helper.states[a] = 0.0
+    assert helper.sim.run(helper.states, helper.variables, t0, [t0 + 0.1]) == []
+    assert helper.states[a] == pytest.approx(1.0 - math.exp(-0.1 / 0.3), rel=1e-3)
+    assert helper.states[c] == pytest.approx(math.exp(-0.001), rel=1e-6)

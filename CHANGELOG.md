@@ -51,6 +51,9 @@ as `CVODE_myokit`.
   - It has no sensitivities.
 - **user_inputs.** `solver: BE_batched_c` takes `method` `backward_euler` (the default) or `trbdf2`; each CellML
   solver's methods are checked against its own list, not `CVODE_myokit`'s.
+- **First step after a restart.** Hairer, Norsett and Wanner's starting step, from weighted RMS norms over the
+  block's states and a second-derivative estimate, at least 64 ulps of t, so a state restarting at zero (weight
+  1/atol) no longer forces a step too small for t + h to differ from t (late restarts failed as "step too small").
 
 ### Added — `CVODES_batched_c`: one CVODES per block, on the same generated C
 

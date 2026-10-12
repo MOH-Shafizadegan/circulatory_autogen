@@ -29,6 +29,7 @@
      trace's breakpoints, so each step sees one straight piece of it.
    Blocks are independent, so they run on any number of OpenMP threads with bit-identical results. */
 {% endblock %}
+#include <float.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -553,17 +554,40 @@ static int bk_stage(const BkOptions *o, BkBlock *B, double t1, double a)
 /* A first step that changes no state by more than a tenth of its tolerance at the current rates. */
 static double bk_first_step(const BkOptions *o, BkBlock *B)
 {
-    double h = o->h_max;
-    for (int i = 0; i < B->n; ++i) {
-        double f = fabs(B->fb[i]);
-        if (f > 0.0) {
-            double hi = 0.1 / (f * bk_weight(o, B, i, B->yb[i]));
-            if (hi < h)
-                h = hi;
-        }
+    /* Hairer, Norsett & Wanner's starting step (Solving ODEs I, II.4), with weighted RMS norms over all the block's
+       states, so a state starting at zero (whose weight is 1/atol) does not force a step too small to resolve. */
+    int n = B->n;
+    double p = o->method == 0 ? 1.0 : 2.0;
+    double d0 = 0.0, d1 = 0.0;
+    for (int i = 0; i < n; ++i) {
+        double w = bk_weight(o, B, i, B->yb[i]);
+        d0 += (B->yb[i] * w) * (B->yb[i] * w);
+        d1 += (B->fb[i] * w) * (B->fb[i] * w);
     }
+    d0 = sqrt(d0 / n);
+    d1 = sqrt(d1 / n);
+    double h0 = (d0 < 1e-5 || d1 < 1e-5) ? 1e-6 : 0.01 * d0 / d1;
+    if (h0 > o->h_max)
+        h0 = o->h_max;
+    for (int i = 0; i < n; ++i)
+        B->y[i] = B->yb[i] + h0 * B->fb[i];        /* an Euler step, to estimate the second derivative */
+    bk_rates(B, B->tb + h0, B->y, B->f);
+    double d2 = 0.0;
+    for (int i = 0; i < n; ++i) {
+        double e = (B->f[i] - B->fb[i]) * bk_weight(o, B, i, B->yb[i]);
+        d2 += e * e;
+    }
+    d2 = sqrt(d2 / n) / h0;
+    double m = d1 > d2 ? d1 : d2;
+    double h1 = m <= 1e-15 ? fmax(1e-6, 1e-3 * h0) : pow(0.01 / m, 1.0 / (p + 1.0));
+    double h = 100.0 * h0 < h1 ? 100.0 * h0 : h1;
+    double resolvable = 64.0 * DBL_EPSILON * fabs(B->tb);   /* a step t + h must differ from t */
     if (!isfinite(h))
         h = 1.0;
+    if (h < resolvable)
+        h = resolvable;
+    if (h > o->h_max)
+        h = o->h_max;
     return h > o->h_min ? h : (o->h_min > 0.0 ? o->h_min : 1e-300);
 }
 
