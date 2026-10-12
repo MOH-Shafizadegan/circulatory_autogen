@@ -48,6 +48,16 @@ the old name still works with a `FutureWarning`. The 0D/1D split writes `[file_p
 `libcuflynx/schemas/module_array.schema.json`. The record keys (`vessel_type`, `BC_type`,
 `inp_vessels`, `out_vessels`) and the `vessels_csv_abs_path` config key are unchanged.
 
+### Changed — module instances are now called parameterisations
+
+A module version's named parameter sets live in `parameterisations/<name>/<name>_parameters.csv`
+(with `<name>_obs_data.json` and `<name>_params_for_id.csv`); a record or submodule picks one with
+`"parameterisation"`, and a config entry names its default with `"default_parameterisation"`.
+"Instance" now means one use of a version in a module array, as a PhLynx node does. The older
+names are still read: `instances/` is used when a version has no `parameterisations/`, and
+`"instance"`/`"default_instance"` are read as the new keys. Giving both spellings with different
+values is a ValueError. The JSON Schemas describe both.
+
 ### Added — prediction items as scalar features
 
 A `prediction_item` may carry an `operation` and `operation_kwargs`, with the same vocabulary and

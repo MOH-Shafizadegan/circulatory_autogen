@@ -465,8 +465,9 @@ class CSV0DModelParser(object):
         # their instances are expanded into prefixed submodules as the module array is read,
         # before anything below (the heart special case, the module-config join) sees it.
         supermodule_registry = self.module_sources.supermodule_registry()
-        # Component entries with the config file each came from: a record's module instance
-        # ("instance", or the entry's default_instance) is read from instances/ next to it
+        # Component entries with the config file each came from: a record's parameterisation
+        # ("parameterisation"/"instance", or the entry's default) is read from
+        # parameterisations/ (or the older instances/) next to it
         # (utilities/module_instances.py).
         component_registry = self.module_sources.component_registry()
         # The module array is JSON records or a CSV converted to the same records
