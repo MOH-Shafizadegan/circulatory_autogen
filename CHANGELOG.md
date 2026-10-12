@@ -5,6 +5,16 @@ next release; add to that section as you land a change.
 
 ## Unreleased
 
+### Changed — local SA differentiates prediction features analytically
+
+With `sa_options.include_prediction_items`, local SA's prediction-feature rows now use the same
+arm as the data_item rows (CasADi jacobian, or Myokit CVODES sensitivities) instead of always
+central finite differences: one extra solve rather than 2M. The prediction features are written
+as the data_items of a second engine and differentiated by the existing code. Finite
+differences are still used with `gradient_method: FD`, over an emulator, and, with a warning,
+when Myokit's arm cannot take them: it needs every prediction feature in one and the same
+sub-experiment.
+
 ### Changed — a module type several sources define comes from the most specific one
 
 A `(vessel_type, BC_type)` defined in more than one module source used to keep the first entry
