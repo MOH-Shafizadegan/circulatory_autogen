@@ -85,17 +85,13 @@ VESSELS = {'aortic_root': {'C': 'constant', 'T': 'global_constant'},
 
 @pytest.mark.unit
 def test_host_names_are_checked_against_the_model():
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter('always')
-        names = host_model_names(['aortic_root/C', 'heart/lv/E', 'global/R', 'C_x'],
-                                 VESSELS, 'p.csv')
+    names = host_model_names(['aortic_root/C', 'heart/lv/E', 'global/R', 'C_x'], VESSELS, 'p.csv')
     assert names == ['C_aortic_root', 'E_heart_lv', 'R', 'C_x']
-    assert not [w for w in caught if 'not used' in str(w.message)]
 
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter('always')
+    with pytest.raises(ValueError) as raised:
         host_model_names(['aortc_root/C', 'aortic_root/Cx', 'aortic_root/T'], VESSELS, 'p.csv')
-    message = str(next(w for w in caught if 'not used' in str(w.message)).message)
+    message = str(raised.value)
+    assert '3 parameter(s) name something the model does not have' in message
     assert 'aortc_root/C (no vessel "aortc_root"' in message
     assert 'has no variable "Cx"' in message
     assert 'aortic_root/T ("T" is a global constant: write global/T or T)' in message
@@ -148,10 +144,7 @@ def test_a_migrated_host_file_generates_the_same_model(tmp_path):
     assert slashed and 'aortic_root/C' in slashed
     assert len(rows) == len(_read(os.path.join(RESOURCES_DIR, f'{PREFIX}_parameters.csv')))
 
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter('always')
-        new = _generate(str(tmp_path / 'new'), str(tmp_path / 'gen_new'))
-    assert not [w for w in caught if 'not used by the model' in str(w.message)]
+    new = _generate(str(tmp_path / 'new'), str(tmp_path / 'gen_new'))
     old = _generate(str(tmp_path / 'old'), str(tmp_path / 'gen_old'))
     for name in sorted(os.listdir(old)):
         if name.endswith('.cellml'):
@@ -160,7 +153,7 @@ def test_a_migrated_host_file_generates_the_same_model(tmp_path):
 
 
 @pytest.mark.integration
-def test_a_misspelt_vessel_is_reported_rather_than_silently_unused(tmp_path):
+def test_a_misspelt_vessel_is_an_error(tmp_path):
     params = _copy_resources(str(tmp_path / 'r'))
     with open(params) as f:
         text = f.read()
@@ -168,10 +161,8 @@ def test_a_misspelt_vessel_is_reported_rather_than_silently_unused(tmp_path):
     row = ['aortic_rot/C', 'm6_per_N', '1e-9', 'typo'] + [''] * (columns - 4)
     with open(params, 'w') as f:
         f.write(text.rstrip('\n') + '\n' + ','.join(row) + '\n')
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter('always')
+    with pytest.raises(ValueError, match=r'aortic_rot/C \(no vessel "aortic_rot"'):
         _generate(str(tmp_path / 'r'), str(tmp_path / 'g'))
-    assert any('aortic_rot/C (no vessel "aortic_rot"' in str(w.message) for w in caught)
 
 
 # --------------------------------------------------------------------------------------------

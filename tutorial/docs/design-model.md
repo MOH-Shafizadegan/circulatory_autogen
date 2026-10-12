@@ -125,7 +125,7 @@ Write a module's parameter as `[vessel_name]/[variable_name]`, with a `/` betwee
 | `heart/lv/E` | `E` of the submodule `lv` of the supermodule instance `heart` | `E_heart_lv` |
 | `R` or `global/R` | the global constant `R` | `R` |
 
-The generated model still uses `[variable_name]_[vessel_name]`, because a CellML name cannot contain `/`. That older form is still read in a parameters file: `C_aortic_root` sets the same parameter as `aortic_root/C`, and setting it both ways is an error. The `/` form is never ambiguous and it is checked: a row naming a vessel that is not in the module array, a variable its module does not have, or a global constant through a vessel, is reported as unused instead of being ignored silently.
+The generated model still uses `[variable_name]_[vessel_name]`, because a CellML name cannot contain `/`. That older form is still read in a parameters file: `C_aortic_root` sets the same parameter as `aortic_root/C`, and setting it both ways is an error. The `/` form is never ambiguous and it is checked: a row naming a vessel that is not in the module array, a variable its module does not have, or a global constant through a vessel, is an error that lists every such row.
 
 `cuflynx-migrate-parameter-names --module-array [resources_dir]/[file_prefix]_module_array.csv` rewrites a parameters file's names into the `/` form (add `--module-library-dir` for modules from a library). It rewrites a name only when exactly one reading of it is a variable of that vessel's module, and reports the rest.
 

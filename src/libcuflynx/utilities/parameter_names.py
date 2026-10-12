@@ -110,9 +110,9 @@ def host_model_names(names, vessels, where):
     ``vessels`` is ``{vessel name: {variable name: kind}}`` for the model's (expanded) module
     array, ``kind`` as in a module config's ``variables_and_units`` (``constant``,
     ``global_constant`` ...). A ``/`` name whose vessel is not in the model, whose variable its
-    module does not have, or that addresses a global constant through a vessel, is collected in
-    one UserWarning -- such a row is not used, which used to happen without a word. Two rows
-    naming one parameter (``aortic_root/C`` and ``C_aortic_root``) are a ValueError.
+    module does not have, or that addresses a global constant through a vessel would not be
+    used: all of them are reported in one ValueError. So are two rows naming one parameter
+    (``aortic_root/C`` and ``C_aortic_root``).
     '''
     model_names, seen, unused = [], {}, []
     for name in names:
@@ -137,6 +137,6 @@ def host_model_names(names, vessels, where):
             unused.append(f'{name} ("{variable}" is a global constant: write global/{variable} '
                           f'or {variable})')
     if unused:
-        warnings.warn(f'{where}: {len(unused)} parameter(s) are not used by the model: '
-                      + '; '.join(unused), UserWarning, stacklevel=2)
+        raise ValueError(f'{where}: {len(unused)} parameter(s) name something the model does '
+                         f'not have: ' + '; '.join(unused))
     return model_names
