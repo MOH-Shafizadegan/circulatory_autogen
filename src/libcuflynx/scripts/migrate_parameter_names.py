@@ -27,7 +27,8 @@ from libcuflynx.utilities.config_schemas import (is_supermodule_entry, load_comp
                                                  load_expanded_vessel_records,
                                                  load_module_config, load_supermodule_registry,
                                                  read_module_array_records)
-from libcuflynx.utilities.parameterisations import available_parameterisations, parameterisation_parameters_path
+from libcuflynx.utilities.parameterisations import (available_parameterisations,
+                                                    parameterisation_parameters_path)
 from libcuflynx.utilities.module_library import ModuleSources
 from libcuflynx.utilities.parameter_names import SEPARATOR
 from libcuflynx.utilities.supermodules import submodule_path_parts
@@ -149,7 +150,8 @@ def supermodule_files(config_path):
         raise ValueError(f'{config_path} holds {len(entries)} supermodule entries; give a config '
                          f'with exactly one.')
     entry = dict(entries[0], config_path=os.path.abspath(config_path))
-    files = [parameterisation_parameters_path(config_path, i) for i in available_parameterisations(config_path)]
+    files = [parameterisation_parameters_path(config_path, name)
+             for name in available_parameterisations(config_path)]
     if entry.get('default_parameters'):
         files.append(os.path.join(os.path.dirname(os.path.abspath(config_path)),
                                   entry['default_parameters']))

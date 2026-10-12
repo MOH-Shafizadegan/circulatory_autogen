@@ -62,8 +62,8 @@ def model_name(name, where=''):
 
 
 def supermodule_row_name(name, instance, submodule_paths, where=''):
-    '''The model name of a row of a supermodule's parameterisation or default_parameters file, for the
-    supermodule record ``instance``. ``submodule_paths`` are the supermodule's submodules as
+    '''The model name of a row of a supermodule's parameterisation or default_parameters
+    file, for the supermodule record ``instance``. ``submodule_paths`` are the supermodule's submodules as
     tuples of names (``('lv',)``, and ``('soma', 'i_M')`` for one nested in a submodule).
     Returns ``(model name, old_form)``.
 
