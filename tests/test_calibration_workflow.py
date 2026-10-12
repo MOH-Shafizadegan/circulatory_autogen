@@ -188,14 +188,49 @@ def test_every_step_needs_its_own_params_for_id(library):
         resolve_workflow(load_workflow(library['twin_split']))
 
 
-@pytest.mark.unit
-def test_a_parameter_belongs_to_one_step(library):
+def _with_joint_step(library):
     raw = _raw(library, 'twin_split')
     raw['steps'].append({'id': 'joint', 'target': {'module_type': 'twin', 'version': 'v1',
                                                    'parameterisation': 'joint'}})
-    workflow = parse_workflow(raw, path=library['twin_split'])
-    with pytest.raises(WorkflowError, match='calibrated by both step "fit_a" and step "joint"'):
-        resolve_workflow(workflow)
+    path = os.path.join(library['twin/split'], 'recalibrated_workflow.json')
+    with open(path, 'w') as f:
+        json.dump(raw, f)
+    return path
+
+
+@pytest.mark.unit
+def test_a_parameter_calibrated_twice_warns_and_points_to_priors(library):
+    with pytest.warns(UserWarning) as caught:
+        resolve_workflow(load_workflow(_with_joint_step(library)))
+    message = str(caught[0].message)
+    assert '2 parameter(s)' in message
+    assert '"p_mod_A" by \'fit_a\', then \'joint\' (the value of \'joint\' is used)' in message
+    assert '"priors_from"' in message
+
+
+@pytest.mark.integration
+def test_the_later_calibration_of_a_parameter_is_merged(library, tmp_path):
+    with pytest.warns(UserWarning, match='more than one step'):
+        result = run_calibration_workflow(_with_joint_step(library),
+                                          output_dir=str(tmp_path / 'run'))
+    assert result['complete']
+    sources = {r['parameterisation_name']: r['from_step'] for r in result['merged_parameters']}
+    assert sources == {'p_A': 'joint', 'p_B': 'joint'}
+
+
+@pytest.mark.integration
+def test_a_step_calibrates_a_parameter_it_would_be_given_fixed(library, tmp_path):
+    # rest takes fit_a's values as fixed but also calibrates p of A itself: its own wins
+    params = os.path.join(library['chain/rest'], 'rest_params_for_id.csv')
+    with open(params, 'a') as f:
+        f.write('mod_A,p,0.1,5.0,p_mod_A\n')
+    with pytest.warns(UserWarning, match='more than one step'):
+        result = run_calibration_workflow(library['chain_rest'],
+                                          output_dir=str(tmp_path / 'run'))
+    sources = {r['parameterisation_name']: r['from_step'] for r in result['merged_parameters']}
+    assert sources == {'p_A': 'rest', 'q_C': 'rest'}
+    step = _read_json(str(tmp_path / 'run' / 'rest' / 'step_result.json'))
+    assert step['fixed'] == []
 
 
 @pytest.mark.unit

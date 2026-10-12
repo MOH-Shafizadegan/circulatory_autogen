@@ -1073,18 +1073,26 @@ into.
 | step `target` | the parameterisation the step calibrates |
 | step `submodule` | where that module sits in the workflow's target (`i_M`, or `soma_i_M` when nested); inferred unless the module occurs twice |
 | step `depends_on` | steps that run first; steps run in dependency order |
-| step `fixed_from` | earlier steps whose calibrated values -- and the values they were themselves given -- are fixed in this step's model |
+| step `fixed_from` | earlier steps whose calibrated values -- and the values they were themselves given -- are fixed in this step's model, except those it calibrates itself |
 | step `priors_from` | earlier steps whose stored posterior becomes this step's prior (below) |
 | step `store_distribution` | sample the posterior by MCMC after the fit and store it |
 | step `settings` | merged over the workflow's (one level deep, so `optimiser_options` add up) |
 
 The checks: a target names its parameter set with `parameterisation` (`instance` is an
 error); each step has its own parameterisation (two steps cannot calibrate the same one, and
-each must have its obs_data and params_for_id); no parameter is calibrated by two steps;
+each must have its obs_data and params_for_id);
 every step's module is the target or one of its submodules; values only pass into a model that
 contains the module they were calibrated on. `--dry-run` runs every check and prints the plan --
 which parameter of each step lands where -- without calibrating anything. The schema is
 `libcuflynx/schemas/calibration_workflow.schema.json`.
+
+A parameter may be calibrated by more than one step. The later step (in run order) wins: its
+value is the one merged into the target, and a step calibrates a parameter itself even when
+`fixed_from` would give it a value. A warning lists each such parameter, because the later
+calibration replaces the earlier one rather than building on it. To update an earlier
+calibration with new data instead, take the parameter out of the later step's params_for_id
+and list the earlier step in its `priors_from` (below), so the earlier posterior becomes the
+prior.
 
 ### Naming
 

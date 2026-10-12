@@ -217,13 +217,8 @@ class _Run:
 
         def prepare():
             own = {p.model_name for p in resolved.parameters}
-            fixed = self.fixed_values(step)
-            clash = sorted(own & set(fixed))
-            if clash:
-                raise WorkflowError(
-                    f'step "{step.id}" calibrates {clash}, which it is also given as fixed '
-                    f'values by {sorted({fixed[n]["from_step"] for n in clash})}. A parameter '
-                    f'is either fixed or calibrated; remove it from one of them.')
+            # a parameter the step calibrates itself is not fixed: the later calibration wins
+            fixed = {n: row for n, row in self.fixed_values(step).items() if n not in own}
             priors = self.priors(step)
             prior_names = [n for _, dist in priors for n in dist.names]
             clash = sorted((own | set(fixed)) & set(prior_names))

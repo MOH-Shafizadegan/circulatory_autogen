@@ -4,6 +4,7 @@ the workflow's target supermodule.
 '''
 
 import os
+import warnings
 from dataclasses import dataclass, field
 
 from libcuflynx.calibration_workflow import naming
@@ -146,13 +147,9 @@ def resolve_workflow(workflow):
             except ValueError as exc:
                 raise WorkflowError(
                     f'{where}: {parameterisation.params_for_id_path}: {exc}') from exc
-            if name in claimed:
-                raise WorkflowError(
-                    f'"{name}" in {workflow.target.label()} is calibrated by both step '
-                    f'"{claimed[name]}" and step "{step.id}". Each parameter belongs to one '
-                    f'step; fix it in the later one with fixed_from instead.')
-            claimed[name] = step.id
+            claimed.setdefault(name, []).append(step.id)
         resolved[step.id] = resolved_step
+    _warn_recalibrated(workflow, {n: ids for n, ids in claimed.items() if len(ids) > 1})
 
     result = ResolvedWorkflow(workflow=workflow, target=target, steps=resolved,
                               config_files=config_files, library_inputs=inputs)
@@ -160,6 +157,27 @@ def resolve_workflow(workflow):
         for source in step.fixed_from + [p.step for p in step.priors_from]:
             result.path_between(source, step.id)   # raises when not nested
     return result
+
+
+def _warn_recalibrated(workflow, claimed):
+    '''One UserWarning for the target parameters ``{name: [step ids]}`` that several steps
+    calibrate. The merge takes them in run order, so the last step's value is used.'''
+    if not claimed:
+        return
+    order = [s.id for s in workflow.topological_order()]
+    lines = []
+    for name, ids in sorted(claimed.items()):
+        ids = sorted(ids, key=order.index)
+        lines.append(f'"{name}" by {", then ".join(repr(i) for i in ids)} '
+                     f'(the value of {ids[-1]!r} is used)')
+    warnings.warn(
+        f'calibration workflow "{workflow.name}": {len(lines)} parameter(s) of '
+        f'{workflow.target.label()} are calibrated by more than one step, and the later '
+        f'calibration replaces the earlier: ' + '; '.join(lines) + '. To update an earlier '
+        f'calibration with new data rather than replace it, calibrate Bayesianly: remove the '
+        f'parameter from the later step\'s params_for_id and list the earlier step in its '
+        f'"priors_from" (with "store_distribution": true on the earlier step), so the earlier '
+        f'posterior becomes the later step\'s prior.', UserWarning, stacklevel=3)
 
 
 def read_calibrated_parameters(params_for_id_path, where=''):
