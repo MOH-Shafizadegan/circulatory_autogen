@@ -10,8 +10,8 @@ When that module is the submodule at ``path`` (``i_M``, or ``soma_i_M`` two leve
 a supermodule that is itself generated as ``mod``, supermodule expansion
 (``utilities/supermodules.py``) renames its vessel ``mod[_x]`` to ``mod_<path>[_x]``, so the
 same parameter is ``param_name_for_gen('mod_<path>[_x]', param_name)`` there. In the
-supermodule's own parameterisation parameters CSV the ``mod_`` prefix is absent:
-``{var}_{path}[_x]``.
+supermodule's own parameterisation parameters CSV it is written ``<path>/<var>``
+(``i_M/rho_M``, ``soma/i_M/rho_M`` when nested), as ``utilities/parameter_names.py`` reads it.
 
 These are the rules circulatory-autogen-modules' ``calibrate apply`` follows by hand.
 '''
@@ -50,16 +50,23 @@ def model_name(vessel, param):
     return param_name_for_gen(vessel, param)
 
 
-def parameterisation_name(vessel, param, step_vessel=STEP_VESSEL):
+def parameterisation_name(vessel, param, submodule_paths=(), step_vessel=STEP_VESSEL):
     '''The name of ``param`` of ``vessel`` in the parameterisation parameters CSV of the module
-    generated as ``step_vessel``: ``('mod', 'p') -> 'p'``, ``('mod_A', 'p') -> 'p_A'``,
-    a global unchanged.'''
+    generated as ``step_vessel``, whose submodules are ``submodule_paths`` (tuples, as
+    ``supermodules.submodule_path_parts`` gives them): ``('mod', 'p') -> 'p'``,
+    ``('mod_A', 'p') -> 'A/p'``, ``('mod_soma_i_M', 'p') -> 'soma/i_M/p'``; a global
+    unchanged.'''
     if is_global(vessel) or vessel == step_vessel:
         return param
     prefix = step_vessel + '_'
     if vessel.startswith(prefix):
-        return f'{param}_{vessel[len(prefix):]}'
-    raise ValueError(f'vessel "{vessel}" is not part of a model generated as "{step_vessel}".')
+        joined = vessel[len(prefix):]
+        for parts in submodule_paths:
+            if '_'.join(parts) == joined:
+                return '/'.join(tuple(parts) + (param,))
+    raise ValueError(f'vessel "{vessel}" is not a submodule of the model generated as '
+                     f'"{step_vessel}" (its submodules: '
+                     f'{sorted("/".join(p) for p in submodule_paths)}).')
 
 
 def relative_path(inner, outer):

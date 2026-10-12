@@ -155,7 +155,11 @@ def test_names_move_into_the_supermodule_as_supermodule_expansion_renames_them()
     assert naming.map_vessel('global', 'soma') == 'global'
     assert naming.model_name(naming.map_vessel('mod', 'i_M'), 'rho_M') == 'rho_M_mod_i_M'
     assert naming.model_name('global', 'R') == 'R'
-    assert naming.parameterisation_name('mod_soma_i_M', 'rho_M') == 'rho_M_soma_i_M'
+    paths = [('soma',), ('soma', 'i_M'), ('soma_i',)]
+    assert naming.parameterisation_name('mod_soma_i_M', 'rho_M', paths) == 'soma/i_M/rho_M'
+    assert naming.parameterisation_name('mod_soma', 'rho_M', paths) == 'soma/rho_M'
+    with pytest.raises(ValueError, match='not a submodule'):
+        naming.parameterisation_name('mod_heart', 'E', paths)
     assert naming.parameterisation_name('mod', 'p') == 'p'
     assert naming.relative_path('soma_i_M', 'soma') == 'i_M'
     assert naming.relative_path('i_M', '') == 'i_M'
@@ -174,7 +178,7 @@ def test_plan_names_every_parameter_in_the_target(library):
     steps = {s['id']: s for s in plan['steps']}
     assert steps['fit_a']['submodule_path'] == 'A'
     assert steps['fit_a']['calibrates'] == [{'model_name': 'p_mod', 'target_model_name': 'p_mod_A',
-                                             'target_parameterisation_name': 'p_A'}]
+                                             'target_parameterisation_name': 'A/p'}]
     assert steps['rest']['submodule_path'] == ''
     assert steps['rest']['fixed_from'] == [{'from_step': 'fit_a', 'model_name': 'p_mod',
                                             'in_step': 'p_mod_A'}]
@@ -215,7 +219,7 @@ def test_the_later_calibration_of_a_parameter_is_merged(library, tmp_path):
                                           output_dir=str(tmp_path / 'run'))
     assert result['complete']
     sources = {r['parameterisation_name']: r['from_step'] for r in result['merged_parameters']}
-    assert sources == {'p_A': 'joint', 'p_B': 'joint'}
+    assert sources == {'A/p': 'joint', 'B/p': 'joint'}
 
 
 @pytest.mark.integration
@@ -228,7 +232,7 @@ def test_a_step_calibrates_a_parameter_it_would_be_given_fixed(library, tmp_path
         result = run_calibration_workflow(library['chain_rest'],
                                           output_dir=str(tmp_path / 'run'))
     sources = {r['parameterisation_name']: r['from_step'] for r in result['merged_parameters']}
-    assert sources == {'p_A': 'rest', 'q_C': 'rest'}
+    assert sources == {'A/p': 'rest', 'C/q': 'rest'}
     step = _read_json(str(tmp_path / 'run' / 'rest' / 'step_result.json'))
     assert step['fixed'] == []
 
@@ -406,7 +410,7 @@ def _calibrate_joint(library, out_dir):
                 'param_id_output_dir': os.path.join(out_dir, 'param_id')})
     outcome = run_param_id(inp)
     best = np.load(os.path.join(outcome['output_dir'], 'best_param_vals.npy'))
-    return {'p_A': float(best[0]), 'p_B': float(best[1])}
+    return {'A/p': float(best[0]), 'B/p': float(best[1])}
 
 
 @pytest.mark.integration
@@ -419,17 +423,17 @@ def test_calibrating_independent_parts_apart_matches_calibrating_them_together(l
 
     joint = _calibrate_joint(library, str(tmp_path / 'joint'))
 
-    assert split.keys() == joint.keys() == {'p_A', 'p_B'}
+    assert split.keys() == joint.keys() == {'A/p', 'B/p'}
     for name in split:
         assert split[name] == pytest.approx(joint[name], rel=1e-4)
-    assert split['p_A'] == pytest.approx(np.sqrt(Y_A / 2), rel=1e-4)
-    assert split['p_B'] == pytest.approx(np.sqrt(Y_B / 3), rel=1e-4)
+    assert split['A/p'] == pytest.approx(np.sqrt(Y_A / 2), rel=1e-4)
+    assert split['B/p'] == pytest.approx(np.sqrt(Y_B / 3), rel=1e-4)
 
     # the merged target model and the jointly calibrated model predict the same observables
     calibrated_joint = generate_parameterisation(
         Target('twin', 'v1', 'joint'), str(tmp_path / 'joint_calibrated'), 'joint_calibrated',
         [{'variable_name': f'p_mod_{sub}', 'units': 'dimensionless',
-          'value': repr(joint[f'p_{sub}']), 'data_reference': 'joint calibration'}
+          'value': repr(joint[f'{sub}/p']), 'data_reference': 'joint calibration'}
          for sub in ('A', 'B')],
         library_inputs={'module_library_dirs': [library['modules']]})
     names = ['mod_A/y', 'mod_B/y']
@@ -461,8 +465,8 @@ def test_fixed_values_flow_into_the_supermodule_and_editing_obs_data_redoes_it(l
     result = run_calibration_workflow(library['chain_rest'], output_dir=out,
                                       progress=events.append)
     merged = _merged(result)
-    assert merged['p_A'] == pytest.approx(np.sqrt(Y_A / 2), rel=1e-4)
-    assert merged['q_C'] == pytest.approx(np.sqrt(Z_C - Y_A), rel=1e-4)
+    assert merged['A/p'] == pytest.approx(np.sqrt(Y_A / 2), rel=1e-4)
+    assert merged['C/q'] == pytest.approx(np.sqrt(Z_C - Y_A), rel=1e-4)
     assert [(e['event'], e.get('step')) for e in events] == [
         ('workflow_started', None), ('step_started', 'fit_a'), ('step_finished', 'fit_a'),
         ('step_started', 'rest'), ('step_finished', 'rest'), ('workflow_finished', None)]
@@ -471,7 +475,7 @@ def test_fixed_values_flow_into_the_supermodule_and_editing_obs_data_redoes_it(l
     assert [(f['model_name'], f['from_step']) for f in rest['fixed']] == [('p_mod_A', 'fit_a')]
     with open(os.path.join(os.path.dirname(rest['model_path']), 'rest_parameters.csv')) as f:
         generated = {r['variable_name']: float(r['value']) for r in csv.DictReader(f)}
-    assert generated['p_mod_A'] == pytest.approx(merged['p_A'], rel=1e-12)
+    assert generated['p_mod_A'] == pytest.approx(merged['A/p'], rel=1e-12)
 
     # change fit_a's data: everything downstream changes with it
     obs_path = os.path.join(library['lin_a/fit_a'], 'fit_a_obs_data.json')
@@ -481,8 +485,8 @@ def test_fixed_values_flow_into_the_supermodule_and_editing_obs_data_redoes_it(l
     with pytest.raises(WorkflowError, match='has changed since "fit_a" ran'):
         run_calibration_workflow(library['chain_rest'], output_dir=out, from_step='rest')
     merged = _merged(run_calibration_workflow(library['chain_rest'], output_dir=out))
-    assert merged['p_A'] == pytest.approx(1.5, rel=1e-4)
-    assert merged['q_C'] == pytest.approx(np.sqrt(Z_C - 4.5), rel=1e-4)
+    assert merged['A/p'] == pytest.approx(1.5, rel=1e-4)
+    assert merged['C/q'] == pytest.approx(np.sqrt(Z_C - 4.5), rel=1e-4)
 
     # rerunning only the last step reuses fit_a; editing rest's own data needs no more
     obs_path = os.path.join(library['chain/rest'], 'rest_obs_data.json')
@@ -493,16 +497,16 @@ def test_fixed_values_flow_into_the_supermodule_and_editing_obs_data_redoes_it(l
     result = run_calibration_workflow(library['chain_rest'], output_dir=out, only='rest',
                                       progress=events.append, write_calibrated=True)
     assert ('step_skipped', 'fit_a') in [(e['event'], e.get('step')) for e in events]
-    assert _merged(result)['q_C'] == pytest.approx(4.0, rel=1e-4)
+    assert _merged(result)['C/q'] == pytest.approx(4.0, rel=1e-4)
 
     # the merged set, in the target parameterisation's naming, next to its parameters
     with open(result['calibrated_parameters_file']) as f:
         written = {r['variable_name']: r for r in csv.DictReader(f)}
     assert result['calibrated_parameters_file'] == os.path.join(
         library['chain/rest'], 'rest_calibrated_parameters.csv')
-    assert float(written['p_A']['value']) == pytest.approx(1.5, rel=1e-6)
-    assert float(written['q_C']['value']) == pytest.approx(4.0, rel=1e-6)
-    assert 'step rest' in written['q_C']['data_reference']
+    assert float(written['A/p']['value']) == pytest.approx(1.5, rel=1e-6)
+    assert float(written['C/q']['value']) == pytest.approx(4.0, rel=1e-6)
+    assert 'step rest' in written['C/q']['data_reference']
 
     run = load_workflow_run(out)
     assert run['result']['complete'] and set(run['steps']) == {'fit_a', 'rest'}
@@ -567,8 +571,8 @@ def test_a_stored_posterior_becomes_the_prior_of_a_later_step(library, tmp_path)
     assert np.median(p_a) == pytest.approx(2.0, abs=0.03)
     assert np.std(p_a) < 0.03
     merged = _merged(result)
-    assert merged['p_A'] == pytest.approx(2.0, abs=0.03)
-    assert merged['q_C'] == pytest.approx(3.0, abs=0.1)
+    assert merged['A/p'] == pytest.approx(2.0, abs=0.03)
+    assert merged['C/q'] == pytest.approx(3.0, abs=0.1)
 
 
 @pytest.mark.integration
@@ -610,3 +614,28 @@ def test_a_tab_shows_each_model_with_the_values_available_so_far(library, tmp_pa
     _write_json(obs_path, obs)
     assert workflow_model(library['chain_rest'], 'rest', output_dir=out,
                           work_dir=work)['stale'] == ['fit_a']
+
+
+@pytest.mark.unit
+def test_calibrated_values_replace_rows_written_in_either_name_form(tmp_path):
+    from libcuflynx.calibration_workflow.runner import write_calibrated_parameters
+
+    class _Target:
+        parameters_path = str(tmp_path / 'rest_parameters.csv')
+
+        def file(self, suffix):
+            return str(tmp_path / f'rest_{suffix}')
+
+    with open(_Target.parameters_path, 'w') as f:
+        f.write('variable_name,units,value,data_reference\n'
+                'p_A,dimensionless,1.0,old form\nC/q,dimensionless,1.0,slash form\n')
+    merged = [{'model_name': 'p_mod_A', 'parameterisation_name': 'A/p', 'value': 2.0,
+               'units': 'dimensionless', 'from_step': 'fit_a'},
+              {'model_name': 'q_mod_C', 'parameterisation_name': 'C/q', 'value': 3.0,
+               'units': 'dimensionless', 'from_step': 'rest'},
+              {'model_name': 'r_mod_A', 'parameterisation_name': 'A/r', 'value': 4.0,
+               'units': 'dimensionless', 'from_step': 'fit_a'}]
+    path = write_calibrated_parameters(_Target(), merged, 'wf', [('A',), ('C',)])
+    with open(path, newline='') as f:
+        rows = {r['variable_name']: float(r['value']) for r in csv.DictReader(f)}
+    assert rows == {'p_A': 2.0, 'C/q': 3.0, 'A/r': 4.0}

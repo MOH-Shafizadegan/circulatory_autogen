@@ -176,7 +176,7 @@ def build_workflow_library(root, settings=None):
     paths['lin_b/fit_b'] = _parameterisation(modules, 'lin_b', 'fit_b', [('p', 1.0)],
                                              obs=[('y_b', 'mod/y', Y_B, STD_B)],
                                              params_for_id=[('mod', 'p', 0.1, 5.0)])
-    twin_rows = [('p_A', 1.0), ('p_B', 1.0)]
+    twin_rows = [('A/p', 1.0), ('B/p', 1.0)]
     _parameterisation(modules, 'twin', 'default', twin_rows)
     paths['twin/joint'] = _parameterisation(
         modules, 'twin', 'joint', twin_rows,
@@ -192,7 +192,7 @@ def build_workflow_library(root, settings=None):
         'steps': [{'id': 'fit_a', 'target': _target('lin_a', 'fit_a')},
                   {'id': 'fit_b', 'target': _target('lin_b', 'fit_b')}]})
 
-    chain_rows = [('p_A', 1.0), ('q_C', 1.0)]
+    chain_rows = [('A/p', 1.0), ('C/q', 1.0)]
     _parameterisation(modules, 'chain', 'default', chain_rows)
     paths['chain/rest'] = _parameterisation(modules, 'chain', 'rest', chain_rows,
                                             obs=[('z_c', 'mod_C/z', Z_C, STD_C)],

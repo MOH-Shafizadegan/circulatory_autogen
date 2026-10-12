@@ -12,6 +12,7 @@ from libcuflynx.calibration_workflow.spec import WorkflowError
 from libcuflynx.parsers.PrimitiveParsers import ObsAndParamDataParser
 from libcuflynx.utilities.config_schemas import is_supermodule_entry
 from libcuflynx.utilities.parameterisations import parameterisations_dir
+from libcuflynx.utilities.supermodules import submodule_path_parts
 from libcuflynx.utilities.module_library import ModuleSources
 
 
@@ -58,6 +59,7 @@ class ResolvedStep:
     parameterisation: ResolvedParameterisation
     path: str                      # submodule path in the workflow target ('' = the target)
     parameters: list = field(default_factory=list)   # [CalibratedParameter]
+    target_paths: tuple = ()       # the target's submodules, as tuples of names
 
     def target_model_name(self, parameter):
         '''``parameter`` (a CalibratedParameter of this step) named in the target's model.'''
@@ -66,7 +68,7 @@ class ResolvedStep:
     def target_parameterisation_name(self, parameter):
         '''``parameter`` named in the target parameterisation's parameters CSV.'''
         return naming.parameterisation_name(naming.map_vessel(parameter.vessel, self.path),
-                                    parameter.param)
+                                            parameter.param, self.target_paths)
 
 
 @dataclass
@@ -124,6 +126,8 @@ def resolve_workflow(workflow):
     target = _resolve_parameterisation(workflow.target, components, supermodules,
                                        f'workflow "{workflow.name}" target',
                                        need_parameters=True)
+    target_paths = tuple(submodule_path_parts(target.entry, supermodules)) if \
+        is_supermodule_entry(target.entry) else ()
     resolved = {}
     claimed = {}
     for step in workflow.steps:
@@ -140,7 +144,7 @@ def resolve_workflow(workflow):
         path = _submodule_path(step, workflow.target, target.entry, supermodules)
         parameters = read_calibrated_parameters(parameterisation.params_for_id_path, where)
         resolved_step = ResolvedStep(step=step, parameterisation=parameterisation, path=path,
-                                     parameters=parameters)
+                                     parameters=parameters, target_paths=target_paths)
         for parameter in parameters:
             try:
                 name = resolved_step.target_model_name(parameter)

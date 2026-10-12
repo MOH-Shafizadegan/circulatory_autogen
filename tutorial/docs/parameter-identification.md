@@ -1024,7 +1024,7 @@ or from Python:
 ```python
 from libcuflynx.calibration_workflow import run_calibration_workflow
 result = run_calibration_workflow(path, module_library_dirs=[library], output_dir='wf_out')
-result['merged_parameters']    # [{'parameterisation_name': 'g_leak_i_leak_Na', 'value': ..., 'from_step': ...}]
+result['merged_parameters']    # [{'parameterisation_name': 'i_leak_Na/g_leak', 'value': ..., 'from_step': ...}]
 ```
 
 It is built on [module parameterisations](design-model.md#module-versions-and-parameterisations):
@@ -1098,7 +1098,7 @@ prior.
 
 Every step model is generated alone as a single vessel named `mod`, so a params_for_id row
 `mod, rho_M` names `rho_M_mod` in the step's model. In the target, where that module is the
-submodule `i_M`, supermodule expansion renames it `rho_M_mod_i_M` (and `rho_M_i_M` in the target
+submodule `i_M`, supermodule expansion renames it `rho_M_mod_i_M` (and `i_M/rho_M` in the target
 parameterisation's parameters CSV). A supermodule step's own params_for_id therefore names its
 submodules' parameters `mod_<submodule>, <param>`, and its obs_data their outputs
 `mod_<submodule>/<variable>`.
@@ -1118,7 +1118,9 @@ submodules' parameters `mod_<submodule>, <param>`, and its obs_data their output
 
 `--from-step X` reruns X and everything after it, reusing the earlier results (and refusing if
 their obs_data, params_for_id or parameters changed since); `--only X` reruns one step.
-`--write-calibrated` writes the merged set as the target's `<parameterisation>_calibrated_parameters.csv`.
+`--write-calibrated` writes the merged set as the target's `<parameterisation>_calibrated_parameters.csv`:
+the target's rows with the calibrated values in place, matched whether a row is written
+`i_M/rho_M` or `rho_M_i_M`, and new rows written `<submodule>/<variable>`.
 
 ### Distributions and priors
 

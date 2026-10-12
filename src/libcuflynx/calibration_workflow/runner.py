@@ -34,6 +34,8 @@ from libcuflynx.calibration_workflow.distributions import (DISTRIBUTION_DIR,
                                                            parameters_from_info)
 from libcuflynx.calibration_workflow.generate import generate_parameterisation, read_parameter_rows
 from libcuflynx.calibration_workflow.resolve import resolve_workflow
+from libcuflynx.utilities.parameter_names import (is_path_name, split_path_name,
+                                                  supermodule_row_name)
 from libcuflynx.calibration_workflow.spec import (WORKFLOW_FILE_NAME, WorkflowError, load_workflow,
                                                   uses_log_posterior)
 
@@ -305,7 +307,7 @@ class _Run:
                         'vessel': vessel, 'param': param, 'model_name': name,
                         'target_model_name': naming.model_name(target_vessel, param),
                         'target_parameterisation_name': naming.parameterisation_name(
-                            target_vessel, param),
+                            target_vessel, param, resolved.target_paths),
                         'value': float(value), 'units': units.get(name, '')})
             result = {
                 'step': step.id, 'status': 'done', 'target': step.target.as_dict(),
@@ -414,24 +416,33 @@ class _Run:
                 raise WorkflowError('the calibrated parameters file is written only for a '
                                     'complete workflow run; some steps have no result.')
             workflow_result['calibrated_parameters_file'] = write_calibrated_parameters(
-                target, workflow_result['merged_parameters'], self.workflow.name)
+                target, workflow_result['merged_parameters'], self.workflow.name,
+                next(iter(self.resolved.steps.values())).target_paths)
         _write_json(os.path.join(self.output_dir, WORKFLOW_RESULT), workflow_result)
         return workflow_result
 
 
-def write_calibrated_parameters(target, merged_parameters, workflow_name):
+def write_calibrated_parameters(target, merged_parameters, workflow_name, target_paths=()):
     '''``<parameterisation>_calibrated_parameters.csv`` in the target parameterisation's
     directory: its parameters with the merged values in place (rows the parameterisation's file
-    lacks are added).'''
+    lacks are added, written ``<submodule>/<variable>``). A row is matched by the model
+    parameter it names, so ``i_M/rho_M`` and the older ``rho_M_i_M`` both take the value.'''
     rows = read_parameter_rows(target.parameters_path)
     columns = list(rows[0].keys()) if rows else ['variable_name', 'units', 'value',
                                                   'data_reference']
     by_name = {r['variable_name']: r for r in rows}
+    by_model_name = {}
+    for r in rows:
+        try:
+            by_model_name[_row_model_name(r['variable_name'], target_paths)] = r
+        except ValueError:
+            pass
     today = datetime.date.today().isoformat()
     for record in merged_parameters:
         reference = (f'calibrated by workflow {workflow_name}, step {record["from_step"]} '
                      f'({today})')
-        row = by_name.get(record['parameterisation_name'])
+        row = by_model_name.get(record['model_name']) or \
+            by_name.get(record['parameterisation_name'])
         if row is None:
             row = {c: '' for c in columns}
             row.update(variable_name=record['parameterisation_name'], units=record['units'])
@@ -482,6 +493,15 @@ def _write_params_for_id_with_priors(source_path, out_path, priors, step_id):
         writer = csv.DictWriter(f, fieldnames=columns, extrasaction='ignore')
         writer.writeheader()
         writer.writerows(rows)
+
+
+def _row_model_name(name, target_paths):
+    '''The target model name (generated as ``naming.STEP_VESSEL``) of a row of the target
+    parameterisation's parameters CSV.'''
+    if target_paths:
+        return supermodule_row_name(name, naming.STEP_VESSEL, target_paths)[0]
+    _, variable = split_path_name(name) if is_path_name(name) else ([], name)
+    return naming.model_name(naming.STEP_VESSEL, variable)
 
 
 # --------------------------------------------------------------------------------------------
