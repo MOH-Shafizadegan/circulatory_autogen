@@ -27,14 +27,16 @@ is an error. Links between a host and a nested supermodule go through that neste
 supermodule's own ``per_submodule_*``, so an instance's ``per_submodule_*`` may not name a
 submodule that is itself a supermodule instance.
 
-The supermodule's parameters -- those of its *instance* (the record's ``"instance"``, or the
-entry's ``default_instance``; see ``utilities/module_instances.py``), then its legacy
-``default_parameters`` file -- name a submodule's parameter ``<sub>/<var>`` (one nested in a
-submodule ``<sub>/<subsub>/<var>``), and are renamed to ``{var}_{instance}_{sub}``; ``global/<var>``
+The supermodule's parameters -- those of its *parameterisation* (the record's
+``"parameterisation"``, or the entry's ``default_parameterisation``; the older names
+``"instance"`` and ``default_instance`` still work; see ``utilities/module_instances.py``),
+then its legacy ``default_parameters`` file -- name a submodule's parameter ``<sub>/<var>``
+(one nested in a submodule ``<sub>/<subsub>/<var>``), and are renamed to
+``{var}_{instance}_{sub}``, ``instance`` being the supermodule record's name; ``global/<var>``
 or a plain name is a global and keeps its name, added only once. The older ``{var}_{sub}``
 form is still read, matching the suffix against the submodule paths longest first, with a
-FutureWarning (see ``utilities/parameter_names.py``). A submodule record may carry its own
-``"instance"``; it stays on the expanded record, whose instance parameters are read with the
+FutureWarning (see ``utilities/parameter_names.py``). A submodule record may name its own
+parameterisation; it stays on the expanded record, whose parameterisation is read with the
 components' (``module_instances.component_instance_rows``), after the supermodule's, so the
 supermodule's values win.
 
@@ -48,7 +50,7 @@ from libcuflynx.utilities.config_schemas import PER_SUBMODULE_KEYS, SUPERMODULE_
 from libcuflynx.utilities.module_instances import (first_rows_win, instance_parameter_rows,
                                                    instance_parameters_path,
                                                    warn_conflicting_globals,
-                                                   read_parameter_rows)
+                                                   read_parameter_rows, record_instance)
 from libcuflynx.utilities.parameter_names import (supermodule_row_name,
                                                   warn_old_supermodule_names)
 
@@ -155,11 +157,12 @@ def read_default_parameters(supermodule, instance, where, registry=None):
 def read_supermodule_parameters(supermodule, record, where, registry=None):
     '''
     The parameters of the supermodule instance ``record`` (its name is the prefix), renamed:
-    those of its module instance (``record["instance"]`` or the entry's default_instance)
-    first, then its default_parameters, each name once.
+    those of its parameterisation (the record's, or the entry's default) first, then its
+    default_parameters, each name once.
     '''
     name = record['name']
-    instance, instance_rows = instance_parameter_rows(supermodule, record.get('instance'), where)
+    instance, instance_rows = instance_parameter_rows(supermodule, record_instance(record, where),
+                                                      where)
     source = (instance_parameters_path(supermodule['config_path'], instance)
               if instance else where)
     instance_rows = _rename_rows(instance_rows, name,
@@ -296,8 +299,8 @@ def _global_settings(rows, instance, supermodule, registry):
     alone), as ``warn_conflicting_globals`` settings.'''
     name = instance['name']
     local = tuple(f'_{name}_{path}' for path in submodule_paths(supermodule, registry))
-    used = instance.get('instance') or supermodule.get('default_instance')
-    who = f'supermodule "{name}"' + (f' (instance "{used}")' if used else '')
+    used = record_instance(instance, name) or supermodule.get('default_instance')
+    who = f'supermodule "{name}"' + (f' (parameterisation "{used}")' if used else '')
     return [(row['variable_name'], row['value'], row['units'], who, name) for row in rows
             if not row['variable_name'].endswith(local)]
 
