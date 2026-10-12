@@ -42,6 +42,8 @@ as `CVODE_myokit`.
   - Excitable models want a `MaximumStep` or a tighter `rtol`: at `rtol` 1e-6 and no step cap, an action
     potential in SN_simple lands 0.25 ms late (1.3 mV on its upstroke); with `MaximumStep` 1e-3, 0.09 mV.
   - It has no sensitivities.
+- **user_inputs.** `solver: BE_batched_c` takes `method` `backward_euler` (the default) or `trbdf2`; each CellML
+  solver's methods are checked against its own list, not `CVODE_myokit`'s.
 
 ### Added — `CVODES_batched_c`: one CVODES per block, on the same generated C
 

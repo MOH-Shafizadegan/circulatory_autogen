@@ -795,3 +795,31 @@ def test_outputs_read_computed_constants_as_libcellml_computes_them(tmp_path):
     assert flux == api.variables(inst)[api.variable['cell_b/flux']]
     assert all(k != api.variable['cell_b/k'] for k, _ in kernel_ir.outputs_program(
         kernel_ir.analyse_cellml(str(tmp_path / 'model.cellml'))[1], ['cell_b/flux']))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('method, expected', [(None, 'backward_euler'), ('trbdf2', 'trbdf2'),
+                                              ('backward_euler', 'backward_euler')])
+def test_a_user_inputs_config_selects_it(base_user_inputs, temp_output_dir, temp_generated_models_dir,
+                                         method, expected):
+    """solver: BE_batched_c in user_inputs passes validation with each of its methods, defaulting to its first,
+    and gets its own step limit."""
+    from libcuflynx.parsers.PrimitiveParsers import YamlFileParser
+    solver_info = {'rtol': 1e-5, 'threads': 2, **({'method': method} if method else {})}
+    config = dict(base_user_inputs, file_prefix='3compartment', input_param_file='3compartment_parameters.csv',
+                  model_type='cellml', solver='BE_batched_c', solver_info=solver_info,
+                  generated_models_dir=temp_generated_models_dir, param_id_output_dir=temp_output_dir)
+    info = YamlFileParser().parse_user_inputs_file(config, obs_path_needed=False)['solver_info']
+    assert info['solver'] == 'BE_batched_c' and info['method'] == expected
+    assert info['rtol'] == 1e-5 and info['threads'] == 2 and info['MaximumNumberOfSteps'] == 10_000_000
+
+
+@pytest.mark.unit
+def test_a_user_inputs_config_with_another_solvers_method_is_refused(base_user_inputs, temp_output_dir,
+                                                                     temp_generated_models_dir):
+    from libcuflynx.parsers.PrimitiveParsers import YamlFileParser
+    config = dict(base_user_inputs, file_prefix='3compartment', input_param_file='3compartment_parameters.csv',
+                  model_type='cellml', solver='BE_batched_c', solver_info={'method': 'CVODE'},
+                  generated_models_dir=temp_generated_models_dir, param_id_output_dir=temp_output_dir)
+    with pytest.raises(SystemExit):
+        YamlFileParser().parse_user_inputs_file(config, obs_path_needed=False)

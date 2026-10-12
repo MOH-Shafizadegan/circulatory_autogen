@@ -2511,7 +2511,6 @@ class YamlFileParser(object):
         _solvers = SOLVER_SCHEMA['solvers_by_model_type']
         _methods = SOLVER_SCHEMA['methods_by_solver']
         valid_cellml_solvers = _solvers['cellml']
-        valid_cellml_methods = _methods['CVODE_myokit']
         valid_cpp_solvers = _solvers['cpp']  # TODO should this be different to methods?
         valid_cpp_methods = _solvers['cpp']
         valid_python_solvers = _solvers['python']
@@ -2648,7 +2647,11 @@ class YamlFileParser(object):
                 solver_method = 'external'
                 inp_data_dict['solver_info']['method'] = solver_method
             else:
-                if solver_name.startswith('CVODE'):
+                if solver_name in valid_cellml_solvers:
+                    # a CellML solver's default method is the first it lists
+                    solver_method = _methods[solver_name][0]
+                    inp_data_dict['solver_info']['method'] = solver_method
+                elif solver_name.startswith('CVODE'):
                     solver_method = 'CVODE'
                     inp_data_dict['solver_info']['method'] = solver_method
                 elif solver_name.startswith('casadi'):
@@ -2693,8 +2696,8 @@ class YamlFileParser(object):
                 print('Use CVODE or RK4 or PETSC for Cpp models')
                 exit()
 
-        if solver_name in valid_cellml_solvers and solver_method not in valid_cellml_methods:
-            print(f'solver method {solver_method} not compatible with solver {solver_name}, use {valid_cellml_methods} for CellML models')
+        if solver_name in valid_cellml_solvers and solver_method not in _methods[solver_name]:
+            print(f'solver method {solver_method} not compatible with solver {solver_name}, use {_methods[solver_name]}')
             exit()
         
         if solver_name in valid_cpp_solvers and solver_method not in valid_cpp_methods:
