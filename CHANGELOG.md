@@ -77,6 +77,16 @@ against its instance's own obs_data and params_for_id.
 - **Docs.** The params_for_id prior columns are now documented; the docs had said only uniform
   priors existed.
 
+### Changed — module instances are now called parameterisations
+
+A module version's named parameter sets live in `parameterisations/<name>/<name>_parameters.csv`
+(with `<name>_obs_data.json` and `<name>_params_for_id.csv`); a record or submodule picks one with
+`"parameterisation"`, and a config entry names its default with `"default_parameterisation"`.
+"Instance" now means one use of a version in a module array, as a PhLynx node does. The older
+names are still read: `instances/` is used when a version has no `parameterisations/`, and
+`"instance"`/`"default_instance"` are read as the new keys. Giving both spellings with different
+values is a ValueError. The JSON Schemas describe both.
+
 ### Added — prediction items as scalar features
 
 A `prediction_item` may carry an `operation` and `operation_kwargs`, with the same vocabulary and
