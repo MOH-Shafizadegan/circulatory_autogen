@@ -292,16 +292,37 @@ def test_methods_of_a_workflow_report_each_step_and_its_results(tmp_path):
     assert r'-- (nrest) node[midway, fill=white, inner sep=1pt, font=\scriptsize] {fixed}' \
         in text
     assert 'Merged: chain' in text
+    # every parameter with its source: k cites lin_c's references, p and q name their step
+    assert r'\section{Parameters and sources}' in text
+    assert r'\cite{doe2020gain}; Table 1: the gain of C' in text
+    assert r'Calibrated in step \texttt{fit\_a} (Section~\ref{sec:step:fit-a})' in text
+    assert r'Calibrated in step \texttt{rest} (Section~\ref{sec:step:rest})' in text
+    assert r'\bibliography{' in text and 'lin_c_v1_references' in text
 
     chart = workflow_methods_latex(library['chain_rest'], flowchart_only=True,
                                    standalone=False)
     assert r'\begin{tikzpicture}' in chart and r'\section{' not in chart
 
     if shutil.which('pdflatex'):
-        tex = str(tmp_path / 'methods.tex')
+        # the document as the command writes it: the cited entries in methods.bib beside it,
+        # compiled with BibTeX when latexmk is there (open methods.pdf to read it)
+        tex, bib = str(tmp_path / 'methods.tex'), str(tmp_path / 'methods.bib')
         with open(tex, 'w') as f:
-            f.write(text)
-        log = _compile(tex)
+            f.write(workflow_methods_latex(library['chain_rest'], run_dir=run_dir, bib_out=bib))
+        with open(bib) as f:
+            assert f.read().startswith('@article{doe2020gain,')
+        if shutil.which('latexmk'):
+            done = subprocess.run(['latexmk', '-pdf', '-interaction=nonstopmode',
+                                   '-halt-on-error', 'methods.tex'], cwd=str(tmp_path),
+                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                  timeout=300)
+            assert done.returncode == 0, done.stdout[-3000:]
+            with open(str(tmp_path / 'methods.bbl')) as f:
+                assert 'A gain of one' in f.read()
+            with open(str(tmp_path / 'methods.log'), errors='replace') as f:
+                log = f.read()
+        else:
+            log = _compile(tex)
         assert 'Undefined control sequence' not in log
 
 
@@ -332,3 +353,27 @@ def test_the_commands_write_the_mapping_and_the_methods(tmp_path):
     # two independent steps: side by side, both merged into the target
     assert '(nfitxa) at (0.00,0.00)' in text and '(nfitxb) at (5.20,0.00)' in text
     assert text.count(r'-- (nxxtargetxx)') == 2
+
+
+# --------------------------------------------------------------------------------------------
+# citations
+# --------------------------------------------------------------------------------------------
+
+@pytest.mark.unit
+def test_a_source_cites_the_keys_of_its_bibliography(tmp_path):
+    from libcuflynx.reporting.bibliography import cite, cited_keys, read_bib, write_bib
+    bib = tmp_path / 'refs.bib'
+    bib.write_text('@comment{ignored, not an entry}\n'
+                   '@article{martin2023modelling,\n  title = {A {Nested} title},\n  year = {2023}\n}\n'
+                   '@book{boron2017medical, title = {Medical physiology}}\n')
+    entries = read_bib([str(bib)])
+    assert sorted(entries) == ['boron2017medical', 'martin2023modelling']
+    assert entries['martin2023modelling'].endswith('year = {2023}\n}')
+    text = 'martin2023modelling; Methods (p. 16): w_inf k = 10 mV, cf. boron2017medical'
+    assert cite(text, entries) == (r'\cite{martin2023modelling}; Methods (p. 16): w\_inf k = '
+                                   r'10 mV, cf. \cite{boron2017medical}')
+    assert cited_keys(text, entries) == ['martin2023modelling', 'boron2017medical']
+    # a word that is not a key stays text
+    assert cite('definitional; user_defined', entries) == r'definitional; user\_defined'
+    out = write_bib({k: entries[k] for k in ['martin2023modelling']}, str(tmp_path / 'o.bib'))
+    assert read_bib([out]).keys() == {'martin2023modelling'}

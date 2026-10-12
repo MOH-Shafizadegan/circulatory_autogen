@@ -231,3 +231,35 @@ def _parameter_table(variables, writer, rows, digits):
                      f'{format_units(units.get(name, ""))} & \\texttt{{{escape(name)}}} \\\\')
     lines += [r'\bottomrule', r'\end{tabular}', r'\end{center}']
     return '\n'.join(lines)
+
+
+def parameter_sources_section(model, mapping=None, sources=None, digits=4,
+                              section='section'):
+    '''A table of every parameter of ``model`` (its ``parameters`` and ``parameters_global``
+    components): symbol, value, units and source. ``sources`` maps a parameter's name in the
+    model (``p_mod_A``) to its source, already LaTeX (citations included); a parameter without
+    one shows ``--``. The table is a ``longtable``, so it may run over several pages.'''
+    if not hasattr(model, 'components'):
+        model = load_model(model)
+    rows = variable_mapping(model, mapping)
+    writer = MappedLatexWriter({r['variable_name']: r['latex'] for r in rows}, digits=digits)
+    units = {r['variable_name']: r.get('units', '') for r in rows}
+    sources = sources or {}
+    parameters = sorted((v for c in model.components() if c.name() in PARAMETER_COMPONENTS
+                         for v in c.variables()), key=lambda v: v.name())
+    head = (r'Symbol & Value & Units & Source \\')
+    lines = [f'\\{section}{{Parameters and sources}}', r'\label{sec:parameters}',
+             'Every parameter of the model, with the value used and where it comes from.',
+             r'\begin{small}', r'\begin{longtable}{lllp{0.5\linewidth}}', r'\toprule', head,
+             r'\midrule', r'\endfirsthead', r'\toprule', head, r'\midrule', r'\endhead',
+             r'\bottomrule', r'\endlastfoot']
+    for variable in parameters:
+        try:
+            value = format_number(variable.eval(), digits)
+        except Exception:
+            value = '--'
+        lines.append(f'${writer.symbol(variable)}$ & ${value}$ & '
+                     f'{format_units(units.get(canonical_name(variable), ""))} & '
+                     f'{sources.get(variable.name()) or "--"} \\\\')
+    lines += [r'\end{longtable}', r'\end{small}']
+    return '\n'.join(lines)

@@ -21,8 +21,10 @@ import os
 import tempfile
 
 from libcuflynx.reporting import flowchart
+from libcuflynx.reporting.bibliography import cite, cited_keys, module_bib_files, read_bib, write_bib
 from libcuflynx.reporting.latex_names import escape
-from libcuflynx.reporting.model_latex import format_number, format_units, module_sections
+from libcuflynx.reporting.model_latex import (format_number, format_units, module_sections,
+                                              parameter_sources_section)
 from libcuflynx.reporting.variable_mapping import (default_mapping_path, load_model,
                                                    module_components, strip_module,
                                                    variable_mapping)
@@ -31,6 +33,7 @@ PREAMBLE = r'''\documentclass[11pt]{article}
 \usepackage[margin=2.2cm]{geometry}
 \usepackage{amsmath,amssymb}
 \usepackage{booktabs}
+\usepackage{longtable}
 \usepackage{graphicx}
 \usepackage{tikz}
 \usetikzlibrary{arrows.meta}
@@ -38,7 +41,7 @@ PREAMBLE = r'''\documentclass[11pt]{article}
 % long \texttt names (option keys, file names) cannot hyphenate; let lines stretch instead
 \setlength{\emergencystretch}{3em}
 '''
-PACKAGES_NOTE = ('% Needs: amsmath, amssymb, booktabs, graphicx, tikz '
+PACKAGES_NOTE = ('% Needs: amsmath, amssymb, booktabs, longtable, graphicx, tikz '
                  '(\\usetikzlibrary{arrows.meta}); \\allowdisplaybreaks and '
                  '\\setlength{\\emergencystretch}{3em} recommended.')
 
@@ -347,11 +350,70 @@ def results_text(result, symbols):
 # documents
 # --------------------------------------------------------------------------------------------
 
-def _document(body, title, standalone):
+def _document(body, title, standalone, bibliography=None):
+    '''``bibliography`` is what ``\\bibliography{}`` names, for a document that cites.'''
+    if bibliography and standalone:
+        body += '\n\n\\bibliographystyle{plain}\n\\bibliography{' + bibliography + '}'
     if not standalone:
         return PACKAGES_NOTE + '\n' + body + '\n'
     return (PREAMBLE + r'\title{' + escape(title) + '}\n\\date{}\n\\begin{document}\n'
             '\\maketitle\n' + body + '\n\\end{document}\n')
+
+
+def _read_csv(path):
+    if not path or not os.path.isfile(path):
+        return []
+    with open(path, newline='', encoding='utf-8-sig') as f:
+        return list(csv.DictReader(f))
+
+
+def _parameter_sources(parameter_rows, entries, calibrated):
+    '''``{model name: source in LaTeX}``: a calibrated parameter names the step section that
+    calibrated it (``calibrated`` maps a model name to a step id); any other parameter's
+    data_reference, with its BibTeX keys cited. Returns the sources and the keys cited.'''
+    sources, keys = {}, set()
+    for row in parameter_rows:
+        name = row.get('variable_name')
+        if name in calibrated:
+            step = calibrated[name]
+            sources[name] = (f'Calibrated in step {_tt(step)} '
+                             f'(Section~\\ref{{sec:step:{step.replace("_", "-")}}})')
+        else:
+            reference = row.get('data_reference') or ''
+            sources[name] = cite(reference, entries) if reference else ''
+            keys.update(cited_keys(reference, entries))
+    return sources, keys
+
+
+def _bibliography(entries, keys, bib_files, bib_out):
+    '''The ``\\bibliography{}`` argument for the ``keys`` cited: ``bib_out`` (a .bib written
+    with the cited entries) when given, else the source .bib files themselves.'''
+    if not keys:
+        return None
+    if bib_out:
+        write_bib({k: entries[k] for k in keys}, bib_out)
+        return os.path.splitext(os.path.basename(bib_out))[0]
+    return ','.join(os.path.splitext(os.path.abspath(p))[0] for p in bib_files)
+
+
+def workflow_bib_files(resolved):
+    '''The references (``*_references*.bib``) of the workflow target and of every module in
+    it, from the module library versions they live in.'''
+    from libcuflynx.utilities.module_library import ModuleSources
+    sources = ModuleSources(resolved.library_inputs)
+    components, supermodules = sources.component_registry(), sources.supermodule_registry()
+    configs = [resolved.target.entry.get('config_path')]
+
+    def walk(container):
+        for sub in container.get('submodules', []):
+            key = (sub['vessel_type'], sub['BC_type'])
+            entry = components.get(key) or supermodules.get(key) or {}
+            configs.append(entry.get('config_path'))
+            if key in supermodules:
+                walk(supermodules[key])
+
+    walk(resolved.target.entry)
+    return module_bib_files([c for c in configs if c])
 
 
 def _model_section(model, mapping_rows, module_info, mapping_path):
@@ -424,13 +486,18 @@ def _remap_model_name(record, path):
 
 
 def workflow_methods_latex(workflow_path, run_dir=None, mapping=None, module_library_dirs=None,
-                           standalone=True, title=None, flowchart_only=False):
+                           standalone=True, title=None, flowchart_only=False, bib_files=None,
+                           bib_out=None):
     '''The methods for a calibration workflow (see the module docstring).
 
     ``run_dir`` is the workflow's output directory: with it, the target model carries the
     calibrated values and each step reports its result. ``mapping`` is a variable mapping
     CSV for the *target* model; by default ``<target parameterisation>_variable_mapping.csv``
     in the target parameterisation's directory, if it exists, else the default symbols.
+
+    The parameters table cites the BibTeX keys in each parameter's data_reference, from
+    ``bib_files`` (default: the ``*_references*.bib`` of every module version in the target).
+    ``bib_out`` is a .bib file to write the cited entries to, for ``\\bibliography``.
     '''
     from libcuflynx.calibration_workflow import load_workflow, resolve_workflow, workflow_model
 
@@ -440,6 +507,7 @@ def workflow_methods_latex(workflow_path, run_dir=None, mapping=None, module_lib
         view = workflow_model(workflow, 'target', output_dir=run_dir or os.path.join(work, 'run'),
                               work_dir=work)
         model = load_model(view['flat_model_path'] or view['model_path'])
+        parameter_rows = _read_csv(view.get('parameters_path'))
     if mapping is None:
         candidate = resolved.target.file('variable_mapping.csv')
         mapping = candidate if os.path.isfile(candidate) else None
@@ -484,7 +552,21 @@ def workflow_methods_latex(workflow_path, run_dir=None, mapping=None, module_lib
     if flowchart_only:
         return _document(figure, f'Calibration of {workflow.name}', standalone)
 
-    body = [_model_section(model, rows, module_info, mapping)]
+    calibrated = {}
+    for step in workflow.topological_order():
+        result = results.get(step.id)
+        if result:
+            names = [r['target_model_name'] for r in result['calibrated']]
+        else:
+            rs = resolved.steps[step.id]
+            names = [rs.target_model_name(p) for p in rs.parameters]
+        calibrated.update({name: step.id for name in names})
+    bib_files = workflow_bib_files(resolved) if bib_files is None else list(bib_files)
+    entries = read_bib(bib_files)
+    sources, keys = _parameter_sources(parameter_rows, entries, calibrated)
+
+    body = [_model_section(model, rows, module_info, mapping),
+            parameter_sources_section(model, {r['variable_name']: r for r in rows}, sources)]
     body.append('\\section{Calibration}\n'
                 + (_sentence(workflow.description) + ' ' if workflow.description else '')
                 + f'The parameters were calibrated in {len(steps)} step'
@@ -496,7 +578,8 @@ def workflow_methods_latex(workflow_path, run_dir=None, mapping=None, module_lib
     for step in steps:
         symbols = {'step': Symbols(rows, step['submodule_path']), 'target': Symbols(rows)}
         body.append(_step_section(step, symbols))
-    return _document('\n\n'.join(body), title or f'Methods: {workflow.name}', standalone)
+    return _document('\n\n'.join(body), title or f'Methods: {workflow.name}', standalone,
+                     _bibliography(entries, keys, bib_files, bib_out))
 
 
 def workflow_mapping_path(workflow_path, module_library_dirs=None):
@@ -559,13 +642,17 @@ def _supermodule(resolved, sub):
 
 def calibration_methods_latex(model_path, obs_data_path, params_for_id_path, settings=None,
                               run_dir=None, mapping=None, standalone=True, title=None,
-                              do_uq=False, do_ia=False, use_emulator=False):
+                              do_uq=False, do_ia=False, use_emulator=False, parameters_path=None,
+                              bib_files=(), bib_out=None):
     '''The methods for one calibration of the CellML model at ``model_path``.
 
     ``settings`` are the param_id user_inputs (``param_id_method``, ``optimiser_options``,
     ``solver_info``, ``dt``, ``UQ_options`` ...). ``run_dir`` is the param_id run directory
     (``<method>_<prefix>_<obs>``), whose best fit is then reported. ``mapping`` defaults to
-    ``<prefix>_variable_mapping.csv`` beside the model, if it exists.
+    ``<prefix>_variable_mapping.csv`` beside the model, if it exists. ``parameters_path`` is the
+    model's parameters CSV, whose data_reference column gives each parameter's source (default:
+    ``<prefix>_parameters.csv`` beside the model); its BibTeX keys are cited from
+    ``bib_files``, and the cited entries written to ``bib_out`` when given.
     '''
     settings = dict(settings or {})
     model = load_model(model_path)
@@ -595,10 +682,21 @@ def calibration_methods_latex(model_path, obs_data_path, params_for_id_path, set
         '\\subsection{Step calibration}', '\\subsection{Calibration details}').replace(
         'This step calibrates parameterisation \\texttt{--} of module ', 'The model ').replace(
         ' (version \\texttt{--})', '')
+    if parameters_path is None:
+        prefix = os.path.splitext(os.path.basename(model_path))[0]
+        prefix = prefix[:-len('_flat')] if prefix.endswith('_flat') else prefix
+        parameters_path = os.path.join(os.path.dirname(model_path), f'{prefix}_parameters.csv')
+    entries = read_bib(list(bib_files or ()))
+    from libcuflynx.parsers.PrimitiveParsers import param_name_for_gen
+    calibrated = {param_name_for_gen(v, p): 'calibration' for row in params
+                  for v, p in row['targets']}
+    sources, keys = _parameter_sources(_read_csv(parameters_path), entries, calibrated)
     body = [_model_section(model, rows, None, mapping),
+            parameter_sources_section(model, {r['variable_name']: r for r in rows}, sources),
             '\\section{Calibration}\nFigure~\\ref{fig:calibration-flowchart} shows the '
             'calibration.\n\n' + figure, section]
-    return _document('\n\n'.join(body), title or 'Methods', standalone)
+    return _document('\n\n'.join(body), title or 'Methods', standalone,
+                     _bibliography(entries, keys, list(bib_files or ()), bib_out))
 
 
 def _param_id_result(run_dir, params):

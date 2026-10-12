@@ -40,6 +40,13 @@ def build_parser():
     parser.add_argument('--run-dir', help="a workflow's output directory, or a param_id run "
                                           'directory, to report results from')
     parser.add_argument('--mapping', help='the variable mapping CSV')
+    parser.add_argument('--parameters', metavar='CSV',
+                        help="the model's parameters CSV, whose data_reference column gives "
+                             "each parameter's source (one calibration; default: "
+                             "<prefix>_parameters.csv beside the model)")
+    parser.add_argument('--bib', action='append', default=None, metavar='BIB',
+                        help='a .bib file whose keys the parameter sources cite (repeatable; '
+                             'a workflow uses its modules\' *_references.bib by default)')
     parser.add_argument('-o', '--output', required=True, help='the .tex to write')
     parser.add_argument('--title', help='document title')
     parser.add_argument('--body-only', action='store_true',
@@ -63,11 +70,13 @@ def run(args, parser):
     from libcuflynx.reporting.methods import (calibration_methods_latex,
                                               workflow_methods_latex, write_latex)
     standalone = not args.body_only
+    bib_out = os.path.splitext(os.path.abspath(args.output))[0] + '.bib'
     if args.workflow:
         text = workflow_methods_latex(args.workflow, run_dir=args.run_dir, mapping=args.mapping,
                                       module_library_dirs=args.module_library_dirs,
                                       standalone=standalone, title=args.title,
-                                      flowchart_only=args.flowchart_only)
+                                      flowchart_only=args.flowchart_only, bib_files=args.bib,
+                                      bib_out=bib_out)
     else:
         if not (args.model and args.obs_data and args.params_for_id):
             parser.error('give --workflow, or --model, --obs-data and --params-for-id')
@@ -76,9 +85,12 @@ def run(args, parser):
             args.model, args.obs_data, args.params_for_id, settings=inputs,
             run_dir=args.run_dir, mapping=args.mapping, standalone=standalone,
             title=args.title, do_uq=bool(inputs.get('do_uq')), do_ia=bool(inputs.get('do_ia')),
-            use_emulator=bool(inputs.get('use_emulator')))
+            use_emulator=bool(inputs.get('use_emulator')), parameters_path=args.parameters,
+            bib_files=args.bib or (), bib_out=bib_out)
     path = write_latex(text, args.output)
     print(f'wrote {path}')
+    if os.path.isfile(bib_out):
+        print(f'wrote {bib_out} (the cited references)')
     if args.pdf:
         if not standalone:
             parser.error('--pdf needs a complete document (drop --body-only)')

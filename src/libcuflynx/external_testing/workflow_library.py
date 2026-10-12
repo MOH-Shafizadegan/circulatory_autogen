@@ -7,7 +7,8 @@ Modules (all version ``v1``):
 
 * ``lin_a`` -- ``y = 2 p^2``, with an exit ``lin_port`` [y].
 * ``lin_b`` -- ``y = 3 p^2`` (no ports).
-* ``lin_c`` -- ``z = x + q^2``, with an entrance ``lin_port`` [x].
+* ``lin_c`` -- ``z = x + k q^2``, with an entrance ``lin_port`` [x]. ``k`` = 1 is never
+  calibrated; its source cites ``K_REFERENCE`` from ``lin_c``'s ``references.bib``.
 * ``twin`` -- supermodule of ``A`` (lin_a) and ``B`` (lin_b), which are independent.
 * ``chain`` -- supermodule of ``A`` (lin_a) feeding ``C`` (lin_c): ``z = 2 p_A^2 + q_C^2``.
 
@@ -73,14 +74,26 @@ _MODULES = {
               [], [],
               [['y', 'dimensionless', 'access', 'variable'],
                ['p', 'dimensionless', 'access', 'constant']]),
-    'lin_c': (_component('lin_c_type', [('z', 'out'), ('x', 'in'), ('q', 'in')],
+    'lin_c': (_component('lin_c_type', [('z', 'out'), ('x', 'in'), ('q', 'in'), ('k', 'in')],
                          '<apply><eq/><ci>z</ci><apply><plus/><ci>x</ci>'
-                         f'{_times_square(1.0, "q")}</apply></apply>'),
+                         '<apply><times/><ci>k</ci><ci>q</ci><ci>q</ci></apply></apply></apply>'),
               [{'port_type': 'lin_port', 'variables': ['x']}], [],
               [['z', 'dimensionless', 'access', 'variable'],
                ['x', 'dimensionless', 'access', 'boundary_condition'],
-               ['q', 'dimensionless', 'access', 'constant']]),
+               ['q', 'dimensionless', 'access', 'constant'],
+               ['k', 'dimensionless', 'access', 'constant']]),
 }
+
+#: The BibTeX key lin_c's k cites, and its entry (in lin_c's references.bib).
+K_REFERENCE = 'doe2020gain'
+K_SOURCE = f'{K_REFERENCE}; Table 1: the gain of C'
+_BIB = {'lin_c': '@article{' + K_REFERENCE + ''',
+  author = {Doe, Jane},
+  title = {A gain of one},
+  journal = {Journal of Test Libraries},
+  year = {2020}
+}
+'''}
 
 
 def _write(path, text):
@@ -94,9 +107,11 @@ def _write_json(path, obj):
 
 
 def _parameters(path, rows):
+    '''``rows``: ``(name, value)``, or ``(name, value, data_reference)``.'''
     _write(path, 'variable_name,units,value,data_reference\n'
-           + ''.join(f'{name},dimensionless,{value},workflow test library\n'
-                     for name, value in rows))
+           + ''.join(f'{row[0]},dimensionless,{row[1]},'
+                     f'{row[2] if len(row) > 2 else "workflow test library"}\n'
+                     for row in rows))
 
 
 def _obs(name, items):
@@ -153,8 +168,10 @@ def build_workflow_library(root, settings=None):
             'component_type': f'{module_type}_type', 'module_format': 'cellml',
             'default_parameterisation': 'default', 'entrance_ports': entrance, 'exit_ports': exit_,
             'general_ports': [], 'variables_and_units': variables}])
-        param = 'q' if module_type == 'lin_c' else 'p'
-        _parameterisation(modules, module_type, 'default', [(param, 1.0)])
+        rows = [('q', 1.0), ('k', 1.0, K_SOURCE)] if module_type == 'lin_c' else [('p', 1.0)]
+        _parameterisation(modules, module_type, 'default', rows)
+        if module_type in _BIB:
+            _write(os.path.join(version_dir, f'{module_type}_v1_references.bib'), _BIB[module_type])
 
     def submodule(name, module_type, inp=(), out=()):
         return {'name': name, 'module_type': module_type, 'module_subtype': 'v1',
@@ -192,7 +209,7 @@ def build_workflow_library(root, settings=None):
         'steps': [{'id': 'fit_a', 'target': _target('lin_a', 'fit_a')},
                   {'id': 'fit_b', 'target': _target('lin_b', 'fit_b')}]})
 
-    chain_rows = [('A/p', 1.0), ('C/q', 1.0)]
+    chain_rows = [('A/p', 1.0), ('C/q', 1.0), ('C/k', 1.0, K_SOURCE)]
     _parameterisation(modules, 'chain', 'default', chain_rows)
     paths['chain/rest'] = _parameterisation(modules, 'chain', 'rest', chain_rows,
                                             obs=[('z_c', 'mod_C/z', Z_C, STD_C)],
