@@ -20,6 +20,11 @@ solver_info keys: ``rtol`` (default 1e-4), ``atol`` (1e-8), ``MaximumStep`` (unb
 
 The model sees time as CVODE_myokit does: each sub-experiment's clock starts at 0 (Myokit's
 Simulation.reset()). Only blocks that read time notice; the integrator keeps one clock across sub-experiments.
+
+CVODES_batched_c (:class:`CVODESSimulationHelper`) runs the same generated kernels and blocks with one CVODES per
+block (BDF, Newton, dense LU, the exact Jacobian), on threads in the same way; it needs SUNDIALS 6 or later
+(``SUNDIALS_DIR``). Its defaults are CVODE_myokit's tolerances (rtol 1e-6, atol 1e-8); ``jacobian:
+'finite_difference'`` uses CVODES's difference quotients. MaximumNumberOfSteps counts as BE_batched_c's does.
 """
 import time as _time
 import warnings
@@ -34,12 +39,21 @@ from libcuflynx.utilities.protocol_shapes import materialise_shapes, validate_tr
 DEFAULT_RTOL = 1e-4
 DEFAULT_ATOL = 1e-8
 DEFAULT_MAX_STEPS = 10_000_000
+CVODES_DEFAULT_RTOL = 1e-6
+CVODES_DEFAULT_ATOL = 1e-8
 JACOBIANS = ('exact', 'finite_difference')
-STATUS = {1: 'step size below its minimum', 2: 'too many steps (MaximumNumberOfSteps)', 3: 'non-finite state'}
+STATUS = {1: 'step size below its minimum', 2: 'too many steps (MaximumNumberOfSteps)', 3: 'non-finite state',
+          4: 'CVODES failed'}
 
 
 class SimulationHelper:
     """BE_batched_c with the SimulationHelper surface of the CellML backends (no sensitivities)."""
+
+    SOLVER = 'BE_batched_c'
+    DEFAULT_RTOL = DEFAULT_RTOL
+    DEFAULT_ATOL = DEFAULT_ATOL
+    #: newton_tol, max_newton and max_jacobian_age for BatchedSimulation.set_options
+    NEWTON_OPTIONS = {'newton_tol': 0.01, 'max_newton': 6, 'max_jacobian_age': 50}
 
     def __init__(self, cellml_path, dt, sim_time, solver_info=None, pre_time=0.0):
         self.cellml_path = cellml_path
@@ -50,14 +64,15 @@ class SimulationHelper:
 
         t0 = _time.perf_counter()
         self.info, path, self.build_seconds, self.cached = batched.load_or_build(
-            cellml_path, self.solver_info.get('build_dir'))
+            cellml_path, self.solver_info.get('build_dir'), solver=self.SOLVER)
         self.setup_seconds = _time.perf_counter() - t0
         info = self.info
         self.library = batched.BatchedLibrary(path)
         self.sim = batched.BatchedSimulation(self.library, info['blocks'], info['state_count'],
                                              info['variable_count'])
         self.sim.set_options(rtol=self.rtol, atol=self.atol, max_step=self.max_step, max_steps=self.max_steps,
-                             finite_difference_jacobian=(self.jacobian == 'finite_difference'), method=self.method)
+                             finite_difference_jacobian=(self.jacobian == 'finite_difference'), method=self.method,
+                             **self.NEWTON_OPTIONS)
 
         self.STATE_COUNT = info['state_count']
         self.state_names = info['state_names']
@@ -78,17 +93,18 @@ class SimulationHelper:
     # ------------------------------------------------------------------ setup
 
     def _configure(self, si):
-        self.rtol = float(si.get('rtol', DEFAULT_RTOL))
-        self.atol = float(si.get('atol', DEFAULT_ATOL))
+        self.rtol = float(si.get('rtol', self.DEFAULT_RTOL))
+        self.atol = float(si.get('atol', self.DEFAULT_ATOL))
         self.max_step = float(si['MaximumStep']) if si.get('MaximumStep') else 0.0
         self.max_steps = int(si.get('MaximumNumberOfSteps', DEFAULT_MAX_STEPS))
         self.threads = int(si.get('threads', 1))
         self.jacobian = si.get('jacobian', 'exact')
         if self.jacobian not in JACOBIANS:
             raise ValueError(f"solver_info jacobian must be one of {JACOBIANS}, not {self.jacobian!r}")
-        self.method = si.get('method') or 'backward_euler'
-        if self.method not in batched.METHODS:
-            raise ValueError(f"BE_batched_c method must be one of {batched.METHODS}, not {self.method!r}")
+        methods = batched.SOLVERS[self.SOLVER]['methods']
+        self.method = si.get('method') or methods[0]
+        if self.method not in methods:
+            raise ValueError(f"{self.SOLVER} method must be one of {methods}, not {self.method!r}")
 
     def _init_values(self):
         self.states = np.zeros(self.info['state_count'])
@@ -146,9 +162,9 @@ class SimulationHelper:
         if failures:
             b, status, t = failures[0]
             names = [self.state_names[i] for i in self.info['blocks'][b]['states'][:3]]
-            print(f'BE_batched_c simulation failed: {len(failures)} block(s); block {b} ({", ".join(names)}, ...) '
+            print(f'{self.SOLVER} simulation failed: {len(failures)} block(s); block {b} ({", ".join(names)}, ...) '
                   f'stopped at t={t:g}: {STATUS.get(status, status)}.')
-            warnings.warn(f'BE_batched_c simulation failed (rtol {self.rtol:g}, atol {self.atol:g}, '
+            warnings.warn(f'{self.SOLVER} simulation failed (rtol {self.rtol:g}, atol {self.atol:g}, '
                           f'MaximumStep {self.max_step or "unbounded"}): {STATUS.get(status, status)}')
             self.sim.invalidate()
             return False
@@ -358,3 +374,12 @@ class SimulationHelper:
         pred_obs_new = self.get_results(obs_names)
         self.reset_and_clear()
         return pred_obs_new
+
+
+class CVODESSimulationHelper(SimulationHelper):
+    """CVODES_batched_c: BE_batched_c's kernels, blocks and threads, each block integrated by its own CVODES."""
+
+    SOLVER = 'CVODES_batched_c'
+    DEFAULT_RTOL = CVODES_DEFAULT_RTOL
+    DEFAULT_ATOL = CVODES_DEFAULT_ATOL
+    NEWTON_OPTIONS = {'newton_tol': 0.0, 'max_newton': 0, 'max_jacobian_age': 0}     # CVODES's own
