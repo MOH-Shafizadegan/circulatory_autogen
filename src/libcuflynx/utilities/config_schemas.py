@@ -35,10 +35,10 @@ libcuflynx              PhLynx              meaning
 ``module_format``       ``module_format``   ``"supermodule"``
 ``submodules``          ``submodules``      a module array (list of records, below) whose
                                             names are local to the supermodule
-``default_instance``    same                optional: the parameterisation used when a
-                                            record names none; ``default_parameterisation``
-                                            is the newer name (see
-                                            ``utilities/module_instances.py``)
+``default_parameterisation`` same           optional: the parameterisation used when a
+                                            record names none; ``default_instance`` is the
+                                            older name (see
+                                            ``utilities/parameterisations.py``)
 ``default_parameters``  same                optional parameters CSV, relative to the
                                             config file's directory (legacy; prefer a
                                             parameterisation)
@@ -46,7 +46,7 @@ libcuflynx              PhLynx              meaning
 ======================  ==================  ===============================================
 
 A submodule's inp/out lists name sibling submodules only, and it may name its own
-``parameterisation`` (older name ``instance``). A submodule may itself be a supermodule
+``parameterisation``. A submodule may itself be a supermodule
 instance, with its own ``per_submodule_inputs``/``per_submodule_outputs`` naming siblings.
 ``default_parameters`` rows (and those of the supermodule's own parameterisations) are
 ``variable_name,units,value,data_reference``; a row named ``{var}_{submodule}`` is a local
@@ -73,9 +73,9 @@ libcuflynx          PhLynx              meaning
 ``BC_type``         ``module_subtype``  its boundary-condition variant (required)
 ``inp_vessels``     ``inp_instances``   list of upstream instance names (optional)
 ``out_vessels``     ``out_instances``   list of downstream instance names (optional)
-``instance``        ``instance``        the parameterisation whose parameters it uses
-                                        (optional; default: the entry's default_instance);
-                                        ``parameterisation`` is the newer name
+``parameterisation`` ``parameterisation`` the parameterisation whose parameters it uses
+                                        (optional; default: the entry's
+                                        default_parameterisation); ``instance`` is an error
 ==================  ==================  ==================================================
 
 A record uses one key style; mixing the two in one record is an error. A list may also be
@@ -117,9 +117,9 @@ import sys
 import pandas as pd
 
 from libcuflynx.generators.multi_port import normalise_port_multi_port
-from libcuflynx.utilities.module_instances import (
-    PARAMETER_COLUMNS, check_instance_name, merge_renamed_key, PARAMETERISATION_KEY,
-    INSTANCE_KEY, DEFAULT_PARAMETERISATION_KEY, DEFAULT_INSTANCE_KEY)
+from libcuflynx.utilities.parameterisations import (
+    PARAMETER_COLUMNS, check_parameterisation_name, merge_renamed_key, reject_instance_key,
+    PARAMETERISATION_KEY, DEFAULT_PARAMETERISATION_KEY, DEFAULT_INSTANCE_KEY)
 
 # PhLynx key -> libcuflynx key, for module config entries
 PHLYNX_MODULE_KEYS = {
@@ -155,7 +155,7 @@ _LIST_COLUMNS = ('inp_vessels', 'out_vessels')
 PER_SUBMODULE_KEYS = ('per_submodule_inputs', 'per_submodule_outputs')
 
 # PARAMETER_COLUMNS (imported above) are the columns a parameters CSV -- a module
-# instance's, or a supermodule's default_parameters -- must have
+# parameterisation's, or a supermodule's default_parameters -- must have
 
 
 # --------------------------------------------------------------------------------------------
@@ -214,7 +214,7 @@ def normalise_supermodule_entry(entry, source=None):
                          f'not {default_parameters!r}.')
     for key in (DEFAULT_PARAMETERISATION_KEY, DEFAULT_INSTANCE_KEY):
         if key in entry:
-            check_instance_name(entry[key], description, key)
+            check_parameterisation_name(entry[key], description, key)
     entry = merge_renamed_key(entry, DEFAULT_PARAMETERISATION_KEY, DEFAULT_INSTANCE_KEY,
                               description)
 
@@ -247,8 +247,8 @@ def normalise_supermodule_entry(entry, source=None):
             normalised[key] = value
     normalised['module_format'] = SUPERMODULE_FORMAT
     normalised['submodules'] = records
-    if 'default_instance' in normalised:
-        normalised['default_instance'] = normalised['default_instance'].strip()
+    if DEFAULT_PARAMETERISATION_KEY in normalised:
+        normalised[DEFAULT_PARAMETERISATION_KEY] = normalised[DEFAULT_PARAMETERISATION_KEY].strip()
     return normalised
 
 
@@ -306,8 +306,8 @@ def normalise_module_config_entry(entry, source=None):
     description = _describe(normalised, source)
     for key in (DEFAULT_PARAMETERISATION_KEY, DEFAULT_INSTANCE_KEY):
         if key in normalised:
-            normalised[key] = check_instance_name(normalised[key], description, key)
-    # default_parameterisation is the newer name of default_instance, which the code reads
+            normalised[key] = check_parameterisation_name(normalised[key], description, key)
+    # default_instance is the older name of default_parameterisation
     normalised = merge_renamed_key(normalised, DEFAULT_PARAMETERISATION_KEY,
                                    DEFAULT_INSTANCE_KEY, description)
     for port_key in _PORT_KEYS:
@@ -342,7 +342,7 @@ def load_component_registry(config_files, exclude=()):
     '''
     ``{(vessel_type, BC_type): component entry}`` for every component entry in
     ``config_files``, each a normalised copy with ``config_path`` (the file it came from), in
-    whose directory its ``parameterisations/`` are looked for (``utilities/module_instances.py``).
+    whose directory its ``parameterisations/`` are looked for (``utilities/parameterisations.py``).
     ``exclude`` holds ``(config file, key)`` pairs to leave out: the definitions a more specific
     module source shadows (``ModuleSources.excluded_entries``; ``ModuleSources.
     component_registry()`` passes them). Otherwise a type defined twice keeps its first entry.
@@ -522,7 +522,7 @@ def normalise_vessel_record(record, source=None, index=None, what='module array'
     '''
     One module-array record, in either key style, as a libcuflynx record: ``name, BC_type,
     vessel_type, inp_vessels, out_vessels`` (the last two lists of names), then any other
-    keys in their original order, with ``per_submodule_*`` as ordered dicts and ``instance``
+    keys in their original order, with ``per_submodule_*`` as ordered dicts and ``parameterisation``
     stripped. ``record`` itself is not modified.
 
     Raises ValueError naming ``source``, ``index`` and the key for a record that is not an
@@ -557,11 +557,9 @@ def normalise_vessel_record(record, source=None, index=None, what='module array'
     out = {'name': record['name'].strip(),
            'BC_type': record[subtype_key].strip(),
            'vessel_type': record[type_key].strip()}
-    # "parameterisation" is the newer name of "instance", which the code reads
-    record = merge_renamed_key(
-        {k: (check_instance_name(v, where, k) if k in (PARAMETERISATION_KEY, INSTANCE_KEY)
-             else v) for k, v in record.items()},
-        PARAMETERISATION_KEY, INSTANCE_KEY, where)
+    reject_instance_key(record, where)
+    record = {k: (check_parameterisation_name(v, where, k) if k == PARAMETERISATION_KEY else v)
+              for k, v in record.items()}
     for key, value in record.items():
         new_key = rename.get(key, key)
         if new_key in ('name', 'BC_type', 'vessel_type'):
@@ -597,7 +595,7 @@ def module_array_csv_to_records(path):
     The rows of a CSV module array (either layout) as raw libcuflynx-keyed records: list
     columns split on whitespace, every other cell reduced to its first token ('' if empty),
     exactly as the CSV reader has always treated them. An empty cell in an optional column
-    (anything but name, BC_type, vessel_type and the inp/out lists, e.g. "instance") means the
+    (anything but name, BC_type, vessel_type and the inp/out lists, e.g. "parameterisation") means the
     key isn't set for that row, so it is left out of the record.
     '''
     df = pd.read_csv(path, dtype=str, na_filter=False)
@@ -679,21 +677,21 @@ def load_expanded_vessel_records(path, supermodule_registry=None, component_regi
     '''
     The records of the module array at ``path`` with every supermodule instance expanded,
     and the default parameter rows: ``(records, extra_param_rows)``. The rows are the
-    supermodules' (their instances', then their default_parameters) and, when
+    supermodules' (their parameterisations', then their default_parameters) and, when
     ``component_registry`` (``load_component_registry``) is given, every expanded record's
-    module instance's, in that order of precedence, each name once.
+    parameterisation's, in that order of precedence, each name once.
     '''
-    from libcuflynx.utilities.module_instances import (component_instance_rows, first_rows_win,
+    from libcuflynx.utilities.parameterisations import (component_parameterisation_rows, first_rows_win,
                                                        warn_conflicting_globals)
     from libcuflynx.utilities.supermodules import expand_supermodules
-    # the globals every instance sets, in precedence order, checked together: a supermodule's
+    # the globals every parameterisation sets, in precedence order, checked together: a supermodule's
     # value used for a module outside it is as much a conflict as two siblings disagreeing
     settings = []
     records, extra_param_rows = expand_supermodules(read_module_array_records(path),
                                                     supermodule_registry or {}, source=str(path),
                                                     settings=settings)
     if component_registry is not None:
-        extra_param_rows = first_rows_win(extra_param_rows + component_instance_rows(
+        extra_param_rows = first_rows_win(extra_param_rows + component_parameterisation_rows(
             records, component_registry, str(path), settings=settings))
     warn_conflicting_globals(settings, str(path))
     return records, extra_param_rows
@@ -706,7 +704,7 @@ def load_module_array(path, supermodule_registry=None, component_registry=None):
 
     * ``frame`` -- the list-form dataframe of ``vessel_records_to_frame``;
     * ``extra_param_rows`` -- default parameters under the expanded names (supermodule
-      instances and default_parameters, then module instances when ``component_registry``
+      parameterisations and default_parameters, then module parameterisations when ``component_registry``
       is given; see ``load_expanded_vessel_records``), a list of ``{variable_name, units,
       value, data_reference}`` dicts, to be used wherever the model's parameters file does
       not set that name.

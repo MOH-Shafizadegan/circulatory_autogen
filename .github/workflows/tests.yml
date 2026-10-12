@@ -502,7 +502,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    # The module-library tests (tests/test_module_instances.py) run against the real
+    # The module-library tests (tests/test_parameterisations.py) run against the real
     # circulatory-autogen-modules, at the commit pinned in tests/MODULE_LIBRARY_REF. Only its
     # modules/ directory is needed.
     - name: Read the pinned module library commit
