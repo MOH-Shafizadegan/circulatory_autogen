@@ -5,6 +5,23 @@ next release; add to that section as you land a change.
 
 ## Unreleased
 
+### Changed — multi-port coupling follows PhLynx (#575)
+
+- **Multiply on either end.** A `"Multiply"` port scales its variable into the neighbour
+  whichever end of the connection it is on; a downstream Multiply port was mapped like `"True"`
+  and its `multiply_factor` ignored. Multiply on both ends of a connection is a `ValueError`.
+- **One sum port per variable.** A variable summed through two different ports is a
+  `ValueError`; terms used to be merged into one sum.
+- **Boundary conditions.** Only a BC that a plain mapping connects to a non-blank partner, or
+  that is a sum result or Multiply output, is removed. A BC that is only a sum term, the source
+  of a Multiply, or mapped to a blank (`""`) slot keeps its own value (it used to lose it and
+  leave the model underdetermined). BCs connected only to each other are a `ValueError`.
+- **Units.** A coupling between different but compatible units is mapped directly, and the
+  solver converts it in the direction the value flows; the generated `unit_converter_*`
+  components are gone. Couplings between affine units (kelvin and celsius) are a `ValueError`.
+- **Port sizes.** A plain port pair with different numbers of variables is a `ValueError`; it
+  used to raise an `IndexError` or silently shift later mappings.
+
 ### Changed — local SA differentiates prediction features analytically
 
 With `sa_options.include_prediction_items`, local SA's prediction-feature rows now use the same
