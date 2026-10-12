@@ -472,17 +472,6 @@
             ]
           },
           "description": "the parameterisation (named parameter set of the module version) whose parameters this record uses: <config dir>/parameterisations/<name>/<name>_parameters.csv, or instances/<name>/ in older libraries (default: the config entry's default_parameterisation, if that file exists)"
-        },
-        "instance": {
-          "type": "string",
-          "pattern": "^[^/\\\\]*[^/\\\\\\s][^/\\\\]*$",
-          "not": {
-            "enum": [
-              ".",
-              ".."
-            ]
-          },
-          "description": "the older name of \"parameterisation\" (still read; give one of the two, or both with the same value)"
         }
       },
       "not": {
@@ -508,7 +497,17 @@
             ]
           }
         ]
-      }
+      },
+      "allOf": [
+        {
+          "not": {
+            "required": [
+              "instance"
+            ]
+          },
+          "description": "\"instance\" is not a record key: a record names its parameter set with \"parameterisation\"."
+        }
+      ]
     },
     "libcuflynxRecord": {
       "title": "instance record, libcuflynx keys",
@@ -550,17 +549,6 @@
             ]
           },
           "description": "the parameterisation (named parameter set of the module version) whose parameters this record uses: <config dir>/parameterisations/<name>/<name>_parameters.csv, or instances/<name>/ in older libraries (default: the config entry's default_parameterisation, if that file exists)"
-        },
-        "instance": {
-          "type": "string",
-          "pattern": "^[^/\\\\]*[^/\\\\\\s][^/\\\\]*$",
-          "not": {
-            "enum": [
-              ".",
-              ".."
-            ]
-          },
-          "description": "the older name of \"parameterisation\" (still read; give one of the two, or both with the same value)"
         }
       },
       "not": {
@@ -586,7 +574,17 @@
             ]
           }
         ]
-      }
+      },
+      "allOf": [
+        {
+          "not": {
+            "required": [
+              "instance"
+            ]
+          },
+          "description": "\"instance\" is not a record key: a record names its parameter set with \"parameterisation\"."
+        }
+      ]
     },
     "record": {
       "oneOf": [
