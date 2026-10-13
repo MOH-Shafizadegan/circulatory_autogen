@@ -222,5 +222,5 @@ def build_workflow_library(root, settings=None):
         'settings': settings,
         'steps': [{'id': 'fit_a', 'target': _target('lin_a', 'fit_a')},
                   {'id': 'rest', 'target': _target('chain', 'rest'),
-                   'depends_on': ['fit_a'], 'fixed_from': ['fit_a']}]})
+                   'fixed_from': ['fit_a']}]})
     return paths

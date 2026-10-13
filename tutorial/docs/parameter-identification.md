@@ -1073,13 +1073,13 @@ into.
   "settings": {"param_id_method": "CMA-ES", "dt": 0.001,
                "optimiser_options": {"num_calls_to_function": 400}},
   "steps": [
-    {"id": "i_M_g",
+    {"id": "M-type-K-channel",
      "target": {"module_type": "i_M", "version": "Argus2026_v01",
                 "parameterisation": "davis2020_wistar"}},
-    {"id": "rest_balance",
+    {"id": "resting-balance",
      "target": {"module_type": "soma", "version": "sympathetic",
                 "parameterisation": "rest_balance"},
-     "depends_on": ["i_M_g"], "fixed_from": ["i_M_g"]}
+     "fixed_from": ["M-type-K-channel"]}
   ]
 }
 ```
@@ -1089,14 +1089,17 @@ into.
 | `target` | the supermodule parameterisation (`module_type`, `version`, `parameterisation`) results are merged into; defaults to the parameterisation holding the file |
 | `module_library_dirs` | module libraries, relative to the file (more with `--module-library-dir`) |
 | `settings` | user_inputs settings for every step: `param_id_method`, `optimiser_options`, `solver`, `solver_info`, `dt`, `pre_time`, `sim_time`, `UQ_options`, `DEBUG`, ... (the model, obs_data, params_for_id and output paths are the workflow's, and cannot be set) |
-| step `id` | unique; also the step's output directory |
-| step `target` | the parameterisation the step calibrates |
+| step `id` | a label for the step, unique in the file: other steps refer to it, and it names the step's output directory. It is not a module or parameter name. |
+| step `target` | the parameterisation the step calibrates: its directory holds the step's obs_data and params_for_id (see [Preparing a step](#preparing-a-step)) |
 | step `submodule` | where that module sits in the workflow's target: `i_M`, or `soma/i_M` when nested (`soma_i_M` is also read); inferred unless the module occurs twice |
-| step `depends_on` | steps that run first; steps run in dependency order |
-| step `fixed_from` | earlier steps whose calibrated values -- and the values they were themselves given -- are fixed in this step's model, except those it calibrates itself |
-| step `priors_from` | earlier steps whose stored posterior becomes this step's prior (below) |
+| step `fixed_from` | steps whose calibrated values -- and the values they were themselves given -- are fixed in this step's model, except those it calibrates itself |
+| step `priors_from` | steps whose stored posterior becomes this step's prior (below) |
 | step `store_distribution` | sample the posterior by MCMC after the fit and store it |
 | step `settings` | merged over the workflow's (one level deep, so `optimiser_options` add up) |
+
+A step runs after the steps in its `fixed_from` and `priors_from`, since it needs their results;
+steps that pass nothing between them run in file order. Here `resting-balance` runs after
+`M-type-K-channel` and calibrates the soma with the channel's calibrated values fixed.
 
 The checks: a target names its parameter set with `parameterisation` (`instance` is an
 error); each step has its own parameterisation (two steps cannot calibrate the same one, and
@@ -1125,12 +1128,17 @@ Each step calibrates one parameterisation, in its own directory of the module li
     <name>_params_for_id.csv     what this step calibrates
 ```
 
+The link is by name only. A step's `target` picks the module version (`module_type`,
+`version`) and, with `parameterisation: "<name>"`, the directory `parameterisations/<name>/`
+in it; the files there are found by the prefix `<name>_`. A renamed file is not found, and
+`--dry-run` says which one is missing.
+
 1. Make the directory, for example by copying `default/`.
 2. Write the obs_data for the module alone. Its operands name the module's outputs
    `mod/<variable>`, or `mod_<submodule>/<variable>` for a supermodule (see Naming).
 3. Write the params_for_id, with `vessel_name` `mod`, `mod_<submodule>` or `global`.
-4. Add the step to the workflow, with `depends_on`, `fixed_from` or `priors_from` as needed,
-   and check it with `--dry-run`.
+4. Add the step to the workflow, with `fixed_from` or `priors_from` as needed, and check it
+   with `--dry-run`.
 
 ### Naming
 
@@ -1168,7 +1176,7 @@ fit and stores `distribution/`: the raw `chain.npy`, the post-burn-in `samples.n
 
 ```python
 from libcuflynx.calibration_workflow import StoredDistribution
-d = StoredDistribution.load('wf_out/i_M_g')
+d = StoredDistribution.load('wf_out/M-type-K-channel')
 d.sample(1000, rng=0)               # draws, shape (1000, n_params)
 d.logpdf(x)                         # log density at a parameter vector
 d.marginal('rho_M_mod')             # one parameter's samples
@@ -1176,7 +1184,7 @@ d.mapped_into('i_M').names          # named as in the supermodule: ['rho_M_mod_i
 ```
 
 A later step lists it in `priors_from`, either by id or as
-`{"step": "i_M_g", "kind": "mvnormal", "inflate": 1.0, "parameters": [...]}`. `parameters`
+`{"step": "M-type-K-channel", "kind": "mvnormal", "inflate": 1.0, "parameters": [...]}`. `parameters`
 picks some of the stored parameters, by their names in the earlier step's model (`rho_M_mod`;
 its `step_result.json` lists them as `calibrated[].model_name`); without it, all of them. Those parameters
 are then calibrated again in the later step, with the stored posterior as a prior over all of

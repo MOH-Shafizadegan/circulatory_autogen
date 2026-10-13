@@ -178,21 +178,13 @@
           "type": "string",
           "description": "where the module sits in the workflow target: a submodule name, or a nested one as soma/i_M (soma_i_M is also read). Inferred when the module type and version occur once."
         },
-        "depends_on": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "uniqueItems": true,
-          "description": "steps that run before this one"
-        },
         "fixed_from": {
           "type": "array",
           "items": {
             "type": "string"
           },
           "uniqueItems": true,
-          "description": "earlier steps (in depends_on, directly or not) whose calibrated values, and the values they were given as fixed, are fixed in this step's model"
+          "description": "steps whose calibrated values, and the values they were given as fixed, are fixed in this step's model; this step runs after them"
         },
         "priors_from": {
           "type": "array",

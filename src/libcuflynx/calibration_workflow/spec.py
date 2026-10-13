@@ -41,7 +41,7 @@ DEFAULT_PRIOR_KIND = 'mvnormal'
 
 _TOP_KEYS = {'schema_version', 'workflow_name', 'description', 'target', 'module_library_dirs',
              'settings', 'steps', 'comment'}
-_STEP_KEYS = {'id', 'target', 'submodule', 'depends_on', 'fixed_from', 'priors_from',
+_STEP_KEYS = {'id', 'target', 'submodule', 'fixed_from', 'priors_from',
               'store_distribution', 'settings', 'description', 'comment'}
 _TARGET_KEYS = {'module_type', 'version', 'parameterisation'}
 _PRIOR_KEYS = {'step', 'kind', 'inflate', 'parameters'}
@@ -84,7 +84,7 @@ class Step:
     id: str
     target: Target
     submodule: str = None
-    depends_on: list = field(default_factory=list)
+    depends_on: list = field(default_factory=list)   # fixed_from and priors_from steps
     fixed_from: list = field(default_factory=list)
     priors_from: list = field(default_factory=list)
     store_distribution: bool = False
@@ -129,7 +129,7 @@ class Workflow:
             ready = [s for s in remaining if all(d in done for d in s.depends_on)]
             if not ready:
                 cycle = [s.id for s in remaining]
-                raise WorkflowError(f'workflow "{self.name}": depends_on has a cycle among '
+                raise WorkflowError(f'workflow "{self.name}": fixed_from/priors_from form a cycle among '
                                     f'steps {cycle}.')
             step = ready[0]
             order.append(step)
@@ -137,15 +137,6 @@ class Workflow:
             remaining.remove(step)
         return order
 
-    def ancestors(self, step_id):
-        '''Every step ``step_id`` depends on, directly or not.'''
-        seen, stack = set(), list(self.step(step_id).depends_on)
-        while stack:
-            current = stack.pop()
-            if current not in seen:
-                seen.add(current)
-                stack.extend(self.step(current).depends_on)
-        return seen
 
 
 # --------------------------------------------------------------------------------------------
@@ -310,6 +301,10 @@ def _step(value, index, where):
     label = f'{where}: steps[{index}]'
     if not isinstance(value, dict):
         raise WorkflowError(f'{label} must be an object.')
+    if 'depends_on' in value:
+        raise WorkflowError(f'{label}: "depends_on" is not a key. A step runs after the steps '
+                            f'in its "fixed_from" and "priors_from", the only ways one step '
+                            f'affects another; remove "depends_on".')
     _no_unknown_keys(value, _STEP_KEYS, label)
     step_id = value.get('id')
     if not isinstance(step_id, str) or not step_id.strip():
@@ -330,11 +325,13 @@ def _step(value, index, where):
     priors = value.get('priors_from', [])
     if not isinstance(priors, list):
         raise WorkflowError(f'{label}: "priors_from" must be a list.')
+    fixed_from = _string_list(value, 'fixed_from', label)
+    priors_from = [_prior_source(p, label) for p in priors]
     return Step(id=step_id.strip(), target=_target(value['target'], f'{label}: "target"'),
                 submodule=submodule.strip() if submodule else None,
-                depends_on=_string_list(value, 'depends_on', label),
-                fixed_from=_string_list(value, 'fixed_from', label),
-                priors_from=[_prior_source(p, label) for p in priors],
+                depends_on=list(dict.fromkeys(fixed_from + [p.step for p in priors_from])),
+                fixed_from=fixed_from,
+                priors_from=priors_from,
                 store_distribution=store,
                 settings=_settings(value.get('settings', {}), f'{label}: "settings"'),
                 description=value.get('description', '') or '')
@@ -361,24 +358,14 @@ def check_workflow(workflow):
         targets[step.target] = step.id
         for dep in step.depends_on:
             if dep not in ids:
-                raise WorkflowError(f'step "{step.id}" depends_on unknown step "{dep}".')
+                raise WorkflowError(f'step "{step.id}" takes values from unknown step "{dep}".')
             if dep == step.id:
-                raise WorkflowError(f'step "{step.id}" depends on itself.')
+                raise WorkflowError(f'step "{step.id}" takes values from itself.')
     workflow.topological_order()  # raises on a cycle
 
     for step in workflow.steps:
-        ancestors = workflow.ancestors(step.id)
-        for source in step.fixed_from:
-            if source not in ancestors:
-                raise WorkflowError(
-                    f'step "{step.id}" takes fixed values from "{source}", which it does not '
-                    f'depend on. Add "{source}" to its depends_on so it runs first.')
         prior_steps = [p.step for p in step.priors_from]
         for source in prior_steps:
-            if source not in ancestors:
-                raise WorkflowError(
-                    f'step "{step.id}" takes priors from "{source}", which it does not depend '
-                    f'on. Add "{source}" to its depends_on so it runs first.')
             if not workflow.step(source).store_distribution:
                 raise WorkflowError(
                     f'step "{step.id}" takes priors from "{source}", but "{source}" does not '

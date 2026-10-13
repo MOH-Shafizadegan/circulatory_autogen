@@ -95,7 +95,7 @@ def test_a_target_names_its_parameterisation_not_an_instance(library):
 
 
 @pytest.mark.unit
-def test_order_follows_depends_on_not_file_order(library):
+def test_a_step_runs_after_the_steps_it_takes_values_from(library):
     raw = _raw(library)
     raw['steps'].reverse()
     workflow = parse_workflow(raw, path=library['chain_rest'])
@@ -110,9 +110,10 @@ def _edit(library, edit):
 
 @pytest.mark.unit
 @pytest.mark.parametrize('edit, message', [
-    (lambda w: w['steps'][0].update(depends_on=['rest']), 'cycle'),
-    (lambda w: w['steps'][1].update(depends_on=['nope']), 'unknown step "nope"'),
-    (lambda w: w['steps'][1].update(depends_on=[]), 'does not depend on'),
+    (lambda w: w['steps'][0].update(fixed_from=['rest']), 'cycle'),
+    (lambda w: w['steps'][1].update(fixed_from=['nope']), 'unknown step "nope"'),
+    (lambda w: w['steps'][0].update(fixed_from=['fit_a']), 'from itself'),
+    (lambda w: w['steps'][1].update(depends_on=['fit_a']), '"depends_on" is not a key'),
     (lambda w: w['steps'].append(dict(w['steps'][0])), 'more than once'),
     (lambda w: w['steps'].append(dict(w['steps'][0], id='again')), 'both calibrate'),
     (lambda w: w['settings'].update(param_id_obs_path='x.json'), 'cannot be set'),
