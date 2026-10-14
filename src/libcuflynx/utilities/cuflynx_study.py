@@ -20,7 +20,15 @@ keys are additive, so a reader that predates one ignores it.
      "solver_info": {..., "solver": ..., "dt": ...}, "pre_time": ..., "sim_time": ...,
      "runs": [{"dir": ..., "method": ..., "analyses": [...], "obs_data": ..., "updated": ...}],
      "sensitivity": [{"dir": ..., "method": ..., "obs_data": ..., "updated": ...}],
-     "emulator": ...}
+     "emulator": ...,
+     "workflow": {...}}
+
+A calibration workflow's run (``libcuflynx.calibration_workflow``) writes one manifest for
+the whole workflow, in its output directory, whose ``workflow`` key records the workflow as
+run, its result, the target and each step (its model, obs_data and params_for_id, as the
+workflow file names them, and its run directory and own manifest). Each step's manifest, a
+single calibration CUFLynx can open on its own, has ``workflow``: ``{"manifest": ...,
+"step": <id>}`` back to it.
 
 Paths inside ``study_dir`` are stored relative to it, so the directory can be moved or
 copied whole; paths outside it are absolute, so they keep resolving from wherever the
@@ -61,6 +69,11 @@ MANIFEST_SUFFIX = '_cuflynx_study.json'
 
 #: Single-path keys, stored relative inside the study and absolute outside it.
 PATH_KEYS = ('model', 'base_model', 'obs_data', 'params_for_id', 'emulator', 'user_inputs')
+
+#: Path keys inside the ``workflow`` block (and a step's link back to it).
+WORKFLOW_PATH_KEYS = ('file', 'source', 'result', 'manifest', 'run', 'module_array',
+                      'parameters', 'obs_data', 'params_for_id', 'generated_model',
+                      'calibrated_parameters')
 
 #: Sections holding one entry per output directory.
 ENTRY_SECTIONS = ('runs', 'sensitivity')
@@ -201,6 +214,18 @@ def _encode(study_dir, key, value):
     return value
 
 
+def _encode_workflow(study_dir, value, key=None):
+    '''A ``workflow`` block as stored: its paths (WORKFLOW_PATH_KEYS) made study-relative
+    where that is honest, through nested dicts and lists.'''
+    if isinstance(value, dict):
+        return {k: _encode_workflow(study_dir, v, k) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_encode_workflow(study_dir, v, key) for v in value]
+    if key in WORKFLOW_PATH_KEYS and isinstance(value, str) and value:
+        return _study_path(study_dir, value)
+    return value
+
+
 def _read_raw(location):
     """The manifest as stored, or an empty dict when it is absent or unreadable."""
     if not os.path.isfile(location):
@@ -259,7 +284,7 @@ def _write_atomic(location, record):
         raise
 
 
-def update_study(inp, section=None, entry=None, emulator=None):
+def update_study(inp, section=None, entry=None, emulator=None, workflow=None):
     """Record this config's study, and optionally one analysis output, in its manifest.
 
     Args:
@@ -273,6 +298,8 @@ def update_study(inp, section=None, entry=None, emulator=None):
         entry: That output's ``{'dir': ..., 'method': ...}``; ``obs_data`` defaults to the
             config's.
         emulator: A trained emulator's directory, to declare as the study's emulator.
+        workflow: The study's ``workflow`` block (a workflow's own manifest), or a step's
+            ``{'manifest', 'step'}`` link to it; replaces the one stored.
 
     Returns:
         The manifest's path, or None when nothing was written (not rank 0, turned off,
@@ -291,6 +318,8 @@ def update_study(inp, section=None, entry=None, emulator=None):
                 record[key] = _encode(study_dir, key, value)
         if emulator:
             record['emulator'] = _study_path(study_dir, emulator)
+        if workflow is not None:
+            record['workflow'] = _encode_workflow(study_dir, workflow)
 
         if section is not None:
             if section not in ENTRY_SECTIONS:
@@ -352,4 +381,16 @@ def read_study(path):
         out[section] = [{**e, 'dir': resolve(e['dir']),
                          **({'obs_data': resolve(e['obs_data'])} if e.get('obs_data') else {})}
                         for e in out.get(section) or [] if isinstance(e, dict) and e.get('dir')]
+
+    def resolve_workflow(value, key=None):
+        if isinstance(value, dict):
+            return {k: resolve_workflow(v, k) for k, v in value.items()}
+        if isinstance(value, list):
+            return [resolve_workflow(v, key) for v in value]
+        if key in WORKFLOW_PATH_KEYS and isinstance(value, str) and value:
+            return resolve(value)
+        return value
+
+    if isinstance(out.get('workflow'), dict):
+        out['workflow'] = resolve_workflow(out['workflow'])
     return out

@@ -38,6 +38,7 @@ ALLOWED_SETTINGS = (
     'DEBUG', 'do_ad', 'UQ_options', 'debug_UQ_options',
     'use_builtin_modules', 'external_modules_dir',
     'operation_funcs_external_path', 'cost_funcs_external_path', 'modifier_funcs_external_path',
+    'write_cuflynx_study',
 )
 
 PRIOR_KINDS = ('mvnormal', 'normal', 'kde')

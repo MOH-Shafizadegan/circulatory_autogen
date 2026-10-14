@@ -65,6 +65,13 @@ file into CUFLynx reopens the whole study. Two new user_inputs keys: `study_name
 than overwrites, and only ever warns on failure. `cuflynx-param-id` now also forwards
 `modifier_funcs_external_path`, which it used to drop.
 
+A calibration workflow writes one manifest for the whole run,
+`<output_dir>/<workflow_name>_cuflynx_study.json`, whose `workflow` key records the workflow as
+run, its result, the target (as named and as generated, and its calibrated parameters file) and
+each step (model, obs_data, params_for_id, sources, status, run directory). Each step's own
+manifest links back with `workflow: {manifest, step}`. `write_cuflynx_study` is also a workflow
+setting.
+
 ### Changed — a module type several sources define comes from the most specific one
 
 A `(vessel_type, BC_type)` defined in more than one module source used to keep the first entry

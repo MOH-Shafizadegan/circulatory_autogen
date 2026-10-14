@@ -1160,7 +1160,14 @@ prior.
     <step_id>/param_id/               the usual param_id outputs
     <step_id>/distribution/           with store_distribution
     _target/model/                    the target generated with every calibrated value
+    <workflow_name>_cuflynx_study.json  the study manifest CUFLynx opens (below)
 ```
+
+The manifest records the workflow as run, its result, the target and every step (its model,
+obs_data, params_for_id, the steps it took values from, its status and run directory). It is
+updated as each step finishes, so CUFLynx can follow a running workflow. Each step's own
+manifest, in `<step_id>/param_id/`, links back to it. `"write_cuflynx_study": false` in the
+settings turns both off.
 
 `--from-step X` reruns X and everything after it, reusing the earlier results (and refusing if
 their obs_data, params_for_id or parameters changed since); `--only X` reruns one step.
