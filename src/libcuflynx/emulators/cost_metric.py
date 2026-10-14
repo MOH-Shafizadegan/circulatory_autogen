@@ -56,9 +56,11 @@ def sigma_weights(stds, weights, spans, y_train=None):
     """Per-feature multipliers that turn a scaled error into a cost contribution.
 
     autoemulate sees ``y_scaled = (y - shift) / span``, so an error of ``e`` there is
-    ``e * span`` in real units and ``e * span / sigma`` in sigma units. The cost
-    weights each term by the obs_data's own ``weight``, and a zero weight drops the
-    item from the cost entirely, so it is dropped here too.
+    ``e * span`` in real units and ``e * span / sigma`` in sigma units. The cost adds
+    ``weight * (error / sigma) ** 2`` per item, and the metric squares these multipliers,
+    so each is ``sqrt(weight) * span / sigma``: the squared error then carries ``weight``
+    once, as in the cost. A zero weight drops the item from the cost entirely, so it is
+    dropped here too.
 
     Returns ``(weights, notes)`` where ``weights`` is one non-negative float per
     feature and ``notes`` lists the features whose sigma had to be substituted.
@@ -87,7 +89,7 @@ def sigma_weights(stds, weights, spans, y_train=None):
         notes = [int(i) for i in np.flatnonzero(~usable)]
 
     spans = np.where(np.isfinite(spans) & (spans != 0), spans, 1.0)
-    out = np.clip(weights, 0.0, None) * np.abs(spans) / effective
+    out = np.sqrt(np.clip(weights, 0.0, None)) * np.abs(spans) / effective
     # A feature the cost does not read contributes nothing, and a non-finite
     # multiplier would poison the whole metric.
     out = np.where(np.isfinite(out), out, 0.0)
@@ -124,9 +126,7 @@ def _metric_base():
     It has to be the real base class: ``autoemulate.core.metrics.get_metric``
     dispatches on ``isinstance(metric, Metric)`` and rejects anything else outright, so
     a duck-typed metric is refused with "Unsupported metric type" the moment
-    ``AutoEmulate`` is constructed. (Found by running a real fit -- an earlier version of
-    this module was duck-typed on the assumption that only ``name``, ``maximize`` and
-    ``__call__`` were read.)
+    ``AutoEmulate`` is constructed.
 
     Resolved at import, falling back to ``object``, so this module stays importable in
     an environment with no autoemulate -- which is where its unit tests run, and where

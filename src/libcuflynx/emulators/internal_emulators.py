@@ -290,14 +290,12 @@ def _log_loss_cv(cls, x, labels, params, n_splits, seed):
 def _tune_classifier(cls, x, labels, settings=None):
     """Fit ``cls`` with the best of a few configurations, by cross-validated log loss.
 
-    The classifier halves were previously fitted at sklearn's defaults with no search
-    at all, while the regression halves got ``n_iter`` tuned draws each. On an obs_data
-    where half the items are counts, the untuned half is the one doing most of the
-    damage.
+    The regression halves get ``n_iter`` tuned draws each; this gives the classifier halves
+    a search too (``classifier_n_iter`` configurations, 1 meaning sklearn's defaults). On
+    an obs_data where half the items are counts, these halves carry much of the error.
 
     Every failure degrades to the default fit rather than raising: one column must
-    never end a training run, and an untuned classifier is what the previous behaviour
-    was anyway.
+    never end a training run.
     """
     settings = settings or {}
     n_iter = int(settings.get('classifier_n_iter', DEFAULT_CLASSIFIER_N_ITER) or 1)
@@ -376,8 +374,9 @@ def _calibrate_threshold(model, x_test, y_test, members, values_false, values_tr
 
     scale = np.ones(len(members))
     if weights is not None:
+        # the cost metric's multipliers: a feature the cost does not read (0) moves nothing
         picked = np.asarray(weights, dtype=float).reshape(-1)[list(members)]
-        scale = np.where(np.isfinite(picked) & (picked > 0), picked, 1.0)
+        scale = np.where(np.isfinite(picked), np.clip(picked, 0.0, None), 1.0)
 
     def score(threshold):
         mask = proba >= threshold

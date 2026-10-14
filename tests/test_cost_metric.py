@@ -255,3 +255,13 @@ def test_the_cost_weights_are_handed_to_the_threshold_calibration():
     settings = trainer._phase_settings(seed=0, tuning=metric)
     assert settings['feature_weights'] is not None
     assert np.allclose(settings['feature_weights'], metric.weights)
+
+
+def test_a_fractional_weight_counts_once_as_in_the_cost():
+    """The cost adds weight * (error / sigma) ** 2, so a weight of 0.25 makes an error count a
+    quarter: the metric's squared multiplier must carry the weight once, not squared."""
+    weights, _ = sigma_weights(stds=[1.0, 1.0], weights=[1.0, 0.25], spans=[1.0, 1.0])
+    assert weights[1] ** 2 == pytest.approx(0.25 * weights[0] ** 2)
+    metric = CostWeightedError(weights)
+    # one unit of error in each feature: mean of 1 * 1 and 0.25 * 1 over the two
+    assert _score(metric, [[1.0, 1.0]], [[0.0, 0.0]]) == pytest.approx(np.sqrt(1.25 / 2))

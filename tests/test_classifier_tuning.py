@@ -270,3 +270,27 @@ def test_thresholded_falls_back_to_predict_without_probabilities():
             return np.array([1, 0])
 
     assert list(_Thresholded(_NoProba(), 0.2).predict(np.zeros((2, 1)))) == [True, False]
+
+
+def test_a_feature_the_cost_ignores_does_not_move_the_threshold():
+    """Member 0 is weighted and both branches already predict it exactly; member 1 has
+    weight 0 and its error depends on the threshold. Only member 0 is in the cost, so there
+    is nothing to gain and the threshold stays at 0.5."""
+    from libcuflynx.emulators.internal_emulators import _calibrate_threshold
+
+    class _Model:
+        def predict_proba(self, x):
+            p = np.asarray(x, dtype=float)[:, 0]
+            return np.column_stack([1 - p, p])
+
+    proba = np.linspace(0.05, 0.95, 40)
+    x = proba[:, None]
+    truth = np.column_stack([np.full(40, 3.0), np.where(proba > 0.8, 10.0, 0.0)])
+    threshold, gain = _calibrate_threshold(_Model(), x, truth, [0, 1],
+                                           values_false=[3.0, 0.0], values_true=[3.0, 10.0],
+                                           weights=[1.0, 0.0])
+    assert threshold == 0.5 and gain is None
+    # weighted, the same member does move it
+    moved, _ = _calibrate_threshold(_Model(), x, truth, [0, 1], values_false=[3.0, 0.0],
+                                    values_true=[3.0, 10.0], weights=[1.0, 1.0])
+    assert moved != 0.5
