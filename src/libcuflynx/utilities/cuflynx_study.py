@@ -18,7 +18,8 @@ keys are additive, so a reader that predates one ignores it.
      "model": ..., "base_model": ..., "obs_data": ..., "params_for_id": ...,
      "user_funcs": {"operation": ..., "cost": ..., "modifier": ...},
      "solver_info": {..., "solver": ..., "dt": ...}, "pre_time": ..., "sim_time": ...,
-     "runs": [{"dir": ..., "method": ..., "analyses": [...], "obs_data": ..., "updated": ...}],
+     "runs": [{"dir": ..., "method": ..., "analyses": [...], "status": ..., "obs_data": ...,
+               "updated": ...}],
      "sensitivity": [{"dir": ..., "method": ..., "obs_data": ..., "updated": ...}],
      "emulator": ...,
      "workflow": {...}}
@@ -35,6 +36,11 @@ copied whole; paths outside it are absolute, so they keep resolving from whereve
 study ends up. ``study_dir`` itself is absolute so a copy of the manifest that is not
 sitting in its study (a dropped file, or one embedded in an OMEX archive) can still be
 resolved.
+
+A calibration or MCMC run is entered when it starts, with ``status`` ``running``, so a run
+that is cut short is still in the manifest with what it wrote each iteration; it becomes
+``finished``, ``stopped`` (interrupted) or ``failed`` when it ends, and a killed process leaves
+it ``running``.
 
 The file is merged, not overwritten: each analysis upserts its own entry (keyed by
 directory) and refreshes the study-level keys, so a sensitivity run does not erase the

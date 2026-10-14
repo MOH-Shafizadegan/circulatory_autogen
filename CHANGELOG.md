@@ -58,8 +58,10 @@ sub-experiment.
 Calibration, UQ, sensitivity analysis and emulator training now record themselves in
 `<param_id_output_dir>/<study_name>_cuflynx_study.json` (`libcuflynx.utilities.cuflynx_study`):
 the model (the calibrated one once written), obs_data, params_for_id, the
-`*_funcs_external_path` files, the solver settings and `dt`, and each output directory as it
-finishes — including sensitivity results written outside `param_id_output_dir`. Dropping that
+`*_funcs_external_path` files, the solver settings and `dt`, and each output directory —
+including sensitivity results written outside `param_id_output_dir`. A calibration or MCMC run
+is entered when it starts (`status: running`), so a run cut short is there with what it wrote
+each iteration, and is marked `finished`, `stopped` or `failed` when it ends. Dropping that
 file into CUFLynx reopens the whole study. Two new user_inputs keys: `study_name` (default
 `file_prefix`) and `write_cuflynx_study` (default `true`). Writing is atomic, merges rather
 than overwrites, and only ever warns on failure. `cuflynx-param-id` now also forwards

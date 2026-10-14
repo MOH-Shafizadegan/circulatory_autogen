@@ -583,46 +583,64 @@ class CVS0DParamID():
         """
         self._require_data_items('calibration')
         self._check_info_available()
-        self.param_id.run()
+        with self._run_recorded(self.param_id_method):
+            self.param_id.run()
 
-        # Some execution paths (or older optimiser flows) can finish without writing
-        # the per-experiment full output dumps. Ensure they exist for downstream
-        # tooling (e.g. post-processing, debug comparisons, external plotting).
-        try:
-            if getattr(self, "rank", 0) == 0:
-                output_dir = getattr(self.param_id, "output_dir", None)
-                protocol_info = getattr(self.param_id, "protocol_info", None)
-                best_param_vals = getattr(self.param_id, "best_param_vals", None)
-
-                if output_dir and protocol_info and best_param_vals is not None:
-                    # the first experiment the cost uses: a validation-only experiment is
-                    # not simulated in calibration and has no dump
-                    first = (cost_experiment_idxs(protocol_info) or [0])[0]
-                    expected0 = os.path.join(
-                        output_dir, f"all_outputs_with_best_param_vals_exp_{first}.npz"
-                    )
-                    if not os.path.exists(expected0):
-                        print(
-                            "[param_id] all_outputs_with_best_param_vals_exp_*.npz "
-                            "not found; generating per-experiment output dumps now."
-                        )
-                        self.param_id.save_all_outputs_per_experiment(
-                            best_param_vals, suffix=""
-                        )
-        except Exception as e:
-            # Don't fail an otherwise-successful optimisation because of optional artifacts.
+            # Some execution paths (or older optimiser flows) can finish without writing
+            # the per-experiment full output dumps. Ensure they exist for downstream
+            # tooling (e.g. post-processing, debug comparisons, external plotting).
             try:
-                print(f"[param_id] WARNING: failed to write all-outputs npz dumps: {e}")
-            except Exception:
-                pass
+                if getattr(self, "rank", 0) == 0:
+                    output_dir = getattr(self.param_id, "output_dir", None)
+                    protocol_info = getattr(self.param_id, "protocol_info", None)
+                    best_param_vals = getattr(self.param_id, "best_param_vals", None)
 
-        self._record_run_in_study(self.param_id_method)
+                    if output_dir and protocol_info and best_param_vals is not None:
+                        # the first experiment the cost uses: a validation-only experiment is
+                        # not simulated in calibration and has no dump
+                        first = (cost_experiment_idxs(protocol_info) or [0])[0]
+                        expected0 = os.path.join(
+                            output_dir, f"all_outputs_with_best_param_vals_exp_{first}.npz"
+                        )
+                        if not os.path.exists(expected0):
+                            print(
+                                "[param_id] all_outputs_with_best_param_vals_exp_*.npz "
+                                "not found; generating per-experiment output dumps now."
+                            )
+                            self.param_id.save_all_outputs_per_experiment(
+                                best_param_vals, suffix=""
+                            )
+            except Exception as e:
+                # Don't fail an otherwise-successful optimisation because of optional artifacts.
+                try:
+                    print(f"[param_id] WARNING: failed to write all-outputs npz dumps: {e}")
+                except Exception:
+                    pass
 
-    def _record_run_in_study(self, method):
-        """Declare this run directory in the study manifest, now that it holds results."""
-        if getattr(self, 'rank', 0) == 0 and self._study_inp and self.output_dir:
+    @contextlib.contextmanager
+    def _run_recorded(self, method):
+        """Declare this run directory in the study manifest when the run starts
+        (``status: running``), so a run that is cut short is there with what it wrote each
+        iteration, and mark it ``finished``, ``stopped`` (interrupted) or ``failed`` at the
+        end. A killed process leaves it ``running``."""
+        self._record_run_in_study(method, 'running')
+        try:
+            yield
+        except KeyboardInterrupt:
+            self._record_run_in_study(method, 'stopped')
+            raise
+        except BaseException:
+            self._record_run_in_study(method, 'failed')
+            raise
+        self._record_run_in_study(method, 'finished')
+
+    def _record_run_in_study(self, method, status):
+        """This run directory's entry in the study manifest, with ``status``."""
+        if getattr(self, 'rank', 0) == 0 and getattr(self, '_study_inp', None) \
+                and self.output_dir:
             cuflynx_study.update_study(self._study_inp, 'runs',
-                                       {'dir': self.output_dir, 'method': method})
+                                       {'dir': self.output_dir, 'method': method,
+                                        'status': status})
 
     def run_UQ(self, UQ_options=None, mcmc_options=None):
         """Run uncertainty quantification (MCMC) on **this** object.
@@ -650,8 +668,8 @@ class CVS0DParamID():
                 UQ_options if UQ_options is not None else getattr(self, 'UQ_options', None))
         elif UQ_options is not None:
             mcmc_object._init_mcmc(UQ_options, DEBUG=self.DEBUG)
-        mcmc_object.run()
-        self._record_run_in_study('mcmc')
+        with self._run_recorded('mcmc'):
+            mcmc_object.run()
 
     def run_mcmc(self):
         """Deprecated alias of :meth:`run_UQ`, kept so existing scripts keep working."""

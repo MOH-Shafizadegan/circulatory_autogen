@@ -204,3 +204,43 @@ def test_parser_fills_in_the_study_keys(tmp_path):
     })
     assert inp['study_name'] == 'demo'
     assert inp['write_cuflynx_study'] is True
+
+
+def _param_id_with(study, engine_run):
+    '''A CVS0DParamID with only what run() reads, whose engine runs ``engine_run``.'''
+    from libcuflynx.param_id.paramID import CVS0DParamID
+    pid = CVS0DParamID.__new__(CVS0DParamID)
+    run_dir = os.path.join(study['param_id_output_dir'], 'CMA-ES_demo_obs')
+    pid.__dict__.update({'rank': 0, '_study_inp': study, 'output_dir': run_dir,
+                         'param_id_method': 'CMA-ES',
+                         'param_id': type('E', (), {'run': staticmethod(engine_run)})()})
+    pid._require_data_items = lambda what: None
+    pid._check_info_available = lambda: None
+    return pid, cuflynx_study.manifest_path(study)
+
+
+def test_a_run_is_recorded_when_it_starts_and_marked_when_it_ends(study):
+    seen = []
+
+    def engine_run():
+        # mid-run: the run is already in the manifest, so a run cut short keeps its results
+        seen.append(_raw(manifest)['runs'][0]['status'])
+
+    pid, manifest = _param_id_with(study, engine_run)
+    pid.run()
+    assert seen == ['running']
+    assert [(r['dir'], r['status']) for r in _raw(manifest)['runs']] == \
+        [('CMA-ES_demo_obs', 'finished')]
+
+
+@pytest.mark.parametrize('error, status', [(KeyboardInterrupt, 'stopped'),
+                                           (RuntimeError, 'failed')])
+def test_a_run_cut_short_stays_in_the_manifest(study, error, status):
+    def engine_run():
+        raise error('cut short')
+
+    pid, manifest = _param_id_with(study, engine_run)
+    with pytest.raises(error):
+        pid.run()
+    assert [(r['dir'], r['status']) for r in _raw(manifest)['runs']] == \
+        [('CMA-ES_demo_obs', status)]
