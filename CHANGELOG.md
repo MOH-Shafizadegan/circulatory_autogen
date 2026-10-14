@@ -61,6 +61,58 @@ the old name still works with a `FutureWarning`. The 0D/1D split writes `[file_p
 `libcuflynx/schemas/module_array.schema.json`. The record keys (`vessel_type`, `BC_type`,
 `inp_vessels`, `out_vessels`) and the `vessels_csv_abs_path` config key are unchanged.
 
+### Added — writing a model and its calibration up in LaTeX
+
+- **`cuflynx-variable-mapping`** writes a model's `<prefix>_variable_mapping.csv`.
+  - It lists every variable and parameter by its canonical `component/variable` name, with a LaTeX symbol from a default rule (Greek names, `_` subscripts, the module as a last subscript).
+  - Regenerating the file keeps edited symbols.
+- **`cuflynx-methods-latex`** writes a methods section in LaTeX, for a calibration workflow or for one calibration:
+  - the equations of each module in the mapped symbols, with their parameter tables;
+  - a table of every parameter with its value and source: BibTeX keys in a parameter's
+    `data_reference` are cited (from the modules' `*_references.bib`, or `--bib`), the cited
+    entries are written to a `.bib` beside the `.tex`, and a calibrated parameter names the
+    step that calibrated it;
+  - a TikZ flow chart of the calibration;
+  - the protocol, observables, parameters, method, cost function, fixed values, priors, MCMC settings and results of each step.
+- **`libcuflynx.reporting`** is the Python API for both.
+
+### Added — calibration workflows
+
+`cuflynx-calibration-workflow <workflow.json>` (and
+`libcuflynx.calibration_workflow.run_calibration_workflow`) runs calibrations in order and merges
+their results into one target model. Each step names the three inputs of an ordinary param_id
+run -- `model`, `obs_data` and `params_for_id`, paths relative to the workflow file -- so a
+workflow works in any repository. A model is a CA module array, or a module of a module library
+(`{module_type, version, parameterisation}`).
+
+- **Names between models.** A module array keeps its vessel names (`vessel_map` renames them
+  into the target's); a library module sits at a `submodule` of a supermodule target or a
+  `vessel` of a module-array target, inferred when it occurs once. `--dry-run` checks that every
+  calibrated parameter lands on a vessel of the target.
+- **Fixed values.** A step can take earlier steps' calibrated values as fixed parameter values
+  (`fixed_from`); it runs after the steps it takes values from.
+- **Distributions and priors.** A step can store its MCMC posterior (`store_distribution`:
+  chain, samples, stats; `StoredDistribution` samples and evaluates it). A later step can use it
+  as a joint prior (`priors_from`), represented as a multivariate normal, independent normals or
+  a KDE, each on a bounds-respecting scale.
+- **Reruns.** `--from-step` / `--only` rerun part of a workflow, refusing when an input it would
+  reuse has changed. `--dry-run` checks everything against the library and prints the plan.
+  `--write-calibrated` writes the merged set beside the target's parameters file, as
+  `<name>_calibrated_parameters.csv`, naming parameters `<vessel>/<variable>` and replacing rows
+  written in either form.
+- **A parameter calibrated by two steps** takes the later step's value, with a warning that
+  suggests `priors_from` for a Bayesian update instead.
+- **A step's `submodule`** is written `soma/i_M` when nested (`soma_i_M` is also read).
+- **Schema.** `libcuflynx/schemas/calibration_workflow.schema.json`.
+- **param_id.** `ParamID.set_joint_priors` / `CVS0DParamID.set_joint_priors` add log densities
+  over several parameters to the log prior. `run_param_id` passes `joint_priors` from its input
+  dict to both the calibration and the MCMC, and now returns
+  `{'output_dir', 'best_param_vals', 'param_id', 'mcmc'}` instead of None.
+- **Testing.** `libcuflynx.external_testing.workflow_library.build_workflow_library` writes a
+  small module library with two workflows, for tests here and in CUFLynx.
+- **Docs.** The params_for_id prior columns are now documented; the docs had said only uniform
+  priors existed.
+
 ### Changed — module instances are now called parameterisations
 
 A module version's named parameter sets live in `parameterisations/<name>/<name>_parameters.csv`
@@ -461,7 +513,6 @@ Two bugs fell out. `posterior_predictive` captioned a series panel with the item
 where it meant the trace label, and `print_observable_errors` named one of its six branches by
 identity where the other five used the label.
 
-
 ## 0.6.0 — 2026-08-31
 
 ### Removed — the flat-import shims (#428)
@@ -506,7 +557,6 @@ They are the parameter-identification and MCMC engines, and they run against myo
 casadi and trained emulators as readily as against OpenCOR — the name came from the only backend
 that existed when they were written. **The old names still work**: `OpencorParamID` and
 `OpencorMCMC` remain as aliases, so nothing importing them has to change.
-
 
 ## 0.5.0 — 2026-08-24
 
@@ -574,7 +624,6 @@ README, CONTRIBUTING, CLAUDE.md and the tutorial say so.
 The tests that check those docs agree now read `REMOVAL_VERSION` rather than restating it: the
 literal `"0.5.0"` in three test files would have passed happily while every document said
 something else.
-
 
 ### Added — a whole study in one call, shipped for readers outside this repo (#478)
 
