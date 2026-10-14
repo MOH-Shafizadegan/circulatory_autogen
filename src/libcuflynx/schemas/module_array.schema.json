@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/physiomelinks/circulatory_autogen/schemas/module_array.schema.json",
   "title": "libcuflynx module array (<prefix>_module_array.json)",
-  "description": "A list of module instance records. Each record uses PhLynx keys (name, module_type, module_subtype, inp_instances, out_instances) or libcuflynx keys (name, vessel_type, BC_type, inp_vessels, out_vessels), never both. Other keys are allowed. A record may name its parameterisation (\"parameterisation\", or the older name \"instance\"). A supermodule instance may add per_submodule_inputs / per_submodule_outputs. See libcuflynx/utilities/config_schemas.py.",
+  "description": "A list of module instance records. Each record uses PhLynx keys (name, module_type, module_subtype, inp_instances, out_instances) or libcuflynx keys (name, vessel_type, BC_type, inp_vessels, out_vessels), never both. A record may name its parameterisation (\"parameterisation\"; \"instance\" is refused). A supermodule instance may add per_submodule_inputs / per_submodule_outputs. Other keys are kept: a scalar one becomes a column of the module dataframe. A CSV module array (same columns, lists space-separated) is read as these records. Checked by libcuflynx/utilities/config_schemas.py (normalise_vessel_record), which also checks what JSON Schema cannot: names unique, connections naming existing instances.",
   "type": "array",
   "items": {
     "$ref": "#/$defs/record"
@@ -10,8 +10,8 @@
   "$defs": {
     "name": {
       "type": "string",
-      "pattern": "^\\S+$",
-      "description": "an instance name"
+      "pattern": "^\\s*\\S+\\s*$",
+      "description": "A name with no whitespace inside it (surrounding whitespace is stripped): names become CellML component and variable names."
     },
     "nameList": {
       "description": "instance names: a list, or one space-separated string (null: none)",
@@ -62,27 +62,32 @@
       ],
       "properties": {
         "name": {
-          "$ref": "#/$defs/name"
+          "$ref": "#/$defs/name",
+          "description": "Required. The instance name, unique in the array; a module's parameters and variables are named <variable>_<name>."
         },
         "module_type": {
           "$ref": "#/$defs/name",
-          "description": "the module type (libcuflynx vessel_type)"
+          "description": "Required. The module type: the vessel_type (PhLynx: module_type) of a module config entry."
         },
         "module_subtype": {
           "$ref": "#/$defs/name",
-          "description": "the module variant (libcuflynx BC_type)"
+          "description": "Required. The module version: the BC_type (PhLynx: module_subtype) of that entry."
         },
         "inp_instances": {
-          "$ref": "#/$defs/nameList"
+          "$ref": "#/$defs/nameList",
+          "description": "The instances feeding this one (connected to its entrance ports). Default: none."
         },
         "out_instances": {
-          "$ref": "#/$defs/nameList"
+          "$ref": "#/$defs/nameList",
+          "description": "The instances this one feeds (connected to its exit ports). Default: none."
         },
         "per_submodule_inputs": {
-          "$ref": "#/$defs/perSubmodule"
+          "$ref": "#/$defs/perSubmodule",
+          "description": "Supermodule instances only: {submodule: [host instance, ...]}, the host instances feeding each submodule. Each host must list this instance in its out list. Default: none."
         },
         "per_submodule_outputs": {
-          "$ref": "#/$defs/perSubmodule"
+          "$ref": "#/$defs/perSubmodule",
+          "description": "Supermodule instances only: {submodule: [host instance, ...]}, the host instances each submodule feeds. Each host must list this instance in its inp list. Default: none."
         },
         "parameterisation": {
           "type": "string",
@@ -141,25 +146,32 @@
       ],
       "properties": {
         "name": {
-          "$ref": "#/$defs/name"
+          "$ref": "#/$defs/name",
+          "description": "Required. The instance name, unique in the array; a module's parameters and variables are named <variable>_<name>."
         },
         "vessel_type": {
-          "$ref": "#/$defs/name"
+          "$ref": "#/$defs/name",
+          "description": "Required. The module type: the vessel_type (PhLynx: module_type) of a module config entry."
         },
         "BC_type": {
-          "$ref": "#/$defs/name"
+          "$ref": "#/$defs/name",
+          "description": "Required. The module version: the BC_type (PhLynx: module_subtype) of that entry."
         },
         "inp_vessels": {
-          "$ref": "#/$defs/nameList"
+          "$ref": "#/$defs/nameList",
+          "description": "The instances feeding this one (connected to its entrance ports). Default: none."
         },
         "out_vessels": {
-          "$ref": "#/$defs/nameList"
+          "$ref": "#/$defs/nameList",
+          "description": "The instances this one feeds (connected to its exit ports). Default: none."
         },
         "per_submodule_inputs": {
-          "$ref": "#/$defs/perSubmodule"
+          "$ref": "#/$defs/perSubmodule",
+          "description": "Supermodule instances only: {submodule: [host instance, ...]}, the host instances feeding each submodule. Each host must list this instance in its out list. Default: none."
         },
         "per_submodule_outputs": {
-          "$ref": "#/$defs/perSubmodule"
+          "$ref": "#/$defs/perSubmodule",
+          "description": "Supermodule instances only: {submodule: [host instance, ...]}, the host instances each submodule feeds. Each host must list this instance in its inp list. Default: none."
         },
         "parameterisation": {
           "type": "string",

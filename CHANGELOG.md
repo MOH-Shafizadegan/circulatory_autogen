@@ -24,6 +24,13 @@ next release; add to that section as you land a change.
 - **Port sizes.** A plain port pair with different numbers of variables is a `ValueError`; it
   used to raise an `IndexError` or silently shift later mappings.
 
+### Added — JSON Schemas for all four input files
+
+- **`params_for_id.schema.json`**, new: the JSON form of params_for_id (version 1) that a CSV is converted to on read. Its entry keys, priors and prior settings are tested against `PARAMS_FOR_ID_ENTRY_KEYS` and `PARAM_PRIOR_TYPES`.
+- **`obs_data.schema.json`** now describes the data items, prediction items and `protocol_info` (with `protocol_traces` and `protocol_shapes`), not just the top level: every key with its default, and the rules the parser enforces (unknown keys, required keys, constant vs series shapes, a ground truth per item).
+- **`module_config.schema.json`, `module_array.schema.json`**: every key described; `variables_and_units` rows checked as `[name, units, access, kind]`; `multiply_factor` only on a Multiply port (and as a numeric string); list-form `multi_port` entries `"sum"`/`"True"`; `only_one_port` and `delay_info` added; names may carry surrounding whitespace, as the reader strips it.
+- Tests check each schema against its reader: key sets, and inputs both refuse.
+
 ### Added — parameter names written `<vessel>/<variable>`
 
 - **The `/` form.** A parameters file may name a module's parameter `aortic_root/C` (or `heart/lv/E`, for a supermodule's expanded submodule; `global/R` or `R` for a global). A supermodule's parameterisation and `default_parameters` rows name a submodule's parameter `lv/E`, or `soma/i_M/rho_M` when nested.

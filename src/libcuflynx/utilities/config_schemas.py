@@ -100,8 +100,8 @@ are processed identically. ``python -m libcuflynx.utilities.config_schemas to-js
 converts CSV arrays to JSON.
 
 Machine-readable JSON Schemas ship as package data in ``libcuflynx/schemas/``
-(``module_array.schema.json``, ``module_config.schema.json``, and ``obs_data.schema.json``
-for the top level of an obs_data file). The loaders here check the
+(``module_array.schema.json``, ``module_config.schema.json``, ``obs_data.schema.json`` and
+``params_for_id.schema.json``). The loaders here check the
 same rules themselves, so no JSON Schema library is needed at run time.
 
 Normalisation happens where the files are loaded, so everything downstream only ever sees
