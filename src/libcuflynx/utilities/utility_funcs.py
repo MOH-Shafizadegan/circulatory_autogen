@@ -182,15 +182,33 @@ class UnitConverter:
             return self.expand_compound_unit(unit_str)
 
     def get_scale_factor(self, from_unit_str, to_unit_str):
+        """The factor ``f`` with ``value_in_to_unit = f * value_in_from_unit``.
+
+        Raises AffineUnitsError when the conversion also needs an offset (e.g. kelvin and
+        celsius), and ValueError when the units cannot be parsed or are incompatible.
+        """
+        affine = AffineUnitsError(
+            f"Converting {from_unit_str} to {to_unit_str} needs an offset as well as a scale "
+            f"factor; couplings between affine units (such as kelvin and celsius) are not "
+            f"supported. Use the same units on both sides.")
         try:
             from_unit = self.ureg(self.parse_unit_string(from_unit_str))
             to_unit = self.ureg(self.parse_unit_string(to_unit_str))
+            offset = self.ureg.Quantity(0, from_unit.units).to(to_unit.units).magnitude
             factor = (1 * from_unit).to(to_unit).magnitude
-            return factor
+        except pint.OffsetUnitCalculusError:
+            raise affine from None
         except pint.DimensionalityError as e:
             raise ValueError(f"Incompatible units: {e}")
         except Exception as e:
             raise ValueError(f"Failed to parse or convert units: {e}")
+        if offset != 0:
+            raise affine
+        return factor
+
+
+class AffineUnitsError(ValueError):
+    """Two units whose conversion needs an offset (e.g. kelvin and celsius)."""
 
 def change_parameter_values_and_save(cellml_file, parameter_names, parameter_values, output_file):
     """

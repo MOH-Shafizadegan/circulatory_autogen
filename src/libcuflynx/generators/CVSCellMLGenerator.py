@@ -35,9 +35,10 @@ except ImportError as e:
           'You will need to open generated models in OpenCOR to check for errors.')
     LIBCELLML_available = False
 
-from libcuflynx.utilities.utility_funcs import UnitConverter
-from libcuflynx.generators.multi_port import (MULTI_PORT_SUM, MULTI_PORT_MULTIPLY, is_multi_port,
-                                              is_multiply_port, list_multi_port, multiply_factor)
+from libcuflynx.utilities.utility_funcs import AffineUnitsError, UnitConverter
+from libcuflynx.generators.multi_port import (MULTI_PORT_SUM, MULTI_PORT_MULTIPLY, is_blank_variable,
+                                              is_multi_port, is_multiply_port, list_multi_port,
+                                              multiply_factor)
 
 
 class CVS0DCellMLGenerator(object):
@@ -87,8 +88,6 @@ class CVS0DCellMLGenerator(object):
         # this is a list of converter components that are used to convert units
         self.unit_converter_components = []
         self.unit_converter = UnitConverter()
-        # names of the unit converter components written so far, so each is unique in the model
-        self._unit_converter_names = set()
 
         # List-form multi_port "sum" entries and "Multiply" targets (see generators/multi_port.py),
         # filled while the module mappings are written:
@@ -311,7 +310,6 @@ class CVS0DCellMLGenerator(object):
 
     def __generate_CellML_file(self):
         self._reset_connections()
-        self._unit_converter_names = set()
         print("Generating CellML file {}.cellml".format(self.file_prefix))
         output_path = os.path.join(self.output_dir, f'{self.file_prefix}.cellml')
 
@@ -624,6 +622,11 @@ class CVS0DCellMLGenerator(object):
     def __write_module_mappings(self, wf, module_df):
         """This function maps between ports of the modules in a module dataframe."""
         self._multiport_sums = {}
+        # (module, variable) -> the ports it is summed through
+        self._sum_ports = {}
+        # one-to-one mapped variable pairs, and BCs computed by a sum, Multiply or junction
+        self._plain_links = []
+        self._bcs_supplied = set()
         # set connected to false for all entrance and general ports TODO this might be a better way to check connected for exit ports too
         entrance_general_ports_connected = {}
         for module_row_idx in range(len(module_df)):
@@ -660,6 +663,7 @@ class CVS0DCellMLGenerator(object):
 
         # a list-form multi_port "sum" variable with no neighbour through its port is zero
         self.__register_unconnected_multiport_sums(module_df)
+        self.__check_bc_only_groups()
 
         # check whether the BC variables have been set with a matched module, if so, remove them from 
         # parameters array and if not, set them to constant
@@ -854,7 +858,7 @@ class CVS0DCellMLGenerator(object):
                             # We map the ivc to a zero flow mapping
                             self.__write_mapping(wf, 'zero_flow_module', out_module + '_module', ['v_zero'], ['v_ivc'])
                             self.ivc_connection_done = 1
-                            self.BC_set[out_module]['v_ivc'] = True
+                            self.__set_bc_supplied(out_module, 'v_ivc')
                             # TODO the above isnt robust
 
                         for heart_inp_idx in range(3):
@@ -890,16 +894,20 @@ class CVS0DCellMLGenerator(object):
                         print(variables_1, variables_2)
                     else:
                         variables_2 = out_module_entrance_general_ports[entrance_port_idx]['variables']
+                        self.__check_same_variable_count(
+                            main_module, out_module, module_exit_general_ports[out_port_idx],
+                            variables_1, variables_2)
 
-                    # a list-form multi_port on either side of this port pair (see
-                    # generators/multi_port.py) decides the mapping per variable, and takes
+                    # a list-form multi_port or a Multiply port on either side of this port pair
+                    # (see generators/multi_port.py) decides the mapping per variable, and takes
                     # precedence over the legacy junction/terminal special cases below.
-                    uses_list_multi_port = entrance_port_idx != -2 and (
-                        list_multi_port(module_exit_general_ports[out_port_idx]) is not None or
-                        list_multi_port(out_module_entrance_general_ports[entrance_port_idx]) is not None or
-                        is_multiply_port(module_exit_general_ports[out_port_idx]))
+                    uses_list_multi_port = entrance_port_idx != -2 and self.__is_per_variable_pair(
+                        module_exit_general_ports[out_port_idx],
+                        out_module_entrance_general_ports[entrance_port_idx])
 
+                    plain_or_per_variable = False
                     if uses_list_multi_port:
+                        plain_or_per_variable = True
                         if module_row['module_format'] == 'cellml' and out_module_row['module_format'] == 'cellml':
                             self.__map_list_multi_port_pair(
                                 main_module, out_module,
@@ -938,15 +946,11 @@ class CVS0DCellMLGenerator(object):
                         pass
                     
                     else:
-                        main_module_module = main_module + '_module'
-                        out_module_module = out_module + '_module'
-
-                        if module_row['module_format'] == 'cellml' and out_module_row['module_format'] == 'cellml':
-                            key = (main_module_module, out_module_module)
-                            if key not in pending_mappings:
-                                pending_mappings[key] = ([], [])
-                            pending_mappings[key][0].extend(variables_1)
-                            pending_mappings[key][1].extend(variables_2)
+                        plain_or_per_variable = True
+                        self.__map_plain_pair(main_module, out_module, variables_1, variables_2,
+                                              pending_mappings,
+                                              module_row['module_format'] == 'cellml' and
+                                              out_module_row['module_format'] == 'cellml')
 
                     # only assign connected if the port doesnt have a multi_ports flag
                     if 'multi_port' in module_exit_general_ports[out_port_idx].keys():
@@ -1044,12 +1048,9 @@ class CVS0DCellMLGenerator(object):
                                 entrance_general_ports_connected[out_module][entrance_port_idx] = True
           
 
-                    if entrance_port_idx != -2: #XXX TODO Bea add comment here to explain
-                        for II in range(len(variables_1)):
-                            if variables_1[II] in self.BC_set[main_module].keys():
-                                self.BC_set[main_module][variables_1[II]] = True
-                            if variables_2[II] in self.BC_set[out_module].keys():
-                                self.BC_set[out_module][variables_2[II]] = True
+                    if entrance_port_idx != -2 and not plain_or_per_variable:
+                        # the junction/terminal components compute these BCs
+                        self.__set_bcs_supplied(main_module, variables_1, out_module, variables_2)
                 
                 else:
                     for this_type_port_idx in range(port_types[port_type_idx]["port_type_count"]):
@@ -1072,13 +1073,15 @@ class CVS0DCellMLGenerator(object):
 
                             variables_1 = module_exit_general_ports[out_port_idx]['variables']
                             variables_2 = out_module_entrance_general_ports[entrance_port_idx]['variables']
+                            self.__check_same_variable_count(
+                                main_module, out_module, module_exit_general_ports[out_port_idx],
+                                variables_1, variables_2)
 
-                            # a list-form multi_port on either side, or a Multiply port on this
-                            # (upstream) side, decides the mapping per variable
-                            # (see generators/multi_port.py)
-                            if (list_multi_port(module_exit_general_ports[out_port_idx]) is not None or
-                                    list_multi_port(out_module_entrance_general_ports[entrance_port_idx]) is not None or
-                                    is_multiply_port(module_exit_general_ports[out_port_idx])):
+                            # a list-form multi_port or a Multiply port on either side decides
+                            # the mapping per variable (see generators/multi_port.py)
+                            if self.__is_per_variable_pair(
+                                    module_exit_general_ports[out_port_idx],
+                                    out_module_entrance_general_ports[entrance_port_idx]):
                                 if module_row['module_format'] == 'cellml' and out_module_row['module_format'] == 'cellml':
                                     self.__map_list_multi_port_pair(
                                         main_module, out_module,
@@ -1092,30 +1095,19 @@ class CVS0DCellMLGenerator(object):
                                 # this connection is done through the terminal_venous_connection
                                 # TODO after this if loop I set that this connection is done. It is actually done later on
                                 # when doing the venous_terminal_connection. Fine for now.
-                                pass
+                                self.__set_bcs_supplied(main_module, variables_1, out_module, variables_2)
 
                             # Check if any port in out_module has multi_port='sum'
                             elif 'multi_port' in out_module_entrance_general_ports[entrance_port_idx].keys() and \
                                     out_module_entrance_general_ports[entrance_port_idx]['multi_port']=='sum':
                                 # the blood volume sum connections are done through the blood_volume_sum
-                                pass
+                                self.__set_bcs_supplied(main_module, variables_1, out_module, variables_2)
 
                             else:
-                                main_module_module = main_module + '_module'
-                                out_module_module = out_module + '_module'
-
-                                if module_row['module_format'] == 'cellml' and out_module_row['module_format'] == 'cellml':
-                                    key = (main_module_module, out_module_module)
-                                    if key not in pending_mappings:
-                                        pending_mappings[key] = ([], [])
-                                    pending_mappings[key][0].extend(variables_1)
-                                    pending_mappings[key][1].extend(variables_2)
-
-                            for II in range(len(variables_1)):
-                                if variables_1[II] in self.BC_set[main_module].keys():
-                                    self.BC_set[main_module][variables_1[II]] = True
-                                if variables_2[II] in self.BC_set[out_module].keys():
-                                    self.BC_set[out_module][variables_2[II]] = True
+                                self.__map_plain_pair(main_module, out_module, variables_1, variables_2,
+                                                      pending_mappings,
+                                                      module_row['module_format'] == 'cellml' and
+                                                      out_module_row['module_format'] == 'cellml')
 
                             # only assign connected if the port doesnt have a multi_ports flag
                             if 'multi_port' in module_exit_general_ports[out_port_idx].keys():
@@ -1152,46 +1144,128 @@ class CVS0DCellMLGenerator(object):
 
         return entrance_general_ports_connected
 
-    def __map_list_multi_port_pair(self, main_module, out_module, main_port, out_port,
-                                   variables_1, variables_2, pending_mappings):
-        """Map one port pair where either side has a list-form multi_port, or ``main_port`` is
-        a Multiply port.
+    @staticmethod
+    def __is_per_variable_pair(main_port, out_port):
+        """Whether a port pair is mapped per variable: a list-form multi_port or a Multiply
+        port on either side."""
+        return any(list_multi_port(port) is not None or is_multiply_port(port)
+                   for port in (main_port, out_port))
 
-        ``main_port`` is the exit/general port of ``main_module`` (variables_1) and
-        ``out_port`` the entrance/general port of ``out_module`` (variables_2); variables pair
-        by position, as in a plain one-to-one mapping. A "sum" entry registers the neighbour's
-        variable as a term of the generated multiport sum component instead of mapping it
-        directly. A Multiply ``main_port`` (upstream side) sets the neighbour's variable to
-        multiply_factor times ``main_module``'s, or, if the neighbour's variable is a "sum",
-        adds that scaled value as one of its terms. A Multiply ``out_port`` (downstream side)
-        is mapped like "True", as in PhLynx. Every other variable is mapped directly (so a
-        "True" variable ends up mapped to every neighbour).
-        """
+    @staticmethod
+    def __check_same_variable_count(main_module, out_module, main_port, variables_1, variables_2):
         if len(variables_1) != len(variables_2):
             raise ValueError(
                 f'Cannot connect port "{main_port.get("port_type")}" of "{main_module}" '
-                f'{list(variables_1)} to "{out_module}" {list(variables_2)}: a port with a '
-                f'list-form multi_port needs the same number of variables on both sides.')
-        if is_multiply_port(main_port):
-            entries_1 = [MULTI_PORT_MULTIPLY] * len(variables_1)
-        else:
-            entries_1 = list_multi_port(main_port) or [None] * len(variables_1)
-        entries_2 = list_multi_port(out_port) or [None] * len(variables_2)
+                f'{list(variables_1)} to "{out_module}" {list(variables_2)}: a port pair '
+                f'needs the same number of variables on both sides.')
+
+    def __set_bc_supplied(self, module, variable):
+        """Mark a boundary_condition variable as computed elsewhere, so it is removed."""
+        if variable in self.BC_set.get(module, {}):
+            self.BC_set[module][variable] = True
+            self._bcs_supplied.add((module, variable))
+
+    def __set_bcs_supplied(self, main_module, variables_1, out_module, variables_2):
+        for var_1, var_2 in zip(variables_1, variables_2):
+            self.__set_bc_supplied(main_module, var_1)
+            self.__set_bc_supplied(out_module, var_2)
+
+    def __map_plain_pair(self, main_module, out_module, variables_1, variables_2,
+                         pending_mappings, write=True):
+        """Map variables_1 of main_module one-to-one to variables_2 of out_module.
+
+        A boundary_condition variable mapped to a non-blank partner is set by that partner,
+        so it is removed; ``__check_bc_only_groups`` rejects BCs mapped only to each other.
+        """
+        for var_1, var_2 in zip(variables_1, variables_2):
+            if is_blank_variable(var_1) or is_blank_variable(var_2):
+                continue
+            for module, variable in ((main_module, var_1), (out_module, var_2)):
+                if variable in self.BC_set.get(module, {}):
+                    self.BC_set[module][variable] = True
+            self._plain_links.append(((main_module, var_1), (out_module, var_2)))
+        if write:
+            key = (main_module + '_module', out_module + '_module')
+            if key not in pending_mappings:
+                pending_mappings[key] = ([], [])
+            pending_mappings[key][0].extend(variables_1)
+            pending_mappings[key][1].extend(variables_2)
+
+    def __check_bc_only_groups(self):
+        """Raise ValueError for boundary_condition variables mapped only to each other: once
+        they are removed nothing computes them."""
+        parent = {}
+
+        def find(node):
+            while parent.setdefault(node, node) != node:
+                node = parent[node]
+            return node
+
+        supplied = set(self._bcs_supplied)
+        for link in self._plain_links:
+            bcs = [end for end in link if end[1] in self.BC_set.get(end[0], {})]
+            for end in bcs:
+                find(end)
+            if len(bcs) == 2:
+                parent[find(bcs[0])] = find(bcs[1])
+            elif len(bcs) == 1:
+                # mapped to a variable its neighbour computes
+                supplied.add(bcs[0])
+        groups = {}
+        for node in parent:
+            groups.setdefault(find(node), []).append(node)
+        for group in groups.values():
+            if not any(node in supplied for node in group):
+                names = ', '.join(f'"{variable}" of "{module}"' for module, variable in sorted(group))
+                raise ValueError(
+                    f'The boundary_condition variables {names} are connected only to each other, '
+                    f'so nothing computes them. Connect one of them to a module that computes it, '
+                    f'or make one a constant.')
+
+    def __map_list_multi_port_pair(self, main_module, out_module, main_port, out_port,
+                                   variables_1, variables_2, pending_mappings):
+        """Map one port pair where either side has a list-form multi_port or is a Multiply port.
+
+        ``main_port`` is the exit/general port of ``main_module`` (variables_1) and
+        ``out_port`` the entrance/general port of ``out_module`` (variables_2); variables pair
+        by position, as in a plain one-to-one mapping, and a pair with a blank variable is
+        skipped. A "sum" entry registers the neighbour's variable as a term of the generated
+        multiport sum component instead of mapping it directly. A Multiply variable, on either
+        end, reaches its neighbour times its port's multiply_factor: the neighbour's variable is
+        set to that, or, if the neighbour's variable is a "sum", that is one of its terms. Every
+        other variable is mapped directly (so a "True" variable ends up mapped to every
+        neighbour).
+        """
+        if is_multiply_port(main_port) and is_multiply_port(out_port):
+            raise ValueError(
+                f'Cannot connect "{main_module}" {list(variables_1)} to "{out_module}" '
+                f'{list(variables_2)}: both ports are "Multiply"; only one end of a connection '
+                f'can scale its variable.')
+        entries = []
+        for port, variables in ((main_port, variables_1), (out_port, variables_2)):
+            if is_multiply_port(port):
+                entries.append([MULTI_PORT_MULTIPLY] * len(variables))
+            else:
+                entries.append(list_multi_port(port) or [None] * len(variables))
 
         direct_1, direct_2 = [], []
-        for var_1, var_2, entry_1, entry_2 in zip(variables_1, variables_2, entries_1, entries_2):
+        for var_1, var_2, entry_1, entry_2 in zip(variables_1, variables_2, *entries):
+            if is_blank_variable(var_1) or is_blank_variable(var_2):
+                continue
             if entry_1 == MULTI_PORT_SUM and entry_2 == MULTI_PORT_SUM:
                 raise ValueError(
                     f'"{main_module}" variable "{var_1}" and "{out_module}" variable "{var_2}" '
                     f'are both marked "sum" in their multi_port lists; only one side of a '
                     f'connection can sum over its neighbours.')
-            if entry_1 == MULTI_PORT_MULTIPLY:
-                factor = multiply_factor(main_port)
-                if entry_2 == MULTI_PORT_SUM:
-                    self.__add_multiport_sum_term(out_module, var_2, main_module, var_1, factor=factor)
-                else:
-                    self.__add_multiport_sum_term(out_module, var_2, main_module, var_1, factor=factor,
-                                                  kind=MULTI_PORT_MULTIPLY)
+            ends = [(main_module, var_1, entry_1, main_port), (out_module, var_2, entry_2, out_port)]
+            for module, variable, entry, port in ends:
+                if entry == MULTI_PORT_SUM:
+                    self.__record_sum_port(module, variable, port)
+            if MULTI_PORT_MULTIPLY in (entry_1, entry_2):
+                scaled, other = ends if entry_1 == MULTI_PORT_MULTIPLY else ends[::-1]
+                kind = MULTI_PORT_SUM if other[2] == MULTI_PORT_SUM else MULTI_PORT_MULTIPLY
+                self.__add_multiport_sum_term(other[0], other[1], scaled[0], scaled[1],
+                                              factor=multiply_factor(scaled[3]), kind=kind)
             elif entry_1 == MULTI_PORT_SUM:
                 self.__add_multiport_sum_term(main_module, var_1, out_module, var_2)
             elif entry_2 == MULTI_PORT_SUM:
@@ -1201,11 +1275,18 @@ class CVS0DCellMLGenerator(object):
                 direct_2.append(var_2)
 
         if direct_1:
-            key = (main_module + '_module', out_module + '_module')
-            if key not in pending_mappings:
-                pending_mappings[key] = ([], [])
-            pending_mappings[key][0].extend(direct_1)
-            pending_mappings[key][1].extend(direct_2)
+            self.__map_plain_pair(main_module, out_module, direct_1, direct_2, pending_mappings)
+
+    def __record_sum_port(self, module, variable, port):
+        """Raise ValueError if ``variable`` of ``module`` is summed through a second port."""
+        ports = self._sum_ports.setdefault((module, variable), [])
+        if not any(other is port for other in ports):
+            ports.append(port)
+        if len(ports) > 1:
+            names = ' and '.join(f'"{other.get("port_type")}"' for other in ports)
+            raise ValueError(
+                f'"{module}" sums "{variable}" through ports {names}; a variable can be summed '
+                f'through one port only.')
 
     def __register_multiport_sum(self, module, variable, kind=MULTI_PORT_SUM):
         """The registry entry of a "sum" variable (or a Multiply target), created on first use.
@@ -1220,6 +1301,7 @@ class CVS0DCellMLGenerator(object):
                 raise ValueError(f'Cannot find the units of multi_port "{kind}" variable "{variable}" '
                                  f'of "{module}" in its variables_and_units.')
             self._multiport_sums[key] = {'kind': kind, 'units': units, 'terms': []}
+            self.__set_bc_supplied(module, variable)
         elif self._multiport_sums[key]['kind'] != kind:
             raise ValueError(
                 f'"{module}" variable "{variable}" is both a multi_port "sum" and the target of a '
@@ -1231,7 +1313,7 @@ class CVS0DCellMLGenerator(object):
         """Add ``neighbour_variable`` of ``neighbour`` (times ``factor``, if given) as a term of
         ``module``'s ``variable``: a "sum" term, or, for ``kind=MULTI_PORT_MULTIPLY``, its only term."""
         entry = self.__register_multiport_sum(module, variable, kind=kind)
-        if neighbour_variable in ['', None, 'None', 'none']:
+        if is_blank_variable(neighbour_variable):
             return
         if any(term[:2] == (neighbour, neighbour_variable) for term in entry['terms']):
             return
@@ -1275,8 +1357,6 @@ class CVS0DCellMLGenerator(object):
                         print(f'WARNING: "{module}" variable "{variable}" is a multi_port "sum" over '
                               f'port "{port["port_type"]}", but no module is connected through that '
                               f'port. It is set to 0.')
-                    if variable in self.BC_set.get(module, {}):
-                        self.BC_set[module][variable] = True
 
     def __write_multiport_sum_comps(self, wf):
         """Write one algebraic component per multi_port "sum" variable and "Multiply" target.
@@ -1288,7 +1368,7 @@ class CVS0DCellMLGenerator(object):
         through a "Multiply" port is also multiplied by that port's multiply_factor.
 
         ``multiport_multiply_<module>_<variable>`` computes the module's variable as
-        multiply_factor times the variable of the upstream module whose "Multiply" port it is
+        multiply_factor times the variable of the neighbour whose "Multiply" port it is
         connected to.
         """
         if not self._multiport_sums:
@@ -2300,128 +2380,24 @@ class CVS0DCellMLGenerator(object):
         self._reset_connections()
 
     def __write_mapping(self, wf, inp_name, out_name, inp_vars_list, out_vars_list, check_unit=False):    # add kwargs for units given out_module_row
-        # print(input(f"mapping {inp_name} to {out_name}"))
-
-        # if check_unit:
-        #     for inp_var, out_var in zip(inp_vars_list, out_vars_list):
-        #         if inp_var and out_var:
-        #             inp_unit = self.get_variable_unit_from_component(inp_name, inp_var)
-        #             out_unit = self.get_variable_unit_from_component(out_name, out_var)
-        #             if inp_unit != out_unit:
-        #                 print(f"Units do not match for {inp_name} and {out_name} for variables {inp_var} and {out_var}, ")
-        #                 try:
-        #                     scale = self.unit_converter.get_scale_factor(inp_unit, out_unit)
-        #                     converter_name = f"unit_converter_{inp_var}_{out_var}"
-        #                     converter_component = self.create_unit_converter_component(
-        #                         converter_name, inp_var, out_var, scale, inp_unit, out_unit
-        #                     )
-        #                     self.add_converter_component(converter_component)
-        #                     # Connect input module to converter
-        #                     wf.writelines([
-        #                         f'<connection>\n'
-        #                         f'   <map_components component_1="{inp_name}" component_2="{converter_name}"/>\n'
-        #                         f'   <map_variables variable_1="{inp_var}" variable_2="{inp_var}"/>\n'
-        #                         f'</connection>\n'
-        #                     ])
-        #                     # Connect converter to output module
-        #                     wf.writelines([
-        #                         f'<connection>\n'
-        #                         f'   <map_components component_1="{converter_name}" component_2="{out_name}"/>\n'
-        #                         f'   <map_variables variable_1="{out_var}" variable_2="{out_var}"/>\n'
-        #                         f'</connection>\n'
-        #                     ])
-        #                 except Exception as e:
-        #                     print(f"Could not convert units for {inp_var} and {out_var}: {e}")
-        #             else:
-        #                 wf.writelines([
-        #                     '<connection>\n',
-        #                     f'   <map_components component_1="{inp_name}" component_2="{out_name}"/>\n',
-        #                     f'   <map_variables variable_1="{inp_var}" variable_2="{out_var}"/>\n',
-        #                     '</connection>\n'
-        #                 ])
-
-        if check_unit:  
-            # Group variables by unit conversion requirements  
-            direct_mappings = []  
-            converter_mappings = {}  
-            
-            for inp_var, out_var in zip(inp_vars_list, out_vars_list):  
-                if inp_var and out_var:  
-                    inp_unit = self.get_variable_unit_from_component(inp_name, inp_var)  
-                    out_unit = self.get_variable_unit_from_component(out_name, out_var)  
-                    
-                    if inp_unit != out_unit:  
-                        try:  
-                            scale = self.unit_converter.get_scale_factor(inp_unit, out_unit)  
-                            # one converter per variable pair: the converter component
-                            # declares a single input and a single output variable
-                            converter_key = (inp_var, out_var)
-                            if converter_key not in converter_mappings:  
-                                converter_name = self._unit_converter_name(
-                                    inp_name, inp_var, out_name, out_var)
-                                converter_mappings[converter_key] = {  
-                                    'inp_vars': [], 'out_vars': [],   
-                                    'converter_name': converter_name,  
-                                    'inp_unit': inp_unit,  
-                                    'out_unit': out_unit,  
-                                    'scale': scale  
-                                }  
-                            converter_mappings[converter_key]['inp_vars'].append(inp_var)  
-                            converter_mappings[converter_key]['out_vars'].append(out_var)  
-                        except Exception as e:  
-                            print(f"Could not convert units for {inp_var} and {out_var}: {e}")  
-                            direct_mappings.append((inp_var, out_var))  
-                    else:  
-                        direct_mappings.append((inp_var, out_var))  
-            
-            # Write converter components first  
-            for converter_info in converter_mappings.values():  
-                self.__write_unit_converter_component(wf, converter_info)  
-            
-            # Write direct mappings (single connection)  
-            if direct_mappings:
-                self._add_connection(inp_name, out_name, direct_mappings)
-            
-            # Write converter mappings (one connection per converter)  
-            for converter_info in converter_mappings.values():  
-                converter_name = converter_info['converter_name']  
-                
-                # Input to converter connection  
-                self._add_connection(inp_name, converter_name,
-                                     [(v, v) for v in converter_info['inp_vars']])
-                
-                # Converter to output connection  
-                self._add_connection(converter_name, out_name,
-                                     [(v, v) for v in converter_info['out_vars']])
-
-        else:
-            self._add_connection(inp_name, out_name,
-                                 list(zip(inp_vars_list, out_vars_list)))
-        
-
-    def _unit_converter_name(self, inp_name, inp_var, out_name, out_var):
-        """A unique, valid CellML component name for the converter from ``inp_name.inp_var``
-        to ``out_name.out_var``.
-
-        The name is built from both ends of the connection, so a module variable that fans out
-        (e.g. through a multi_port "True" port) to several modules that each need the same unit
-        conversion gets one converter per connection rather than several components with the
-        same name, which libCellML and Myokit reject.
-        """
-        def _strip(component):
-            return component[:-len('_module')] if component.endswith('_module') else component
-
-        name = (f"unit_converter_{_strip(inp_name)}_{inp_var}"
-                f"_to_{_strip(out_name)}_{out_var}")
-        # a CellML 1.1 identifier: letters, digits and underscores, not starting with a digit
-        name = re.sub(r'[^A-Za-z0-9_]', '_', name)
-        unique_name = name
-        suffix = 2
-        while unique_name in self._unit_converter_names:
-            unique_name = f"{name}_{suffix}"
-            suffix += 1
-        self._unit_converter_names.add(unique_name)
-        return unique_name
+        if check_unit:
+            # Variables in different but compatible units are mapped directly: CellML lets
+            # libCellML (and Myokit) scale them in whichever direction the value flows.
+            for inp_var, out_var in zip(inp_vars_list, out_vars_list):
+                if not (inp_var and out_var):
+                    continue
+                inp_unit = self.get_variable_unit_from_component(inp_name, inp_var)
+                out_unit = self.get_variable_unit_from_component(out_name, out_var)
+                if inp_unit == out_unit:
+                    continue
+                try:
+                    self.unit_converter.get_scale_factor(inp_unit, out_unit)
+                except AffineUnitsError as e:
+                    raise ValueError(f'Cannot map "{inp_var}" of "{inp_name}" to "{out_var}" of '
+                                     f'"{out_name}": {e}') from e
+                except ValueError as e:
+                    print(f"Could not convert units for {inp_var} and {out_var}: {e}")
+        self._add_connection(inp_name, out_name, list(zip(inp_vars_list, out_vars_list)))
 
     def __write_variable_declarations(self, wf, variables, units, in_outs):
         for variable, unit, in_out in zip(variables, units, in_outs):
@@ -2567,32 +2543,3 @@ class CVS0DCellMLGenerator(object):
                     return arr["units"][i]
         # Not found
         return "not found"
-    
-    def __write_unit_converter_component(self, wf, converter_info):  
-        """Write a unit converter component to the CellML file"""  
-        converter_name = converter_info['converter_name']  
-        inp_unit = converter_info['inp_unit']  
-        out_unit = converter_info['out_unit']  
-        scale = converter_info['scale']  
-        
-        wf.write(f'<component name="{converter_name}">\n')  
-        
-        # Input variable  
-        wf.write(f'    <variable name="{converter_info["inp_vars"][0]}" public_interface="in" units="{inp_unit}"/>\n')  
-        
-        # Output variable  
-        wf.write(f'    <variable name="{converter_info["out_vars"][0]}" public_interface="out" units="{out_unit}"/>\n')  
-        
-        # Math for conversion  
-        wf.write('    <math xmlns="http://www.w3.org/1998/Math/MathML">\n')  
-        wf.write('        <apply>\n')  
-        wf.write('            <eq/>\n')  
-        wf.write(f'            <ci>{converter_info["out_vars"][0]}</ci>\n')  
-        wf.write('            <apply>\n')  
-        wf.write('                <times/>\n')  
-        wf.write(f'                <ci>{converter_info["inp_vars"][0]}</ci>\n')  
-        wf.write(f'                <cn cellml:units="dimensionless">{scale}</cn>\n')  
-        wf.write('            </apply>\n')  
-        wf.write('        </apply>\n')  
-        wf.write('    </math>\n')  
-        wf.write('</component>\n')
