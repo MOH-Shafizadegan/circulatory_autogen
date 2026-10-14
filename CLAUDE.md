@@ -181,6 +181,17 @@ Add/extend tests in `tests/` for **every feature and bugfix**; a bugfix should i
 - Fixtures in `tests/conftest.py`: `base_user_inputs`, `resources_dir`, `temp_output_dir`, `temp_generated_models_dir`, `mpi_comm`.
 - Reuse existing CellML models / obs_data.json patterns from `resources/`; put new fixtures under `tests/test_inputs/` when needed.
 
+## PR review guides
+
+When asked for a review page for a PR, publish an HTML artifact with:
+
+- **What it does**, in the PR's main parts, from the current diff rather than the PR description; say where the description is out of date.
+- **Multiple-choice questions**: four options, one correct; picking one marks it right or wrong at once and shows the reason with a `file:line` reference, with a running score and a reset.
+- **No give-aways**: options of similar length (the correct one is not the longest or shortest more than chance would make it), correct answers spread evenly over A-D, and wrong options that are plausible misreadings of the code.
+- **Before you merge**: merge-order holds, conflicts with other open PRs, stale descriptions, and what a local test run needs.
+
+Check every answer against the code at the PR's head before publishing.
+
 ## Docs
 
 - Tutorial (authoritative how-to): https://physiomelinks.github.io/circulatory_autogen/ — source under `tutorial/docs/` (`getting-started`, `design-model`, `parameter-identification`, `sensitivity-analysis`, `identifiability-analysis`, `other-features`, `running-on-hpc`).
