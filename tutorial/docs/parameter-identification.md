@@ -52,6 +52,18 @@ that minimises the cost does not see them. A calibration workflow can also give 
 over several parameters at once, from an earlier step's posterior (see
 [Calibration workflows](#calibration-workflows)).
 
+### JSON form and schemas
+
+`params_for_id` may also be written as JSON (`[file_prefix]_params_for_id.json`); a CSV is
+converted to that form when it is read (`ObsAndParamDataParser.params_for_id_csv_to_json`), each
+row becoming one entry of `"params"` with `vessel_name "a b"` and `param_name "C"` as
+`"targets": ["a/C", "b/C"]` and the `prior_*` columns under `"prior_params"`. The JSON form also
+takes a `"defaults"` block and modifier entries (`"modifies"`, `"modifier"`, `"inputs"`). Every
+input file has a JSON Schema shipped in `libcuflynx/schemas/` (`params_for_id.schema.json`,
+`obs_data.schema.json`, `module_config.schema.json`, `module_array.schema.json`; load one with
+`libcuflynx.schemas.load_schema`), describing each key and its default, for editors and other
+tools. libcuflynx checks the same rules itself when it reads the files.
+
 ## Creating param id observables file
 
 This file defines the simulation protocol (protocol_info), and ground truth observables that will be used in the cost function for the parameter id optimisation algorithm. It also defines the measurement standard deviation, and weighting for each observable.
