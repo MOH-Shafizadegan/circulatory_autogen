@@ -110,17 +110,36 @@ def _count(n, word):
     return f'{n} {word}' + ('' if n == 1 else 's')
 
 
+def _model_name(model):
+    if 'module_array' in model:
+        from libcuflynx.calibration_workflow.spec import array_prefix
+        return array_prefix(model['module_array'])
+    return model['module_type']
+
+
+def _model_detail(model):
+    if 'module_array' in model:
+        return 'module array'
+    return r'parameterisation \texttt{' + escape(model['parameterisation']) + '}'
+
+
+def _model_line(model):
+    if 'module_array' in model:
+        return r'model \texttt{' + escape(_model_name(model)) + '}'
+    return (r'\texttt{' + escape(model['module_type']) + r'}, parameterisation \texttt{'
+            + escape(model['parameterisation']) + '}')
+
+
 def workflow_graph(steps):
-    '''Nodes and edges for a workflow. ``steps`` are dicts ``{'id', 'target',
-    'submodule_path', 'n_parameters', 'n_data_items', 'settings', 'depends_on',
-    'fixed_from', 'priors_from' (step ids), 'store_distribution'}`` plus ``target`` (the
-    workflow's target dict) and ``n_merged`` in a final dict with ``'id': None``.'''
+    '''Nodes and edges for a workflow. ``steps`` are dicts ``{'id', 'model', 'n_parameters',
+    'n_data_items', 'settings', 'depends_on', 'fixed_from', 'priors_from' (step ids),
+    'store_distribution'}`` plus ``model`` (the workflow's target) and ``n_merged`` in a final
+    dict with ``'id': None``. A model is a library module ``{module_type, version,
+    parameterisation}`` or ``{module_array}``.'''
     *step_list, target = steps
     nodes, edges = [], []
     for s in step_list:
-        t = s['target']
-        lines = [r'\texttt{' + escape(t['module_type']) + '}, parameterisation \\texttt{'
-                 + escape(t['parameterisation']) + '}',
+        lines = [_model_line(s['model']),
                  f'{_count(s["n_parameters"], "parameter")}, '
                  f'{_count(s["n_data_items"], "observable")}',
                  escape(_method_label(s['settings']))]
@@ -137,9 +156,9 @@ def workflow_graph(steps):
             edges.append({'from': dep, 'to': s['id'], 'label': ' + '.join(kinds),
                           'style': 'prior' if 'prior' in kinds else
                           ('fixed' if kinds else 'order')})
-    t = target['target']
-    nodes.append({'id': '__target__', 'title': 'Merged: ' + escape(t['module_type']),
-                  'lines': [r'parameterisation \texttt{' + escape(t['parameterisation']) + '}',
+    t = target['model']
+    nodes.append({'id': '__target__', 'title': 'Merged: ' + escape(_model_name(t)),
+                  'lines': [_model_detail(t),
                             f'{_count(target["n_merged"], "calibrated value")}'],
                   'kind': 'target'})
     referenced = {d for s in step_list for d in s['depends_on']}

@@ -2,15 +2,21 @@
 Reading and checking a ``calibration_workflow.json`` (schema:
 ``libcuflynx/schemas/calibration_workflow.schema.json``).
 
-A workflow is an ordered set of calibrations of module *parameterisations* of a module library,
-each against that parameterisation's own ``<parameterisation>_obs_data.json`` and
-``<parameterisation>_params_for_id.csv``, whose results are merged into the parameters of one
-supermodule parameterisation, the workflow's ``target``. A step may take the calibrated values
-of earlier steps as fixed parameter values (``fixed_from``) or, from steps that stored their
-posterior (``store_distribution``), as priors (``priors_from``).
+A workflow is an ordered set of calibrations whose results are merged into one model, the
+workflow's ``target``. Each step names the three inputs of an ordinary param_id run: a
+``model``, an ``obs_data`` file and a ``params_for_id`` file. A model is either
 
-Only the file is checked here. Whether its parameterisations exist, and where a step's module
-sits in the target, needs the module library: see ``resolve.py``.
+* a module array of CA (``"resources/aorta_module_array.csv"``, or
+  ``{"module_array": ..., "parameters": ...}`` when its parameters file is not
+  ``<prefix>_parameters.csv`` beside it), or
+* a module of a module library, ``{"module_type", "version", "parameterisation"}``.
+
+Paths are relative to the workflow file. A step may take the calibrated values of earlier steps
+as fixed parameter values (``fixed_from``) or, from steps that stored their posterior
+(``store_distribution``), as priors (``priors_from``).
+
+Only the file is checked here. Whether its files and modules exist, and where a step's model sits
+in the target, is checked in ``resolve.py``.
 '''
 
 import copy
@@ -18,9 +24,7 @@ import json
 import os
 from dataclasses import dataclass, field
 
-from libcuflynx.utilities.config_schemas import load_module_config
-from libcuflynx.utilities.parameterisations import (INSTANCES_DIR, PARAMETERISATIONS_DIR,
-                                                    check_parameterisation_name,
+from libcuflynx.utilities.parameterisations import (check_parameterisation_name,
                                                     reject_instance_key)
 
 SCHEMA_VERSION = 1
@@ -41,9 +45,14 @@ DEFAULT_PRIOR_KIND = 'mvnormal'
 
 _TOP_KEYS = {'schema_version', 'workflow_name', 'description', 'target', 'module_library_dirs',
              'settings', 'steps', 'comment'}
-_STEP_KEYS = {'id', 'target', 'submodule', 'fixed_from', 'priors_from',
-              'store_distribution', 'settings', 'description', 'comment'}
+_STEP_KEYS = {'id', 'model', 'obs_data', 'params_for_id', 'submodule', 'vessel', 'vessel_map',
+              'fixed_from', 'priors_from', 'store_distribution', 'settings', 'description',
+              'comment'}
 _TARGET_KEYS = {'module_type', 'version', 'parameterisation'}
+_ARRAY_KEYS = {'module_array', 'parameters'}
+# a module array file's name is <prefix><suffix>
+ARRAY_SUFFIXES = ('_module_array.csv', '_module_array.json', '_vessel_array.csv',
+                  '_vessel_array.json')
 _PRIOR_KEYS = {'step', 'kind', 'inflate', 'parameters'}
 
 
@@ -53,9 +62,12 @@ class WorkflowError(ValueError):
 
 @dataclass(frozen=True)
 class Target:
+    '''A model that is a module of a module library: one parameterisation of it.'''
     module_type: str
     version: str
     parameterisation: str
+
+    kind = 'library'
 
     def label(self):
         return f'{self.module_type}/{self.version}/{self.parameterisation}'
@@ -63,6 +75,37 @@ class Target:
     def as_dict(self):
         return {'module_type': self.module_type, 'version': self.version,
                 'parameterisation': self.parameterisation}
+
+
+LibraryModule = Target
+
+
+@dataclass(frozen=True)
+class ModuleArray:
+    '''A model that is a module array of CA, with its parameters file.'''
+    module_array: str
+    parameters: str
+
+    kind = 'array'
+
+    @property
+    def prefix(self):
+        return array_prefix(self.module_array)
+
+    def label(self):
+        return self.prefix
+
+    def as_dict(self):
+        return {'module_array': self.module_array, 'parameters': self.parameters}
+
+
+def array_prefix(path):
+    '''The file prefix of a module array file (``aorta`` for ``aorta_module_array.csv``).'''
+    name = os.path.basename(path)
+    for suffix in ARRAY_SUFFIXES:
+        if name.endswith(suffix):
+            return name[:-len(suffix)]
+    return os.path.splitext(name)[0]
 
 
 @dataclass(frozen=True)
@@ -82,8 +125,12 @@ class PriorSource:
 @dataclass
 class Step:
     id: str
-    target: Target
-    submodule: str = None
+    model: object                  # Target (a library module) or ModuleArray
+    obs_data: str
+    params_for_id: str
+    submodule: str = None          # where a library module sits in a supermodule target
+    vessel: str = None             # where a library module sits in a module-array target
+    vessel_map: dict = field(default_factory=dict)   # module-array step: its vessel -> target's
     depends_on: list = field(default_factory=list)   # fixed_from and priors_from steps
     fixed_from: list = field(default_factory=list)
     priors_from: list = field(default_factory=list)
@@ -95,7 +142,7 @@ class Step:
 @dataclass
 class Workflow:
     name: str
-    target: Target
+    target: object                 # Target or ModuleArray
     steps: list
     settings: dict = field(default_factory=dict)
     module_library_dirs: list = field(default_factory=list)
@@ -180,22 +227,19 @@ def parse_workflow(raw, path=None, module_library_dirs=None):
         if extra not in library_dirs:
             library_dirs.append(extra)
 
-    if 'target' in raw:
-        target = _target(raw['target'], f'{where}: "target"')
-    else:
-        target = target_from_location(path)
-        if target is None:
-            raise WorkflowError(
-                f'{where}: no "target". Name the supermodule parameterisation whose parameters '
-                f'the workflow calibrates, or keep the file in that parameterisation\'s directory '
-                f'(<module_type>/versions/<version>/{PARAMETERISATIONS_DIR}/<parameterisation>/).')
+    if 'target' not in raw:
+        raise WorkflowError(
+            f'{where}: no "target". Name the model the results are merged into: a module array '
+            f'("resources/<prefix>_module_array.csv") or a library module '
+            f'({{"module_type", "version", "parameterisation"}}).')
+    target = _model(raw['target'], f'{where}: "target"', base_dir)
 
     settings = _settings(raw.get('settings', {}), f'{where}: "settings"')
 
     raw_steps = raw.get('steps')
     if not isinstance(raw_steps, list) or not raw_steps:
         raise WorkflowError(f'{where}: "steps" must be a non-empty list.')
-    steps = [_step(s, i, where) for i, s in enumerate(raw_steps)]
+    steps = [_step(s, i, where, base_dir) for i, s in enumerate(raw_steps)]
 
     workflow = Workflow(name=name.strip(), target=target, steps=steps, settings=settings,
                         module_library_dirs=library_dirs,
@@ -204,26 +248,28 @@ def parse_workflow(raw, path=None, module_library_dirs=None):
     return workflow
 
 
-def target_from_location(path):
-    '''The parameterisation whose directory holds ``path``:
-    ``.../<type>/versions/<version>/parameterisations/<name>/calibration_workflow.json``
-    (or an older library's ``instances/``), with
-    the module type and version read from the version's ``*_modules_config.json``.'''
-    if not path:
-        return None
-    parameterisation_dir = os.path.dirname(os.path.abspath(path))
-    parent = os.path.dirname(parameterisation_dir)
-    if os.path.basename(parent) not in (PARAMETERISATIONS_DIR, INSTANCES_DIR):
-        return None
-    version_dir = os.path.dirname(parent)
-    configs = sorted(f for f in os.listdir(version_dir) if f.endswith('_modules_config.json'))
-    for config in configs:
-        entries = load_module_config(os.path.join(version_dir, config), include_supermodules=True)
-        if len(entries) == 1:
-            entry = entries[0]
-            return Target(entry['vessel_type'], entry['BC_type'],
-                          os.path.basename(parameterisation_dir))
-    return None
+def _path(value, where, base_dir):
+    if not isinstance(value, str) or not value.strip():
+        raise WorkflowError(f'{where} must be a path (relative to the workflow file).')
+    value = os.path.expanduser(value.strip())
+    return value if os.path.isabs(value) else os.path.normpath(os.path.join(base_dir, value))
+
+
+def _model(value, where, base_dir):
+    '''A ``model`` (or the workflow ``target``): a module array path, ``{"module_array",
+    "parameters"}``, or a library module ``{"module_type", "version", "parameterisation"}``.'''
+    if isinstance(value, str):
+        array = _path(value, where, base_dir)
+        return ModuleArray(array, os.path.join(os.path.dirname(array),
+                                               f'{array_prefix(array)}_parameters.csv'))
+    if isinstance(value, dict) and 'module_array' in value:
+        _no_unknown_keys(value, _ARRAY_KEYS, where)
+        array = _path(value['module_array'], f'{where}: "module_array"', base_dir)
+        parameters = (_path(value['parameters'], f'{where}: "parameters"', base_dir)
+                      if 'parameters' in value else
+                      os.path.join(os.path.dirname(array), f'{array_prefix(array)}_parameters.csv'))
+        return ModuleArray(array, parameters)
+    return _target(value, where)
 
 
 def _no_unknown_keys(obj, allowed, where):
@@ -241,7 +287,8 @@ def _string_list(obj, key, where):
 
 def _target(value, where):
     if not isinstance(value, dict):
-        raise WorkflowError(f'{where} must be an object with {sorted(_TARGET_KEYS)}.')
+        raise WorkflowError(f'{where} must be a module array path, or a library module '
+                            f'{sorted(_TARGET_KEYS)}.')
     try:
         reject_instance_key(value, where, what='A workflow target')
     except ValueError as exc:
@@ -297,10 +344,13 @@ def _prior_source(value, where):
                        parameters=parameters)
 
 
-def _step(value, index, where):
+def _step(value, index, where, base_dir):
     label = f'{where}: steps[{index}]'
     if not isinstance(value, dict):
         raise WorkflowError(f'{label} must be an object.')
+    if 'target' in value:
+        raise WorkflowError(f'{label}: a step names its "model", "obs_data" and '
+                            f'"params_for_id"; "target" is the workflow\'s, not a step\'s.')
     if 'depends_on' in value:
         raise WorkflowError(f'{label}: "depends_on" is not a key. A step runs after the steps '
                             f'in its "fixed_from" and "priors_from", the only ways one step '
@@ -314,11 +364,26 @@ def _step(value, index, where):
     except ValueError as exc:
         raise WorkflowError(str(exc)) from exc
     label = f'{where}: step "{step_id}"'
-    if 'target' not in value:
-        raise WorkflowError(f'{label} has no "target".')
-    submodule = value.get('submodule')
-    if submodule is not None and (not isinstance(submodule, str) or not submodule.strip()):
-        raise WorkflowError(f'{label}: "submodule" must be a non-empty string.')
+    missing = [k for k in ('model', 'obs_data', 'params_for_id') if k not in value]
+    if missing:
+        raise WorkflowError(f'{label} has no {missing}. A step names the three inputs of a '
+                            f'calibration: "model", "obs_data" and "params_for_id".')
+    model = _model(value['model'], f'{label}: "model"', base_dir)
+    for key in ('submodule', 'vessel'):
+        given = value.get(key)
+        if given is not None and (not isinstance(given, str) or not given.strip()):
+            raise WorkflowError(f'{label}: "{key}" must be a non-empty string.')
+        if given is not None and model.kind != 'library':
+            raise WorkflowError(f'{label}: "{key}" places a library module in the target; '
+                                f'a module-array model maps its vessels with "vessel_map".')
+    vessel_map = value.get('vessel_map', {})
+    if not isinstance(vessel_map, dict) or not all(
+            isinstance(k, str) and k and isinstance(v, str) and v for k, v in vessel_map.items()):
+        raise WorkflowError(f'{label}: "vessel_map" maps vessel names to vessel names.')
+    if vessel_map and model.kind != 'array':
+        raise WorkflowError(f'{label}: "vessel_map" is for a module-array model; a library '
+                            f'module is placed with "submodule" or "vessel".')
+    submodule, vessel = value.get('submodule'), value.get('vessel')
     store = value.get('store_distribution', False)
     if not isinstance(store, bool):
         raise WorkflowError(f'{label}: "store_distribution" must be true or false.')
@@ -327,8 +392,13 @@ def _step(value, index, where):
         raise WorkflowError(f'{label}: "priors_from" must be a list.')
     fixed_from = _string_list(value, 'fixed_from', label)
     priors_from = [_prior_source(p, label) for p in priors]
-    return Step(id=step_id.strip(), target=_target(value['target'], f'{label}: "target"'),
+    return Step(id=step_id.strip(), model=model,
+                obs_data=_path(value['obs_data'], f'{label}: "obs_data"', base_dir),
+                params_for_id=_path(value['params_for_id'], f'{label}: "params_for_id"',
+                                    base_dir),
                 submodule=submodule.strip() if submodule else None,
+                vessel=vessel.strip() if vessel else None,
+                vessel_map={k.strip(): v.strip() for k, v in vessel_map.items()},
                 depends_on=list(dict.fromkeys(fixed_from + [p.step for p in priors_from])),
                 fixed_from=fixed_from,
                 priors_from=priors_from,
@@ -347,15 +417,7 @@ def check_workflow(workflow):
     if duplicates:
         raise WorkflowError(f'workflow "{workflow.name}": step ids {duplicates} are used more '
                             f'than once.')
-    targets = {}
     for step in workflow.steps:
-        if step.target in targets:
-            raise WorkflowError(
-                f'workflow "{workflow.name}": steps "{targets[step.target]}" and "{step.id}" '
-                f'both calibrate {step.target.label()}. Each step calibrates its own '
-                f'parameterisation, with its own obs_data and params_for_id; make a second '
-                f'parameterisation for the second calibration.')
-        targets[step.target] = step.id
         for dep in step.depends_on:
             if dep not in ids:
                 raise WorkflowError(f'step "{step.id}" takes values from unknown step "{dep}".')

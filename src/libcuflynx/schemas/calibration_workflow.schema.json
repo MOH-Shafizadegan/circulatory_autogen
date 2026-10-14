@@ -2,11 +2,12 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/physiomelinks/circulatory_autogen/schemas/calibration_workflow.schema.json",
   "title": "libcuflynx calibration workflow (calibration_workflow.json)",
-  "description": "Ordered calibrations of module parameterisations -- typically a supermodule's submodules, then the supermodule -- each against its own obs_data and params_for_id, merged into the parameters of one supermodule parameterisation (the target). Run with cuflynx-calibration-workflow or libcuflynx.calibration_workflow.run_calibration_workflow. The checks that need the module library (the parameterisations exist, each step's module sits in the target, no parameter is calibrated by two steps) are in libcuflynx/calibration_workflow/resolve.py; the rest are in spec.py as well as here.",
+  "description": "Ordered calibrations whose results are merged into one model, the target. Each step names the three inputs of an ordinary calibration: a model (a CA module array, or a module of a module library), an obs_data file and a params_for_id file; paths are relative to this file. Run with cuflynx-calibration-workflow or libcuflynx.calibration_workflow.run_calibration_workflow. The checks that need the files and the module library (they exist, each step's model sits in the target) are in libcuflynx/calibration_workflow/resolve.py; the rest are in spec.py as well as here.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "workflow_name",
+    "target",
     "steps"
   ],
   "properties": {
@@ -24,8 +25,8 @@
       "type": "string"
     },
     "target": {
-      "$ref": "#/$defs/target",
-      "description": "the supermodule parameterisation the calibrated values are merged into. Defaults to the parameterisation whose directory holds the file."
+      "$ref": "#/$defs/model",
+      "description": "the model the calibrated values are merged into"
     },
     "module_library_dirs": {
       "type": "array",
@@ -47,7 +48,41 @@
     }
   },
   "$defs": {
-    "target": {
+    "model": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "description": "a CA module array; its parameters file is <prefix>_parameters.csv beside it"
+        },
+        {
+          "$ref": "#/$defs/module_array"
+        },
+        {
+          "$ref": "#/$defs/library_module"
+        }
+      ]
+    },
+    "module_array": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "module_array"
+      ],
+      "properties": {
+        "module_array": {
+          "type": "string",
+          "minLength": 1,
+          "description": "a CA module array (<prefix>_module_array.csv or .json)"
+        },
+        "parameters": {
+          "type": "string",
+          "minLength": 1,
+          "description": "its parameters file; default <prefix>_parameters.csv beside it"
+        }
+      }
+    },
+    "library_module": {
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -81,7 +116,8 @@
           "pattern": "^[^/\\\\]+$",
           "description": "a directory under <version>/parameterisations/"
         }
-      }
+      },
+      "description": "a module of a module library: one parameterisation of one version"
     },
     "settings": {
       "type": "object",
@@ -156,13 +192,15 @@
       "additionalProperties": false,
       "required": [
         "id",
-        "target"
+        "model",
+        "obs_data",
+        "params_for_id"
       ],
       "properties": {
         "id": {
           "type": "string",
           "pattern": "^[^/\\\\]+$",
-          "description": "unique step id; also the step's output directory name"
+          "description": "a label for the step, unique in the file: other steps refer to it, and it names the step's output directory"
         },
         "description": {
           "type": "string"
@@ -170,13 +208,36 @@
         "comment": {
           "type": "string"
         },
-        "target": {
-          "$ref": "#/$defs/target",
-          "description": "the parameterisation this step calibrates, against its own <parameterisation>_obs_data.json and <parameterisation>_params_for_id.csv"
+        "model": {
+          "$ref": "#/$defs/model",
+          "description": "the model this step calibrates"
+        },
+        "obs_data": {
+          "type": "string",
+          "minLength": 1,
+          "description": "the obs_data file it is calibrated against"
+        },
+        "params_for_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "the params_for_id file: what it calibrates"
         },
         "submodule": {
           "type": "string",
-          "description": "where the module sits in the workflow target: a submodule name, or a nested one as soma/i_M (soma_i_M is also read). Inferred when the module type and version occur once."
+          "description": "a library module in a library supermodule target: where it sits, a submodule name or a nested one as soma/i_M (soma_i_M is also read). Inferred when the module type and version occur once."
+        },
+        "vessel": {
+          "type": "string",
+          "minLength": 1,
+          "description": "a library module in a module-array target: the vessel it is. Inferred when the module type and version occur once."
+        },
+        "vessel_map": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "a module-array model: its vessel names -> the target's (a submodule path for a library target). Unmapped vessels keep their names."
         },
         "fixed_from": {
           "type": "array",

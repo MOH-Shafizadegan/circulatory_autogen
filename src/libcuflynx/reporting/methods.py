@@ -96,14 +96,15 @@ class Symbols:
     '''Names as they appear in a step -- ``vessel/variable`` operands and params_for_id
     rows -- written with the target model's symbols.'''
 
-    def __init__(self, rows, path=''):
+    def __init__(self, rows, to_target=None):
+        '''``to_target`` names a vessel of the step's model as the target model does (None:
+        the step's model is the model the rows are for).'''
         self.latex = {r['variable_name']: r['latex'] for r in rows}
-        self.path = path or ''
+        self.to_target = to_target
 
     def _vessel(self, vessel):
-        from libcuflynx.calibration_workflow.naming import map_vessel
         try:
-            return map_vessel(vessel, self.path) if self.path else vessel
+            return self.to_target(vessel) if self.to_target else vessel
         except ValueError:
             return vessel
 
@@ -397,23 +398,9 @@ def _bibliography(entries, keys, bib_files, bib_out):
 
 
 def workflow_bib_files(resolved):
-    '''The references (``*_references*.bib``) of the workflow target and of every module in
-    it, from the module library versions they live in.'''
-    from libcuflynx.utilities.module_library import ModuleSources
-    sources = ModuleSources(resolved.library_inputs)
-    components, supermodules = sources.component_registry(), sources.supermodule_registry()
-    configs = [resolved.target.entry.get('config_path')]
-
-    def walk(container):
-        for sub in container.get('submodules', []):
-            key = (sub['vessel_type'], sub['BC_type'])
-            entry = components.get(key) or supermodules.get(key) or {}
-            configs.append(entry.get('config_path'))
-            if key in supermodules:
-                walk(supermodules[key])
-
-    walk(resolved.target.entry)
-    return module_bib_files([c for c in configs if c])
+    '''The references (``*_references*.bib``) of every module in the workflow target, from
+    the module versions they live in.'''
+    return module_bib_files(resolved.module_configs())
 
 
 def _model_section(model, mapping_rows, module_info, mapping_path):
@@ -432,13 +419,7 @@ def _model_section(model, mapping_rows, module_info, mapping_path):
 def _step_section(step, symbols):
     out = [f'\\subsection{{Step {escape(step["id"])}}}', r'\label{sec:step:'
            + step['id'].replace('_', '-') + '}']
-    t = step['target']
-    where = (f', the submodule {_tt(step["submodule_path"])} of the target'
-             if step.get('submodule_path') else '')
-    out.append(f'This step calibrates parameterisation {_tt(t["parameterisation"])} of module '
-               f'{_tt(t["module_type"])} (version {_tt(t["version"])}){where}, against that '
-               f'parameterisation\'s own observations '
-               f'({_tt(os.path.basename(step["obs_path"]))}).')
+    out.append(step.get('intro') or _step_intro(step))
     if step.get('description'):
         out.append(_sentence(step['description']))
     if step['fixed_from']:
@@ -475,14 +456,34 @@ def _step_section(step, symbols):
     return '\n\n'.join(out)
 
 
+def _step_intro(step):
+    '''What the step calibrates, on which model, against which observations.'''
+    m, obs = step['model'], _tt(os.path.basename(step['obs_path']))
+    if 'module_array' in m:
+        what = f'the model {_tt(_array_label(m))} ({_tt(os.path.basename(m["module_array"]))})'
+        where = ''
+    else:
+        what = (f'parameterisation {_tt(m["parameterisation"])} of module '
+                f'{_tt(m["module_type"])} (version {_tt(m["version"])})')
+        where = f', {_tt(step["place"])} in the target' if step.get('place') else ''
+    return f'This step calibrates {what}{where}, against the observations in {obs}.'
+
+
+def _array_label(model):
+    from libcuflynx.calibration_workflow.spec import array_prefix
+    return array_prefix(model['module_array'])
+
+
 def _target_name(fixed_record, step):
-    return fixed_record['model_name'] if not step.get('submodule_path') else \
-        _remap_model_name(fixed_record, step['submodule_path'])
-
-
-def _remap_model_name(record, path):
-    from libcuflynx.calibration_workflow.naming import map_vessel, model_name
-    return model_name(map_vessel(record['vessel'], path), record['param'])
+    '''A value the step was given, named as the target model names it.'''
+    from libcuflynx.calibration_workflow.naming import model_name
+    to_target = step.get('to_target')
+    if to_target is None:
+        return fixed_record['model_name']
+    try:
+        return model_name(to_target(fixed_record['vessel']), fixed_record['param'])
+    except ValueError:
+        return fixed_record['model_name']
 
 
 def workflow_methods_latex(workflow_path, run_dir=None, mapping=None, module_library_dirs=None,
@@ -526,11 +527,12 @@ def workflow_methods_latex(workflow_path, run_dir=None, mapping=None, module_lib
                     result = None
         results[step.id] = result
         steps.append({
-            'id': step.id, 'target': step.target.as_dict(), 'submodule_path': rs.path,
+            'id': step.id, 'model': step.model.as_dict(), 'place': rs.place,
+            'to_target': rs.to_target,
             'description': step.description,
-            'obs_path': rs.parameterisation.obs_data_path,
-            'obs': _load_json(rs.parameterisation.obs_data_path),
-            'params': read_params_for_id(rs.parameterisation.params_for_id_path),
+            'obs_path': rs.obs_data_path,
+            'obs': _load_json(rs.obs_data_path),
+            'params': read_params_for_id(rs.params_for_id_path),
             'settings': workflow.step_settings(step), 'depends_on': list(step.depends_on),
             'fixed_from': list(step.fixed_from),
             'priors_from': [p.as_dict() for p in step.priors_from],
@@ -542,11 +544,11 @@ def workflow_methods_latex(workflow_path, run_dir=None, mapping=None, module_lib
     n_merged = sum(len(r['calibrated']) for r in results.values() if r) or \
         sum(len(s['params']) for s in steps)
     nodes, edges = flowchart.workflow_graph(
-        graph_steps + [{'id': None, 'target': workflow.target.as_dict(), 'n_merged': n_merged}])
+        graph_steps + [{'id': None, 'model': workflow.target.as_dict(), 'n_merged': n_merged}])
     figure = flowchart.figure(
         flowchart.tikz(nodes, edges),
-        f'Calibration workflow {escape(workflow.name)}: each step calibrates one module '
-        'parameterisation against its own observations; solid arrows pass calibrated values on as '
+        f'Calibration workflow {escape(workflow.name)}: each step calibrates one model against '
+        'its own observations; solid arrows pass calibrated values on as '
         'fixed values, dashed arrows as priors, and the results are merged into the target.',
         'fig:calibration-flowchart', natural_width_cm=flowchart.width_cm(nodes, edges))
     if flowchart_only:
@@ -571,12 +573,12 @@ def workflow_methods_latex(workflow_path, run_dir=None, mapping=None, module_lib
                 + (_sentence(workflow.description) + ' ' if workflow.description else '')
                 + f'The parameters were calibrated in {len(steps)} step'
                 + ('s' if len(steps) != 1 else '')
-                + ' (Figure~\\ref{fig:calibration-flowchart}), each against the observations '
-                'of one module parameterisation, in the order shown; the values of every step '
+                + ' (Figure~\\ref{fig:calibration-flowchart}), each a calibration of one model '
+                'against its own observations, in the order shown; the values of every step '
                 'were then merged into the target, '
                 + _tt(workflow.target.label()) + '.\n\n' + figure)
     for step in steps:
-        symbols = {'step': Symbols(rows, step['submodule_path']), 'target': Symbols(rows)}
+        symbols = {'step': Symbols(rows, step['to_target']), 'target': Symbols(rows)}
         body.append(_step_section(step, symbols))
     return _document('\n\n'.join(body), title or f'Methods: {workflow.name}', standalone,
                      _bibliography(entries, keys, bib_files, bib_out))
@@ -608,36 +610,34 @@ def update_workflow_variable_mapping(workflow_path, out_path=None, module_librar
 def target_module_info(resolved):
     '''``{module name in the target model: {module_type, version, parameterisation}}``.'''
     from libcuflynx.calibration_workflow.naming import STEP_VESSEL
-    entry = resolved.target.entry
+    supermodules = resolved.supermodules
     info = {}
 
     def walk(container, prefix):
         for sub in container.get('submodules', []):
             path = prefix + sub['name']
-            info[f'{STEP_VESSEL}_{path}'] = {'module_type': sub['vessel_type'],
-                                             'version': sub['BC_type'],
-                                             'parameterisation': sub.get('parameterisation')}
-            nested = _supermodule(resolved, sub)
+            info[path] = {'module_type': sub['vessel_type'], 'version': sub['BC_type'],
+                          'parameterisation': sub.get('parameterisation')}
+            nested = supermodules.get((sub['vessel_type'], sub['BC_type']))
             if nested is not None:
                 walk(nested, path + '_')
 
-    if entry.get('submodules'):
-        walk(entry, '')
+    target = resolved.target
+    if target.kind == 'array':
+        for record in target.records:
+            info[record['name']] = {'module_type': record['vessel_type'],
+                                    'version': record['BC_type'],
+                                    'parameterisation': record.get('parameterisation')}
+            nested = supermodules.get((record['vessel_type'], record['BC_type']))
+            if nested is not None:
+                walk(nested, record['name'] + '_')
+    elif target.entry.get('submodules'):
+        walk(target.entry, STEP_VESSEL + '_')
     else:
         t = resolved.workflow.target
         info[STEP_VESSEL] = {'module_type': t.module_type, 'version': t.version,
                              'parameterisation': t.parameterisation}
     return info
-
-
-def _supermodule(resolved, sub):
-    from libcuflynx.utilities.module_library import ModuleSources
-    registry = getattr(resolved, '_supermodules', None)
-    if registry is None:
-        # the sources' registry, shadowed types left out, as the workflow resolved them
-        registry = ModuleSources(resolved.library_inputs).supermodule_registry()
-        resolved._supermodules = registry
-    return registry.get((sub['vessel_type'], sub['BC_type']))
 
 
 def calibration_methods_latex(model_path, obs_data_path, params_for_id_path, settings=None,
@@ -663,9 +663,10 @@ def calibration_methods_latex(model_path, obs_data_path, params_for_id_path, set
     obs = _load_json(obs_data_path)
     params = read_params_for_id(params_for_id_path)
     result = _param_id_result(run_dir, params) if run_dir else None
-    step = {'id': 'calibration', 'target': {'module_type': os.path.splitext(
-        os.path.basename(model_path))[0], 'version': '--', 'parameterisation': '--'},
-        'submodule_path': '', 'description': '', 'obs_path': obs_data_path, 'obs': obs,
+    step = {'id': 'calibration', 'model': {'module_array': model_path}, 'place': '',
+        'intro': f'The model {_tt(os.path.basename(model_path))} is calibrated against the '
+                 f'observations in {_tt(os.path.basename(obs_data_path))}.',
+        'description': '', 'obs_path': obs_data_path, 'obs': obs,
         'params': params, 'settings': settings, 'depends_on': [], 'fixed_from': [],
         'priors_from': [], 'store_distribution': do_uq, 'result': result}
     info = obs.get('protocol_info') or {} if isinstance(obs, dict) else {}
@@ -679,9 +680,7 @@ def calibration_methods_latex(model_path, obs_data_path, params_for_id_path, set
                               natural_width_cm=flowchart.width_cm(nodes, edges))
     symbols = {'step': Symbols(rows), 'target': Symbols(rows)}
     section = _step_section(step, symbols).replace(
-        '\\subsection{Step calibration}', '\\subsection{Calibration details}').replace(
-        'This step calibrates parameterisation \\texttt{--} of module ', 'The model ').replace(
-        ' (version \\texttt{--})', '')
+        '\\subsection{Step calibration}', '\\subsection{Calibration details}')
     if parameters_path is None:
         prefix = os.path.splitext(os.path.basename(model_path))[0]
         prefix = prefix[:-len('_flat')] if prefix.endswith('_flat') else prefix

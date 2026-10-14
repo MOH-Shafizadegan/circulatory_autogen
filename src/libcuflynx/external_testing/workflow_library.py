@@ -21,6 +21,11 @@ Parameterisations:
 * ``twin/split`` -- ``calibration_workflow.json``: fit_a and fit_b, independent.
 * ``chain/rest`` -- z = Z_C with p_A fixed from fit_a: q = sqrt(Z_C - Y_A) (3 by default);
   ``calibration_workflow.json``: fit_a, then rest with fixed_from fit_a.
+
+Module arrays (``arrays/``), the same chain without the module library's layout: ``a_only``
+(one record ``A``, lin_a) and ``chain`` (``A`` feeding ``C``), with their parameters files and
+obs_data / params_for_id named freely. ``chain_array.json``: ``a_only`` calibrates ``A/p``, then
+``chain`` calibrates ``C/q`` with it fixed; the target is ``chain``. Same answers as chain/rest.
 """
 
 import json
@@ -149,9 +154,21 @@ def _target(module_type, parameterisation):
     return {'module_type': module_type, 'version': 'v1', 'parameterisation': parameterisation}
 
 
+def _library_step(step_id, module_type, directory, workflow_dir, **extra):
+    '''A step that calibrates the library parameterisation in ``directory``, against its own
+    obs_data and params_for_id (paths relative to the workflow file).'''
+    name = os.path.basename(directory)
+    return dict({'id': step_id, 'model': _target(module_type, name),
+                 'obs_data': os.path.relpath(os.path.join(directory, f'{name}_obs_data.json'),
+                                             workflow_dir),
+                 'params_for_id': os.path.relpath(
+                     os.path.join(directory, f'{name}_params_for_id.csv'), workflow_dir)},
+                **extra)
+
+
 def build_workflow_library(root, settings=None):
     """Write the library under ``root``. Returns a dict of paths: ``modules`` (the module
-    library dir), ``twin_split`` and ``chain_rest`` (the two workflow files), and the
+    library dir), ``twin_split``, ``chain_rest`` and ``chain_array`` (the workflow files), and the
     parameterisation directories by ``<type>/<parameterisation>``.
 
     ``settings`` replaces the workflows' settings (default ``OPTIMISER_SETTINGS``).
@@ -206,8 +223,9 @@ def build_workflow_library(root, settings=None):
         'description': 'A and B calibrated apart, then merged into twin',
         'module_library_dirs': [os.path.relpath(modules, paths['twin/split'])],
         'settings': settings,
-        'steps': [{'id': 'fit_a', 'target': _target('lin_a', 'fit_a')},
-                  {'id': 'fit_b', 'target': _target('lin_b', 'fit_b')}]})
+        'target': _target('twin', 'split'),
+        'steps': [_library_step('fit_a', 'lin_a', paths['lin_a/fit_a'], paths['twin/split']),
+                  _library_step('fit_b', 'lin_b', paths['lin_b/fit_b'], paths['twin/split'])]})
 
     chain_rows = [('A/p', 1.0), ('C/q', 1.0), ('C/k', 1.0, K_SOURCE)]
     _parameterisation(modules, 'chain', 'default', chain_rows)
@@ -220,7 +238,40 @@ def build_workflow_library(root, settings=None):
         'description': 'A calibrated alone, then C in the chain with A fixed',
         'module_library_dirs': [os.path.relpath(modules, paths['chain/rest'])],
         'settings': settings,
-        'steps': [{'id': 'fit_a', 'target': _target('lin_a', 'fit_a')},
-                  {'id': 'rest', 'target': _target('chain', 'rest'),
-                   'fixed_from': ['fit_a']}]})
+        'target': _target('chain', 'rest'),
+        'steps': [_library_step('fit_a', 'lin_a', paths['lin_a/fit_a'], paths['chain/rest']),
+                  _library_step('rest', 'chain', paths['chain/rest'], paths['chain/rest'],
+                                fixed_from=['fit_a'])]})
+
+    arrays = os.path.join(os.path.abspath(root), 'arrays')
+    paths['arrays'] = arrays
+
+    def record(name, module_type, inp=(), out=()):
+        return {'name': name, 'module_type': module_type, 'module_subtype': 'v1',
+                'parameterisation': 'default', 'inp_instances': list(inp),
+                'out_instances': list(out)}
+
+    _write_json(os.path.join(arrays, 'a_only_module_array.json'), [record('A', 'lin_a')])
+    _parameters(os.path.join(arrays, 'a_only_parameters.csv'), [('A/p', 1.0)])
+    _write_json(os.path.join(arrays, 'chain_module_array.json'),
+                [record('A', 'lin_a', out=['C']), record('C', 'lin_c', inp=['A'])])
+    _parameters(os.path.join(arrays, 'chain_parameters.csv'),
+                [('A/p', 1.0), ('C/q', 1.0), ('C/k', 1.0, K_SOURCE)])
+    _write_json(os.path.join(arrays, 'data', 'a_obs.json'), _obs('a', [('y_a', 'A/y', Y_A, STD_A)]))
+    _params_for_id(os.path.join(arrays, 'data', 'a_params.csv'), [('A', 'p', 0.1, 5.0)])
+    _write_json(os.path.join(arrays, 'data', 'chain_obs.json'),
+                _obs('chain', [('z_c', 'C/z', Z_C, STD_C)]))
+    _params_for_id(os.path.join(arrays, 'data', 'chain_params.csv'), [('C', 'q', 0.1, 10.0)])
+    paths['chain_array'] = os.path.join(arrays, 'chain_array.json')
+    _write_json(paths['chain_array'], {
+        'schema_version': 1, 'workflow_name': 'chain_array',
+        'description': 'A calibrated alone, then C in the chain with A fixed, as module arrays',
+        'module_library_dirs': [os.path.relpath(modules, arrays)],
+        'settings': settings,
+        'target': 'chain_module_array.json',
+        'steps': [{'id': 'a-alone', 'model': 'a_only_module_array.json',
+                   'obs_data': 'data/a_obs.json', 'params_for_id': 'data/a_params.csv'},
+                  {'id': 'chain', 'model': 'chain_module_array.json',
+                   'obs_data': 'data/chain_obs.json', 'params_for_id': 'data/chain_params.csv',
+                   'fixed_from': ['a-alone']}]})
     return paths

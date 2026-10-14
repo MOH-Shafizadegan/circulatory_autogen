@@ -1,7 +1,8 @@
 """Calibration workflows (libcuflynx.calibration_workflow, cuflynx-calibration-workflow).
 
-A workflow calibrates several module parameterisations in order, each against its own obs_data and
-params_for_id, and merges the results into one supermodule parameterisation. The fixture library is
+A workflow runs calibrations in order -- each a model, an obs_data and a params_for_id -- and
+merges the results into one target model. A model is a library module or a module array. The
+fixture library is
 libcuflynx.external_testing.workflow_library (shared with CUFLynx's tests): algebraic modules
 whose optima are known in closed form.
 
@@ -26,7 +27,7 @@ from libcuflynx.calibration_workflow import (StoredDistribution, WorkflowError,
 from libcuflynx.calibration_workflow import naming
 from libcuflynx.calibration_workflow.distributions import (DistributionParameter,
                                                            transform_for_bounds)
-from libcuflynx.calibration_workflow.spec import Target, parse_workflow
+from libcuflynx.calibration_workflow.spec import ModuleArray, Target, parse_workflow
 from libcuflynx.external_testing.workflow_library import (OPTIMISER_SETTINGS, STD_A, STD_B, Y_A,
                                                           Y_B, Z_C, build_workflow_library)
 from libcuflynx.schemas import CALIBRATION_WORKFLOW_SCHEMA, load_schema
@@ -60,18 +61,27 @@ def _merged(result):
 # --------------------------------------------------------------------------------------------
 
 @pytest.mark.unit
-def test_target_defaults_to_the_parameterisation_holding_the_file(library):
+def test_a_step_names_its_files_relative_to_the_workflow(library):
     workflow = load_workflow(library['twin_split'])
     assert workflow.target == Target('twin', 'v1', 'split')
     assert [s.id for s in workflow.topological_order()] == ['fit_a', 'fit_b']
     assert workflow.module_library_dirs == [library['modules']]
+    fit_a = workflow.step('fit_a')
+    assert fit_a.model == Target('lin_a', 'v1', 'fit_a')
+    assert fit_a.obs_data == os.path.join(library['lin_a/fit_a'], 'fit_a_obs_data.json')
+    array = load_workflow(library['chain_array'])
+    assert array.target == ModuleArray(
+        os.path.join(library['arrays'], 'chain_module_array.json'),
+        os.path.join(library['arrays'], 'chain_parameters.csv'))
+    assert array.step('a-alone').params_for_id == os.path.join(library['arrays'], 'data',
+                                                                'a_params.csv')
 
 
 @pytest.mark.unit
 def test_the_shipped_schema_accepts_the_fixture_workflows_and_rejects_unknown_keys(library):
     jsonschema = pytest.importorskip('jsonschema')
     schema = load_schema(CALIBRATION_WORKFLOW_SCHEMA)
-    for which in ('twin_split', 'chain_rest'):
+    for which in ('twin_split', 'chain_rest', 'chain_array'):
         jsonschema.validate(_raw(library, which), schema)
     raw = _raw(library)
     raw['steps'][0]['fixed_values'] = {}
@@ -85,7 +95,7 @@ def test_the_shipped_schema_accepts_the_fixture_workflows_and_rejects_unknown_ke
 def test_a_target_names_its_parameterisation_not_an_instance(library):
     jsonschema = pytest.importorskip('jsonschema')
     raw = _raw(library)
-    target = raw['steps'][0]['target']
+    target = raw['target']
     target['instance'] = target.pop('parameterisation')
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(raw, load_schema(CALIBRATION_WORKFLOW_SCHEMA))
@@ -115,7 +125,12 @@ def _edit(library, edit):
     (lambda w: w['steps'][0].update(fixed_from=['fit_a']), 'from itself'),
     (lambda w: w['steps'][1].update(depends_on=['fit_a']), '"depends_on" is not a key'),
     (lambda w: w['steps'].append(dict(w['steps'][0])), 'more than once'),
-    (lambda w: w['steps'].append(dict(w['steps'][0], id='again')), 'both calibrate'),
+    (lambda w: w['steps'][0].update(target=w['steps'][0]['model']), '"target" is the workflow'),
+    (lambda w: w['steps'][0].pop('obs_data'), "has no \\['obs_data'\\]"),
+    (lambda w: w.pop('target'), 'no "target"'),
+    (lambda w: w['steps'][0].update(vessel_map={'A': 'B'}), '"vessel_map" is for a module-array'),
+    (lambda w: w['steps'][0].update(model='a_module_array.csv', vessel='A'),
+     '"vessel" places a library module'),
     (lambda w: w['settings'].update(param_id_obs_path='x.json'), 'cannot be set'),
     (lambda w: w['steps'][1].update(priors_from=['fit_a'], fixed_from=[]),
      'does not store its distribution'),
@@ -177,10 +192,10 @@ def test_names_move_into_the_supermodule_as_supermodule_expansion_renames_them()
 def test_plan_names_every_parameter_in_the_target(library):
     plan = plan_workflow(library['chain_rest'])
     steps = {s['id']: s for s in plan['steps']}
-    assert steps['fit_a']['submodule_path'] == 'A'
+    assert steps['fit_a']['place'] == 'A'
     assert steps['fit_a']['calibrates'] == [{'model_name': 'p_mod', 'target_model_name': 'p_mod_A',
                                              'target_parameterisation_name': 'A/p'}]
-    assert steps['rest']['submodule_path'] == ''
+    assert steps['rest']['place'] == ''
     assert steps['rest']['fixed_from'] == [{'from_step': 'fit_a', 'model_name': 'p_mod',
                                             'in_step': 'p_mod_A'}]
     assert run_calibration_workflow(library['chain_rest'], dry_run=True) == plan
@@ -189,14 +204,21 @@ def test_plan_names_every_parameter_in_the_target(library):
 @pytest.mark.unit
 def test_every_step_needs_its_own_params_for_id(library):
     os.remove(os.path.join(library['lin_b/fit_b'], 'fit_b_params_for_id.csv'))
-    with pytest.raises(WorkflowError, match='no params_for_id file'):
+    with pytest.raises(WorkflowError, match='params_for_id file .* does not exist'):
         resolve_workflow(load_workflow(library['twin_split']))
+
+
+def _library_step(library, step_id, module_type, name):
+    directory = library[f'{module_type}/{name}']
+    return {'id': step_id,
+            'model': {'module_type': module_type, 'version': 'v1', 'parameterisation': name},
+            'obs_data': os.path.join(directory, f'{name}_obs_data.json'),
+            'params_for_id': os.path.join(directory, f'{name}_params_for_id.csv')}
 
 
 def _with_joint_step(library):
     raw = _raw(library, 'twin_split')
-    raw['steps'].append({'id': 'joint', 'target': {'module_type': 'twin', 'version': 'v1',
-                                                   'parameterisation': 'joint'}})
+    raw['steps'].append(_library_step(library, 'joint', 'twin', 'joint'))
     path = os.path.join(library['twin/split'], 'recalibrated_workflow.json')
     with open(path, 'w') as f:
         json.dump(raw, f)
@@ -241,8 +263,7 @@ def test_a_step_calibrates_a_parameter_it_would_be_given_fixed(library, tmp_path
 @pytest.mark.unit
 def test_a_step_must_land_in_the_target(library):
     raw = _raw(library)
-    raw['steps'].append({'id': 'fit_b', 'target': {'module_type': 'lin_b', 'version': 'v1',
-                                                   'parameterisation': 'fit_b'}})
+    raw['steps'].append(_library_step(library, 'fit_b', 'lin_b', 'fit_b'))
     with pytest.raises(WorkflowError, match='not a submodule of chain'):
         resolve_workflow(parse_workflow(raw, path=library['chain_rest']))
 
@@ -262,13 +283,12 @@ def test_an_ambiguous_submodule_must_be_named(library):
         f.write('variable_name,units,value,data_reference\n')
     raw = {'workflow_name': 'double', 'module_library_dirs': [library['modules']],
            'target': {'module_type': 'double', 'version': 'v1', 'parameterisation': 'default'},
-           'steps': [{'id': 'fit_a', 'target': {'module_type': 'lin_a', 'version': 'v1',
-                                                'parameterisation': 'fit_a'}}]}
+           'steps': [_library_step(library, 'fit_a', 'lin_a', 'fit_a')]}
     with pytest.raises(WorkflowError, match=r"\['A1', 'A2'\] in double/v1/default; say which"):
         resolve_workflow(parse_workflow(raw))
     raw['steps'][0]['submodule'] = 'A2'
     resolved = resolve_workflow(parse_workflow(raw))
-    assert resolved.steps['fit_a'].path == 'A2'
+    assert resolved.steps['fit_a'].place == 'A2'
 
 
 @pytest.mark.unit
@@ -287,7 +307,7 @@ def test_a_type_in_two_libraries_resolves_to_the_one_generation_uses(library, tm
     with pytest.warns(ModuleShadowWarning):
         resolved = resolve_workflow(parse_workflow(raw, path=library['twin_split']))
     assert resolved.target.entry['config_path'].startswith(first)
-    assert all(step.parameterisation.entry['config_path'].startswith(first)
+    assert all(step.model.entry['config_path'].startswith(first)
                for step in resolved.steps.values())
 
 
@@ -599,7 +619,7 @@ def test_a_tab_shows_each_model_with_the_values_available_so_far(library, tmp_pa
     assert parameters(rest)['p_mod_A'] == pytest.approx(np.sqrt(Y_A / 2), rel=1e-4)
 
     fit_a = workflow_model(library['chain_rest'], 'fit_a', output_dir=out, work_dir=work)
-    assert fit_a['submodule_path'] == 'A' and fit_a['param_id_output_dir']
+    assert fit_a['place'] == 'A' and fit_a['param_id_output_dir']
     assert parameters(fit_a)['p_mod'] == pytest.approx(np.sqrt(Y_A / 2), rel=1e-4)
 
     target = workflow_model(library['chain_rest'], 'target', output_dir=out, work_dir=work)
@@ -622,6 +642,8 @@ def test_calibrated_values_replace_rows_written_in_either_name_form(tmp_path):
     from libcuflynx.calibration_workflow.runner import write_calibrated_parameters
 
     class _Target:
+        kind = 'library'
+        paths = (('A',), ('C',))
         parameters_path = str(tmp_path / 'rest_parameters.csv')
 
         def file(self, suffix):
@@ -636,7 +658,7 @@ def test_calibrated_values_replace_rows_written_in_either_name_form(tmp_path):
                'units': 'dimensionless', 'from_step': 'rest'},
               {'model_name': 'r_mod_A', 'parameterisation_name': 'A/r', 'value': 4.0,
                'units': 'dimensionless', 'from_step': 'fit_a'}]
-    path = write_calibrated_parameters(_Target(), merged, 'wf', [('A',), ('C',)])
+    path = write_calibrated_parameters(_Target(), merged, 'wf')
     with open(path, newline='') as f:
         rows = {r['variable_name']: float(r['value']) for r in csv.DictReader(f)}
     assert rows == {'p_A': 2.0, 'C/q': 3.0, 'A/r': 4.0}
@@ -654,7 +676,7 @@ def test_a_nested_submodule_is_named_as_a_path():
 
     def step(submodule):
         return SimpleNamespace(id='s', submodule=submodule,
-                               target=Target('M', 'v', 'p'))
+                               model=Target('M', 'v', 'p'))
 
     workflow_target = Target('T', 'v', 'p')
     for name in ('soma/i_M', 'soma_i_M'):
@@ -664,3 +686,73 @@ def test_a_nested_submodule_is_named_as_a_path():
         _submodule_path(step('i_M'), workflow_target, target, supermodules)
     with pytest.raises(WorkflowError, match='say which with "submodule"'):
         _submodule_path(step(None), workflow_target, target, supermodules)
+
+
+# --------------------------------------------------------------------------------------------
+# module arrays: a workflow outside the module library's layout
+# --------------------------------------------------------------------------------------------
+
+@pytest.mark.unit
+def test_module_array_steps_keep_their_vessel_names(library):
+    steps = {s['id']: s for s in plan_workflow(library['chain_array'])['steps']}
+    assert steps['a-alone']['calibrates'] == [{'model_name': 'p_A', 'target_model_name': 'p_A',
+                                               'target_parameterisation_name': 'A/p'}]
+    assert steps['chain']['fixed_from'] == [{'from_step': 'a-alone', 'model_name': 'p_A',
+                                             'in_step': 'p_A'}]
+
+
+@pytest.mark.unit
+def test_a_vessel_map_renames_a_module_array_into_the_target(library):
+    arrays = library['arrays']
+    _write_json(os.path.join(arrays, 'aorta_module_array.json'), [
+        {'name': 'aorta', 'module_type': 'lin_a', 'module_subtype': 'v1',
+         'parameterisation': 'default', 'inp_instances': [], 'out_instances': []}])
+    with open(os.path.join(arrays, 'aorta_parameters.csv'), 'w') as f:
+        f.write('variable_name,units,value,data_reference\naorta/p,dimensionless,1.0,x\n')
+    with open(os.path.join(arrays, 'data', 'aorta_params.csv'), 'w') as f:
+        f.write('vessel_name,param_name,min,max,name_for_plotting\naorta,p,0.1,5.0,p\n')
+    raw = _raw(library, 'chain_array')
+    raw['steps'][0].update(model='aorta_module_array.json', params_for_id='data/aorta_params.csv')
+    with pytest.raises(WorkflowError, match='lands on vessel "aorta"'):
+        resolve_workflow(parse_workflow(raw, path=library['chain_array']))
+    raw['steps'][0]['vessel_map'] = {'aorta': 'A'}
+    steps = {s['id']: s for s in plan_workflow(parse_workflow(raw, path=library['chain_array']))
+             ['steps']}
+    assert steps['a-alone']['calibrates'][0]['target_model_name'] == 'p_A'
+    # the chain receives the value under its own name
+    assert steps['chain']['fixed_from'][0]['in_step'] == 'p_A'
+
+
+@pytest.mark.unit
+def test_a_library_module_is_placed_in_a_module_array_target(library):
+    raw = _raw(library, 'chain_array')
+    raw['steps'][0] = _library_step(library, 'a-alone', 'lin_a', 'fit_a')
+    workflow = parse_workflow(raw, path=library['chain_array'])
+    steps = {s['id']: s for s in plan_workflow(workflow)['steps']}
+    # lin_a occurs once in the chain array, as record A
+    assert steps['a-alone']['place'] == 'A'
+    assert steps['a-alone']['calibrates'][0]['target_model_name'] == 'p_A'
+    assert steps['chain']['fixed_from'][0]['in_step'] == 'p_A'
+    raw['steps'][0]['vessel'] = 'C'
+    with pytest.raises(WorkflowError, match=r"lin_a v1 is at \['A'\]"):
+        resolve_workflow(parse_workflow(raw, path=library['chain_array']))
+
+
+@pytest.mark.integration
+def test_a_workflow_of_module_arrays_runs_and_writes_beside_the_target(library, tmp_path):
+    result = run_calibration_workflow(library['chain_array'], output_dir=str(tmp_path / 'run'),
+                                      write_calibrated=True)
+    merged = _merged(result)
+    assert merged['A/p'] == pytest.approx(np.sqrt(Y_A / 2), rel=1e-4)
+    assert merged['C/q'] == pytest.approx(np.sqrt(Z_C - Y_A), rel=1e-4)
+    chain = _read_json(str(tmp_path / 'run' / 'chain' / 'step_result.json'))
+    assert [(f['model_name'], f['from_step']) for f in chain['fixed']] == [('p_A', 'a-alone')]
+    assert set(chain['inputs']) == {'obs_data', 'params_for_id', 'parameters', 'module_array'}
+    assert result['calibrated_parameters_file'] == os.path.join(
+        library['arrays'], 'chain_calibrated_parameters.csv')
+    with open(result['calibrated_parameters_file']) as f:
+        written = {r['variable_name']: r for r in csv.DictReader(f)}
+    # the target's own rows take the values; the uncalibrated k keeps its own and its source
+    assert float(written['A/p']['value']) == pytest.approx(np.sqrt(Y_A / 2), rel=1e-6)
+    assert float(written['C/q']['value']) == pytest.approx(np.sqrt(Z_C - Y_A), rel=1e-6)
+    assert written['C/k']['value'] == '1.0' and 'doe2020gain' in written['C/k']['data_reference']

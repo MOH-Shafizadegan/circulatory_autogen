@@ -16,10 +16,10 @@ To see one without setting anything up, run the workflow example in
 
 ```
 cuflynx-variable-mapping generated_models/<prefix>/<prefix>_flat.cellml
-cuflynx-variable-mapping --workflow <parameterisation dir>/calibration_workflow.json --module-library-dir <library>
+cuflynx-variable-mapping --workflow workflow.json
 ```
 
-Each command writes `<prefix>_variable_mapping.csv` beside the model. For a calibration workflow, the file goes in the target supermodule parameterisation's directory instead, as `<parameterisation>_variable_mapping.csv`.
+Each command writes `<prefix>_variable_mapping.csv` beside the model. For a calibration workflow, the file goes beside the target's parameters file instead, as `<name>_variable_mapping.csv` (`<name>` is the target module array's prefix, or its parameterisation).
 
 | Column | What it holds |
 |---|---|
@@ -41,8 +41,7 @@ Running the command again keeps every symbol already in the file. It adds new va
 
 ```
 # a calibration workflow (see Parameter Identification -> Calibration workflows)
-cuflynx-methods-latex --workflow <parameterisation dir>/calibration_workflow.json \
-    --module-library-dir <library> --run-dir workflow_output/<name> -o methods.tex --pdf
+cuflynx-methods-latex --workflow workflow.json --run-dir workflow_output/<name> -o methods.tex --pdf
 
 # one calibration
 cuflynx-methods-latex --model <prefix>_flat.cellml --obs-data <obs>.json \
@@ -57,13 +56,13 @@ The document has four parts.
     - its initial values;
     - a table of the parameters it uses (symbol, value, units, name in the model).
 
-    For a workflow, the model is the target supermodule, and each module is labelled with its module type, version and parameterisation from the supermodule config.
+    For a workflow, the model is the target, and each module is labelled with its module type, version and parameterisation, from the target's module array or supermodule config.
 2. **Parameters and sources.** One table of every parameter of the model: symbol, value, units and source (see [Citations](#citations)). A parameter that was calibrated names the step that calibrated it, with a link to that step's subsection.
 3. **Flow chart.** This is a TikZ figure.
-    - **For a workflow:** one box per step (its parameterisation, how many parameters and observables, the method). Arrows run from each step to the steps after it: solid for values passed on as fixed values, dashed for priors. A last box shows the merge into the target.
+    - **For a workflow:** one box per step (its model, how many parameters and observables, the method). Arrows run from each step to the steps after it: solid for values passed on as fixed values, dashed for priors. A last box shows the merge into the target.
     - **For one calibration:** the model, observables and parameters feed the optimisation, followed by MCMC and identifiability when they were run.
 4. **One subsection per step.** Each covers:
-    - which parameterisation the step calibrates and against which observations;
+    - which model the step calibrates and against which observations;
     - the values it was given by earlier steps, and the priors it was given;
     - the protocol (experiments, pre-times, segment durations, inputs set per segment);
     - the observables (feature, observed value ± standard deviation, weight, experiment and segment);

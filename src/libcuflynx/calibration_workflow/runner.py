@@ -14,6 +14,9 @@ Output layout (``output_dir``)::
         distribution/              only with store_distribution (see distributions.py)
     _target/model/                 the target generated with every calibrated value
 
+A step's model is generated from a library module or from a copy of its module array; the
+files the workflow names are only read.
+
 Under MPI every rank runs every step (calibration is parallel); generation and every file
 write happen on rank 0, and what rank 0 reads is broadcast.
 '''
@@ -25,6 +28,7 @@ import json
 import os
 import shutil
 import time
+import warnings
 
 import numpy as np
 
@@ -32,8 +36,8 @@ from libcuflynx.calibration_workflow import naming
 from libcuflynx.calibration_workflow.distributions import (DISTRIBUTION_DIR,
                                                            StoredDistribution,
                                                            parameters_from_info)
-from libcuflynx.calibration_workflow.generate import generate_parameterisation, read_parameter_rows
-from libcuflynx.calibration_workflow.resolve import resolve_workflow
+from libcuflynx.calibration_workflow.generate import generate_model, read_parameter_rows
+from libcuflynx.calibration_workflow.resolve import CalibratedParameter, resolve_workflow
 from libcuflynx.utilities.parameter_names import (is_path_name, split_path_name,
                                                   supermodule_row_name)
 from libcuflynx.calibration_workflow.spec import (WORKFLOW_FILE_NAME, WorkflowError, load_workflow,
@@ -143,11 +147,12 @@ class _Run:
         return _read_json(path)
 
     def inputs(self, step_id):
-        parameterisation = self.resolved.steps[step_id].parameterisation
-        files = {'obs_data': parameterisation.obs_data_path,
-                 'params_for_id': parameterisation.params_for_id_path}
-        if os.path.isfile(parameterisation.parameters_path):
-            files['parameters'] = parameterisation.parameters_path
+        rs = self.resolved.steps[step_id]
+        files = {'obs_data': rs.obs_data_path, 'params_for_id': rs.params_for_id_path}
+        if os.path.isfile(rs.model.parameters_path):
+            files['parameters'] = rs.model.parameters_path
+        if rs.model.kind == 'array':
+            files['module_array'] = rs.model.model.module_array
         return {key: {'path': path, 'sha256': sha256(path)} for key, path in files.items()}
 
     def require_current(self, step_id, needed_by):
@@ -174,10 +179,14 @@ class _Run:
         values = {}
         for source in step.fixed_from:
             result = self.require_current(source, step.id)
-            path = self.resolved.path_between(source, step.id)
+            vessel_of = self.resolved.map_between(source, step.id)
+            left_out = []
             for record in result['calibrated'] + result['fixed']:
-                name = naming.model_name(naming.map_vessel(record['vessel'], path),
-                                         record['param'])
+                vessel = vessel_of(record['vessel'])
+                if vessel is None:
+                    left_out.append(record['model_name'])
+                    continue
+                name = naming.model_name(vessel, record['param'])
                 origin = record.get('from_step', source)
                 if name in values and not np.isclose(values[name]['value'], record['value'],
                                                       rtol=1e-12, atol=0.0):
@@ -185,10 +194,14 @@ class _Run:
                         f'step "{step.id}" is given two different fixed values for "{name}": '
                         f'{values[name]["value"]} (from "{values[name]["from_step"]}") and '
                         f'{record["value"]} (from "{origin}").')
-                values[name] = {'vessel': naming.map_vessel(record['vessel'], path),
+                values[name] = {'vessel': vessel,
                                 'param': record['param'], 'model_name': name,
                                 'value': record['value'], 'units': record.get('units', ''),
                                 'from_step': origin}
+            if left_out:
+                warnings.warn(f'step "{step.id}": {len(left_out)} value(s) of "{source}" are '
+                              f'not fixed, because {step.model.label()} has no such vessel: '
+                              f'{sorted(left_out)}.', UserWarning, stacklevel=2)
         return values
 
     def priors(self, step):
@@ -200,8 +213,13 @@ class _Run:
                 os.path.join(self.step_dir(prior.step), DISTRIBUTION_DIR))
             if prior.parameters is not None:
                 distribution = distribution.subset(list(prior.parameters))
-            path = self.resolved.path_between(prior.step, step.id)
-            out.append((prior, distribution.mapped_into(path)))
+            try:
+                distribution = distribution.mapped_with(
+                    self.resolved.map_between(prior.step, step.id), step.model.label())
+            except ValueError as exc:
+                raise WorkflowError(f'step "{step.id}" takes priors from "{prior.step}": '
+                                    f'{exc}') from exc
+            out.append((prior, distribution))
         return out
 
     # -- one step --------------------------------------------------------------------------
@@ -213,7 +231,7 @@ class _Run:
         step_dir = self.step_dir(step.id)
         started, t0 = _now(), time.time()
         self.emit('step_started', step=step.id, index=index, total=total,
-                  target=step.target.as_dict())
+                  model=step.model.as_dict())
 
         settings = self.workflow.step_settings(step)
 
@@ -235,8 +253,8 @@ class _Run:
                           'data_reference': f'fixed by calibration workflow '
                                             f'{self.workflow.name}, step {row["from_step"]}'}
                          for name, row in sorted(fixed.items())]
-            generated = generate_parameterisation(
-                step.target, os.path.join(step_dir, 'model'), step.id, overrides,
+            generated = generate_model(
+                step.model, os.path.join(step_dir, 'model'), step.id, overrides,
                 library_inputs=self.resolved.library_inputs,
                 model_type=settings.get('model_type', STEP_DEFAULTS['model_type']),
                 solver=settings.get('solver'))
@@ -248,10 +266,10 @@ class _Run:
                         f'step "{step.id}": the value fixed from "{row["from_step"]}" for '
                         f'"{name}" has no parameter of that name in the step model '
                         f'({generated["parameters_path"]}).')
-            params_for_id = resolved.parameterisation.params_for_id_path
+            params_for_id = resolved.params_for_id_path
             if priors:
                 params_for_id = os.path.join(step_dir, f'{step.id}_params_for_id.csv')
-                _write_params_for_id_with_priors(resolved.parameterisation.params_for_id_path,
+                _write_params_for_id_with_priors(resolved.params_for_id_path,
                                                  params_for_id, priors, step.id)
             units = {k: v.get('units', '') for k, v in model_rows.items()}
             return generated, params_for_id, units, fixed, priors
@@ -265,7 +283,7 @@ class _Run:
             'resources_dir': generated['resources_dir'],
             'generated_models_dir': generated['generated_models_dir'],
             'input_param_file': f'{step.id}_parameters.csv',
-            'param_id_obs_path': resolved.parameterisation.obs_data_path,
+            'param_id_obs_path': resolved.obs_data_path,
             'params_for_id_file': params_for_id,
             'param_id_output_dir': os.path.join(step_dir, 'param_id'),
             'do_uq': step.store_distribution,
@@ -301,17 +319,16 @@ class _Run:
             for qnames, value in zip(info['param_names'], values):
                 for qname in (qnames if isinstance(qnames, (list, tuple)) else [qnames]):
                     vessel, _, param = str(qname).partition('/')
-                    name = naming.model_name(vessel, param)
-                    target_vessel = naming.map_vessel(vessel, resolved.path)
+                    parameter = CalibratedParameter(vessel=vessel, param=param)
                     calibrated.append({
-                        'vessel': vessel, 'param': param, 'model_name': name,
-                        'target_model_name': naming.model_name(target_vessel, param),
-                        'target_parameterisation_name': naming.parameterisation_name(
-                            target_vessel, param, resolved.target_paths),
-                        'value': float(value), 'units': units.get(name, '')})
+                        'vessel': vessel, 'param': param, 'model_name': parameter.model_name,
+                        'target_model_name': resolved.target_model_name(parameter),
+                        'target_parameterisation_name':
+                            resolved.target_parameterisation_name(parameter),
+                        'value': float(value), 'units': units.get(parameter.model_name, '')})
             result = {
-                'step': step.id, 'status': 'done', 'target': step.target.as_dict(),
-                'submodule_path': resolved.path, 'started': started, 'finished': _now(),
+                'step': step.id, 'status': 'done', 'model': step.model.as_dict(),
+                'place': resolved.place, 'started': started, 'finished': _now(),
                 'duration_s': round(time.time() - t0, 3),
                 'method': settings.get('param_id_method'), 'best_cost': best_cost,
                 'point_estimate': point_estimate,
@@ -350,9 +367,8 @@ class _Run:
         distribution = StoredDistribution.from_chain(
             chain, parameters, burn_in_index=start,
             source={'workflow': self.workflow.name, 'step': step.id,
-                    'target': step.target.as_dict(),
-                    'obs_data_sha256': sha256(self.resolved.steps[step.id]
-                                              .parameterisation.obs_data_path),
+                    'model': step.model.as_dict(),
+                    'obs_data_sha256': sha256(step.obs_data),
                     'chain': chain_path, 'created': _now()})
         return distribution.save(os.path.join(self.step_dir(step.id), DISTRIBUTION_DIR),
                                  chain=chain)
@@ -385,8 +401,8 @@ class _Run:
             'libcuflynx_version': _libcuflynx_version(),
             'module_library_dirs': self.workflow.module_library_dirs,
             'steps': {sid: (None if r is None else {
-                'status': r.get('status'), 'target': r.get('target'),
-                'submodule_path': r.get('submodule_path'), 'started': r.get('started'),
+                'status': r.get('status'), 'model': r.get('model'),
+                'place': r.get('place'), 'started': r.get('started'),
                 'finished': r.get('finished'), 'best_cost': r.get('best_cost'),
                 'inputs': r.get('inputs'), 'result': os.path.join(sid, STEP_RESULT)})
                 for sid, r in results.items()},
@@ -403,11 +419,20 @@ class _Run:
             target_dir = os.path.join(self.output_dir, TARGET_DIR)
             if os.path.isdir(target_dir):
                 shutil.rmtree(target_dir)
-            generated = generate_parameterisation(
+            generated = generate_model(
                 self.workflow.target, os.path.join(target_dir, 'model'), 'target', overrides,
                 library_inputs=self.resolved.library_inputs,
                 model_type=self.workflow.settings.get('model_type', 'cellml'),
                 solver=self.workflow.settings.get('solver'))
+            names = {r['variable_name'] for r in read_parameter_rows(generated['parameters_path'])}
+            missing = sorted(r['model_name'] for r in workflow_result['merged_parameters']
+                             if r['model_name'] not in names)
+            if missing:
+                raise WorkflowError(
+                    f'the target {self.workflow.target.label()} has no parameter {missing}, '
+                    f'which the steps calibrated. Name where each step\'s model sits in the '
+                    f'target: "submodule" or "vessel" for a library module, "vessel_map" for a '
+                    f'module array.')
             workflow_result['target_model'] = {
                 'model_path': generated['model_path'],
                 'parameters_path': generated['parameters_path']}
@@ -416,17 +441,17 @@ class _Run:
                 raise WorkflowError('the calibrated parameters file is written only for a '
                                     'complete workflow run; some steps have no result.')
             workflow_result['calibrated_parameters_file'] = write_calibrated_parameters(
-                target, workflow_result['merged_parameters'], self.workflow.name,
-                next(iter(self.resolved.steps.values())).target_paths)
+                target, workflow_result['merged_parameters'], self.workflow.name)
         _write_json(os.path.join(self.output_dir, WORKFLOW_RESULT), workflow_result)
         return workflow_result
 
 
-def write_calibrated_parameters(target, merged_parameters, workflow_name, target_paths=()):
-    '''``<parameterisation>_calibrated_parameters.csv`` in the target parameterisation's
-    directory: its parameters with the merged values in place (rows the parameterisation's file
-    lacks are added, written ``<submodule>/<variable>``). A row is matched by the model
-    parameter it names, so ``i_M/rho_M`` and the older ``rho_M_i_M`` both take the value.'''
+def write_calibrated_parameters(target, merged_parameters, workflow_name):
+    '''``<name>_calibrated_parameters.csv`` beside the target's parameters file (``<name>`` its
+    parameterisation, or its module array's prefix): its parameters with the merged values in
+    place, and rows it lacks added, written ``<vessel or submodule>/<variable>``. A row is
+    matched by the model parameter it names, so ``i_M/rho_M`` and the older ``rho_M_i_M``
+    both take the value.'''
     rows = read_parameter_rows(target.parameters_path)
     columns = list(rows[0].keys()) if rows else ['variable_name', 'units', 'value',
                                                   'data_reference']
@@ -434,7 +459,7 @@ def write_calibrated_parameters(target, merged_parameters, workflow_name, target
     by_model_name = {}
     for r in rows:
         try:
-            by_model_name[_row_model_name(r['variable_name'], target_paths)] = r
+            by_model_name[_row_model_name(r['variable_name'], target)] = r
         except ValueError:
             pass
     today = datetime.date.today().isoformat()
@@ -495,11 +520,12 @@ def _write_params_for_id_with_priors(source_path, out_path, priors, step_id):
         writer.writerows(rows)
 
 
-def _row_model_name(name, target_paths):
-    '''The target model name (generated as ``naming.STEP_VESSEL``) of a row of the target
-    parameterisation's parameters CSV.'''
-    if target_paths:
-        return supermodule_row_name(name, naming.STEP_VESSEL, target_paths)[0]
+def _row_model_name(name, target):
+    '''The target model name of a row of the target's parameters file.'''
+    if target.kind == 'array':
+        return naming.host_model_name(name)
+    if target.paths:
+        return supermodule_row_name(name, naming.STEP_VESSEL, target.paths)[0]
     _, variable = split_path_name(name) if is_path_name(name) else ([], name)
     return naming.model_name(naming.STEP_VESSEL, variable)
 
@@ -518,16 +544,16 @@ def plan_workflow(source, module_library_dirs=None):
         rs = resolved.steps[step.id]
         fixed = []
         for source_id in step.fixed_from:
-            path = resolved.path_between(source_id, step.id)
+            vessel_of = resolved.map_between(source_id, step.id)
             for p in resolved.steps[source_id].parameters:
+                vessel = vessel_of(p.vessel)
                 fixed.append({'from_step': source_id, 'model_name': p.model_name,
-                              'in_step': naming.model_name(naming.map_vessel(p.vessel, path),
-                                                           p.param)})
+                              'in_step': naming.model_name(vessel, p.param) if vessel else None})
         steps.append({
-            'id': step.id, 'target': step.target.as_dict(),
-            'submodule_path': rs.path, 'depends_on': list(step.depends_on),
-            'obs_data': rs.parameterisation.obs_data_path,
-            'params_for_id': rs.parameterisation.params_for_id_path,
+            'id': step.id, 'model': step.model.as_dict(),
+            'place': rs.place, 'depends_on': list(step.depends_on),
+            'obs_data': rs.obs_data_path,
+            'params_for_id': rs.params_for_id_path,
             'calibrates': [{'model_name': p.model_name,
                             'target_model_name': rs.target_model_name(p),
                             'target_parameterisation_name': rs.target_parameterisation_name(p)}
@@ -684,29 +710,30 @@ def workflow_model(source, view, *, output_dir, work_dir, module_library_dirs=No
 
     overrides, fixed, calibrated = {}, [], []
     if view == TARGET_VIEW:
-        kind, target = 'target', workflow.target
+        kind, model = 'target', workflow.target
         for step in workflow.topological_order():
             result = available(step.id)
             for record in (result or {}).get('calibrated', []):
                 overrides[record['target_model_name']] = (record, step.id)
         calibrated = [{'model_name': name, 'value': rec['value'], 'units': rec.get('units', ''),
                        'from_step': sid} for name, (rec, sid) in sorted(overrides.items())]
-        own_step = next((s for s in workflow.steps if s.target == workflow.target), None)
-        parameterisation = resolved.target
-        submodule_path = ''
+        own_step = next((s for s in workflow.steps if s.model == workflow.target), None)
+        place = ''
         own_result = run.step_result(own_step.id) if own_step else None
     else:
         step = workflow.step(view)
-        kind, target = 'step', step.target
+        kind, model = 'step', step.model
         rs = resolved.steps[step.id]
-        parameterisation, submodule_path = rs.parameterisation, rs.path
+        place = rs.place
         for source_id in step.fixed_from:
             result = available(source_id)
             if result is None:
                 continue
-            path = resolved.path_between(source_id, step.id)
+            vessel_of = resolved.map_between(source_id, step.id)
             for record in result['calibrated'] + result['fixed']:
-                vessel = naming.map_vessel(record['vessel'], path)
+                vessel = vessel_of(record['vessel'])
+                if vessel is None:
+                    continue
                 name = naming.model_name(vessel, record['param'])
                 origin = record.get('from_step', source_id)
                 overrides[name] = ({'value': record['value'], 'units': record.get('units', '')},
@@ -730,8 +757,8 @@ def workflow_model(source, view, *, output_dir, work_dir, module_library_dirs=No
     if os.path.isdir(view_dir):
         shutil.rmtree(view_dir)
     settings = workflow.step_settings(own_step) if kind == 'step' else workflow.settings
-    generated = generate_parameterisation(
-        target, view_dir, view, rows, library_inputs=resolved.library_inputs,
+    generated = generate_model(
+        model, view_dir, view, rows, library_inputs=resolved.library_inputs,
         model_type=settings.get('model_type', STEP_DEFAULTS['model_type']),
         solver=settings.get('solver'))
 
@@ -740,14 +767,14 @@ def workflow_model(source, view, *, output_dir, work_dir, module_library_dirs=No
 
     has_own = own_step is not None
     return {
-        'view': view, 'kind': kind, 'target': target.as_dict(),
+        'view': view, 'kind': kind, 'model': model.as_dict(),
         'step_id': own_step.id if has_own else None,
-        'submodule_path': submodule_path,
+        'place': place,
         'model_path': generated['model_path'],
         'flat_model_path': generated['flat_model_path'],
         'parameters_path': generated['parameters_path'],
-        'obs_data_path': existing(parameterisation.obs_data_path) if has_own else None,
-        'params_for_id_path': existing(parameterisation.params_for_id_path) if has_own else None,
+        'obs_data_path': existing(own_step.obs_data) if has_own else None,
+        'params_for_id_path': existing(own_step.params_for_id) if has_own else None,
         'fixed': fixed, 'calibrated': calibrated,
         'waiting_for': sorted(set(waiting)), 'stale': sorted(set(stale)),
         'result': own_result,

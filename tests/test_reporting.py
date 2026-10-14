@@ -186,7 +186,7 @@ def test_each_module_is_a_section_in_the_mapped_symbols():
 
 def _step(step_id, depends=(), fixed=(), priors=()):
     return {'id': step_id,
-            'target': {'module_type': 'm', 'version': 'v1', 'parameterisation': step_id},
+            'model': {'module_type': 'm', 'version': 'v1', 'parameterisation': step_id},
             'n_parameters': 1, 'n_data_items': 2, 'settings': {'param_id_method': 'CMA-ES'},
             'depends_on': list(depends), 'fixed_from': list(fixed), 'priors_from': list(priors)}
 
@@ -194,7 +194,7 @@ def _step(step_id, depends=(), fixed=(), priors=()):
 @pytest.mark.unit
 def test_a_workflow_flow_chart_follows_its_dependencies():
     target = {'id': None,
-              'target': {'module_type': 'soma', 'version': 'v', 'parameterisation': 'r'},
+              'model': {'module_type': 'soma', 'version': 'v', 'parameterisation': 'r'},
               'n_merged': 3}
     nodes, edges = flowchart.workflow_graph([
         _step('a'), _step('b'), _step('c', depends=['a', 'b'], fixed=['a'], priors=['b']),

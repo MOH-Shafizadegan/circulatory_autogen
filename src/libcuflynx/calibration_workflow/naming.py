@@ -80,3 +80,105 @@ def relative_path(inner, outer):
     if inner.startswith(outer + '_'):
         return inner[len(outer) + 1:]
     return None
+
+
+def host_model_name(name):
+    '''The model name of a row of a module array's parameters file: ``aortic_root/C`` and
+    ``C_aortic_root`` are ``C_aortic_root``; ``global/R`` and ``R`` are ``R``.'''
+    from libcuflynx.utilities.parameter_names import is_path_name, split_path_name
+    if not is_path_name(name):
+        return name
+    path, variable = split_path_name(name)
+    return f'{variable}_{"_".join(path)}' if path else variable
+
+
+class VesselMap:
+    '''How the vessels of a step's model are named in the workflow's target model, and back.
+
+    ``to_target(vessel)`` names a vessel of the step's model in the target. ``from_target(vessel)``
+    names a target vessel in the step's model, or None when the step's model has no such vessel
+    (``vessels`` lists the ones it has). A global (``global``) is the same everywhere.'''
+
+    def __init__(self, vessels):
+        self.vessels = set(vessels)
+
+    def to_target(self, vessel):
+        return vessel if is_global(vessel) else self._to(vessel)
+
+    def from_target(self, vessel):
+        if is_global(vessel):
+            return vessel
+        name = self._from(vessel)
+        return name if name in self.vessels else None
+
+
+class Nested(VesselMap):
+    '''A library module generated as ``mod``, inside a library supermodule target (also
+    generated as ``mod``) at the submodule ``path`` (``'i_M'``, ``'soma_i_M'``; ``''`` for
+    the target module itself).'''
+
+    def __init__(self, path, vessels):
+        super().__init__(vessels)
+        self.path = path
+
+    def _to(self, vessel):
+        return map_vessel(vessel, self.path)
+
+    def _from(self, vessel):
+        if not self.path:
+            return vessel
+        root = f'{STEP_VESSEL}_{self.path}'
+        if vessel == root:
+            return STEP_VESSEL
+        if vessel.startswith(root + '_'):
+            return f'{STEP_VESSEL}_{vessel[len(root) + 1:]}'
+        return None
+
+
+class Placed(VesselMap):
+    '''A library module generated as ``mod``, that is the record ``vessel`` of a module-array
+    target: ``mod`` is ``vessel`` and ``mod_<sub>`` is ``vessel_<sub>``.'''
+
+    def __init__(self, vessel, vessels):
+        super().__init__(vessels)
+        self.vessel = vessel
+
+    def _to(self, vessel):
+        if vessel == STEP_VESSEL:
+            return self.vessel
+        if vessel.startswith(STEP_VESSEL + '_'):
+            return f'{self.vessel}_{vessel[len(STEP_VESSEL) + 1:]}'
+        raise ValueError(f'vessel "{vessel}" is not part of the step model, whose single record '
+                         f'is "{STEP_VESSEL}".')
+
+    def _from(self, vessel):
+        if vessel == self.vessel:
+            return STEP_VESSEL
+        if vessel.startswith(self.vessel + '_'):
+            return f'{STEP_VESSEL}_{vessel[len(self.vessel) + 1:]}'
+        return None
+
+
+class Renamed(VesselMap):
+    '''A module array's own vessels: named the same in the target unless ``mapping`` (its
+    vessel -> the target's) renames them.'''
+
+    def __init__(self, mapping, vessels):
+        super().__init__(vessels)
+        self.mapping = dict(mapping)
+        self.inverse = {v: k for k, v in self.mapping.items()}
+
+    def _to(self, vessel):
+        return self.mapping.get(vessel, vessel)
+
+    def _from(self, vessel):
+        if vessel in self.inverse:
+            return self.inverse[vessel]
+        return None if vessel in self.mapping else vessel
+
+
+def between(source, receiver, vessel):
+    '''``vessel`` of the step whose map is ``source``, named in the step whose map is
+    ``receiver`` (through the target's naming); None when the receiving model has no such
+    vessel.'''
+    return receiver.from_target(source.to_target(vessel))

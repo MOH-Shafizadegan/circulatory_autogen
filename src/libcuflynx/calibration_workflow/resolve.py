@@ -1,6 +1,14 @@
 '''
-Finding a workflow's parameterisations in the module library, and where each step's module sits in
-the workflow's target supermodule.
+Checking a workflow's files and modules, and working out how each step's model is named in the
+workflow's target model.
+
+A step's values reach the target, and other steps, through a vessel map (``naming.VesselMap``):
+
+* a library module in a library supermodule target sits at a submodule (``Nested``; the step's
+  ``submodule``, inferred when its module type occurs once);
+* a library module in a module-array target is one of its records (``Placed``; the step's
+  ``vessel``, inferred likewise);
+* a module array keeps its vessel names, unless its ``vessel_map`` renames them (``Renamed``).
 '''
 
 import os
@@ -10,7 +18,7 @@ from dataclasses import dataclass, field
 from libcuflynx.calibration_workflow import naming
 from libcuflynx.calibration_workflow.spec import WorkflowError
 from libcuflynx.parsers.PrimitiveParsers import ObsAndParamDataParser
-from libcuflynx.utilities.config_schemas import is_supermodule_entry
+from libcuflynx.utilities.config_schemas import is_supermodule_entry, read_module_array_records
 from libcuflynx.utilities.parameterisations import parameterisations_dir
 from libcuflynx.utilities.supermodules import submodule_path_parts
 from libcuflynx.utilities.module_library import ModuleSources
@@ -18,28 +26,100 @@ from libcuflynx.utilities.module_library import ModuleSources
 
 @dataclass
 class ResolvedParameterisation:
+    '''A library module: its config entry and its parameterisation directory.'''
     target: object                 # spec.Target
     entry: dict                    # the normalised module config entry (with config_path)
     parameterisation_dir: str
+    paths: tuple = ()              # its submodules, as tuples of names (a supermodule)
+
+    kind = 'library'
+
+    @property
+    def model(self):
+        return self.target
 
     @property
     def is_supermodule(self):
         return is_supermodule_entry(self.entry)
 
     def file(self, suffix):
-        return os.path.join(self.parameterisation_dir, f'{self.target.parameterisation}_{suffix}')
+        return os.path.join(self.parameterisation_dir,
+                            f'{self.target.parameterisation}_{suffix}')
 
     @property
     def parameters_path(self):
         return self.file('parameters.csv')
 
     @property
-    def obs_data_path(self):
-        return self.file('obs_data.json')
+    def vessels(self):
+        '''Its vessels when generated alone as ``mod``.'''
+        return {naming.STEP_VESSEL} | {f'{naming.STEP_VESSEL}_{"_".join(p)}' for p in self.paths}
+
+    def config_paths(self, components, supermodules):
+        return [self.entry.get('config_path')] + _submodule_configs(self.entry, components,
+                                                                    supermodules)
+
+
+@dataclass
+class ResolvedArray:
+    '''A module array: its records and files.'''
+    model: object                  # spec.ModuleArray
+    records: list
+    supermodules: dict = field(default_factory=dict)
+
+    kind = 'array'
 
     @property
-    def params_for_id_path(self):
-        return self.file('params_for_id.csv')
+    def parameters_path(self):
+        return self.model.parameters
+
+    def file(self, suffix):
+        return os.path.join(os.path.dirname(self.model.parameters),
+                            f'{self.model.prefix}_{suffix}')
+
+    @property
+    def vessels(self):
+        names = set()
+        for record in self.records:
+            names.add(record['name'])
+            nested = self.supermodules.get((record['vessel_type'], record['BC_type']))
+            if nested is not None:
+                names |= {f'{record["name"]}_{"_".join(p)}'
+                          for p in submodule_path_parts(nested, self.supermodules)}
+        return names
+
+    def places(self, key):
+        '''The vessels at which a module of ``key`` = (type, version) sits: a record of that
+        type, or a submodule of a supermodule record (``<record>_<path>``).'''
+        found = []
+        for record in self.records:
+            record_key = (record['vessel_type'], record['BC_type'])
+            if record_key == key:
+                found.append(record['name'])
+            nested = self.supermodules.get(record_key)
+            if nested is not None:
+                found += [f'{record["name"]}_{"_".join(p)}'
+                          for p in submodule_paths(nested, key, self.supermodules)]
+        return found
+
+    def config_paths(self, components, supermodules):
+        paths = []
+        for record in self.records:
+            key = (record['vessel_type'], record['BC_type'])
+            entry = components.get(key) or supermodules.get(key) or {}
+            paths.append(entry.get('config_path'))
+            paths += _submodule_configs(entry, components, supermodules)
+        return [p for p in paths if p]
+
+
+def _submodule_configs(entry, components, supermodules):
+    paths = []
+    for sub in entry.get('submodules', []):
+        key = (sub['vessel_type'], sub['BC_type'])
+        nested = components.get(key) or supermodules.get(key) or {}
+        paths.append(nested.get('config_path'))
+        paths += _submodule_configs(nested, components, supermodules)
+    return [p for p in paths if p]
 
 
 @dataclass
@@ -56,42 +136,64 @@ class CalibratedParameter:
 @dataclass
 class ResolvedStep:
     step: object                   # spec.Step
-    parameterisation: ResolvedParameterisation
-    path: str                      # submodule path in the workflow target ('' = the target)
+    model: object                  # ResolvedParameterisation or ResolvedArray
+    vessel_map: object             # naming.VesselMap
     parameters: list = field(default_factory=list)   # [CalibratedParameter]
-    target_paths: tuple = ()       # the target's submodules, as tuples of names
+    target: object = None          # the workflow target, resolved
+
+    @property
+    def obs_data_path(self):
+        return self.step.obs_data
+
+    @property
+    def params_for_id_path(self):
+        return self.step.params_for_id
+
+    @property
+    def place(self):
+        '''Where the step's model sits in the target, for people: a submodule path, a
+        vessel, or '' (the target itself, or a module array named as the target is).'''
+        vmap = self.vessel_map
+        if isinstance(vmap, naming.Nested):
+            return vmap.path
+        if isinstance(vmap, naming.Placed):
+            return vmap.vessel
+        return ''
+
+    def to_target(self, vessel):
+        return self.vessel_map.to_target(vessel)
 
     def target_model_name(self, parameter):
         '''``parameter`` (a CalibratedParameter of this step) named in the target's model.'''
-        return naming.model_name(naming.map_vessel(parameter.vessel, self.path), parameter.param)
+        return naming.model_name(self.to_target(parameter.vessel), parameter.param)
 
     def target_parameterisation_name(self, parameter):
-        '''``parameter`` named in the target parameterisation's parameters CSV.'''
-        return naming.parameterisation_name(naming.map_vessel(parameter.vessel, self.path),
-                                            parameter.param, self.target_paths)
+        '''``parameter`` named as a row of the target's parameters file.'''
+        vessel = self.to_target(parameter.vessel)
+        if self.target.kind == 'library':
+            return naming.parameterisation_name(vessel, parameter.param, self.target.paths)
+        return parameter.param if naming.is_global(vessel) else f'{vessel}/{parameter.param}'
 
 
 @dataclass
 class ResolvedWorkflow:
     workflow: object               # spec.Workflow
-    target: ResolvedParameterisation
+    target: object                 # ResolvedParameterisation or ResolvedArray
     steps: dict                    # step id -> ResolvedStep
     config_files: list
-    library_inputs: dict           # the generation keys every step model is built with
+    library_inputs: dict           # the generation keys every model is built with
+    components: dict = field(default_factory=dict)
+    supermodules: dict = field(default_factory=dict)
 
-    def path_between(self, inner_id, outer_id):
-        '''The submodule path of step ``inner_id``'s module inside step ``outer_id``'s.'''
-        inner, outer = self.steps[inner_id], self.steps[outer_id]
-        path = naming.relative_path(inner.path, outer.path)
-        if path is None:
-            raise WorkflowError(
-                f'step "{outer_id}" takes values from "{inner_id}", but '
-                f'{inner.step.target.module_type} (at "{inner.path or "the target"}" in '
-                f'{self.workflow.target.label()}) is not part of '
-                f'{outer.step.target.module_type} (at "{outer.path or "the target"}"). Values '
-                f'can only be passed into a model that contains the module they were '
-                f'calibrated on.')
-        return path
+    def map_between(self, source_id, receiver_id):
+        '''``vessel -> vessel``: a vessel of step ``source_id``'s model named in step
+        ``receiver_id``'s model, None where that model has no such vessel.'''
+        source, receiver = self.steps[source_id].vessel_map, self.steps[receiver_id].vessel_map
+        return lambda vessel: naming.between(source, receiver, vessel)
+
+    def module_configs(self):
+        '''The module config files of every module in the target.'''
+        return self.target.config_paths(self.components, self.supermodules)
 
 
 def library_inputs(workflow, settings=None):
@@ -106,61 +208,134 @@ def library_inputs(workflow, settings=None):
 
 
 def resolve_workflow(workflow):
-    '''The workflow's parameterisations and submodule paths, checked against the module library.'''
-    if not workflow.module_library_dirs:
+    '''The workflow's models and files, checked, and each step's vessel map into the target.'''
+    library = [s.model for s in workflow.steps] + [workflow.target]
+    if any(m.kind == 'library' for m in library) and not workflow.module_library_dirs:
         raise WorkflowError(
-            f'workflow "{workflow.name}": no module library. Pass module_library_dirs (the '
-            f'--module-library-dir option of cuflynx-calibration-workflow) or list them in '
-            f'the file\'s "module_library_dirs".')
+            f'workflow "{workflow.name}" uses a library module but names no module library. '
+            f'Pass module_library_dirs (the --module-library-dir option of '
+            f'cuflynx-calibration-workflow) or list them in the file\'s "module_library_dirs".')
     inputs = library_inputs(workflow)
     try:
         sources = ModuleSources(inputs)
     except FileNotFoundError as exc:
         raise WorkflowError(str(exc)) from exc
-    config_files = sources.config_files
     # through ModuleSources, so a type defined in several sources is the one generation uses
     # (the most specific, with a ModuleShadowWarning), not whichever config file comes last
     components = sources.component_registry()
     supermodules = sources.supermodule_registry()
 
-    target = _resolve_parameterisation(workflow.target, components, supermodules,
-                                       f'workflow "{workflow.name}" target',
-                                       need_parameters=True)
-    target_paths = tuple(submodule_path_parts(target.entry, supermodules)) if \
-        is_supermodule_entry(target.entry) else ()
+    target = _resolve_model(workflow.target, components, supermodules,
+                            f'workflow "{workflow.name}" target')
     resolved = {}
     claimed = {}
     for step in workflow.steps:
         where = f'step "{step.id}"'
-        parameterisation = _resolve_parameterisation(step.target, components, supermodules,
-                                                     where, need_parameters=False)
-        for path, what in ((parameterisation.obs_data_path, 'obs_data'),
-                           (parameterisation.params_for_id_path, 'params_for_id')):
+        model = _resolve_model(step.model, components, supermodules, where)
+        for path, what in ((step.obs_data, 'obs_data'), (step.params_for_id, 'params_for_id')):
             if not os.path.isfile(path):
-                raise WorkflowError(
-                    f'{where}: {step.target.label()} has no {what} file ({path}). Every step '
-                    f'is calibrated against its own parameterisation\'s obs_data and '
-                    f'params_for_id.')
-        path = _submodule_path(step, workflow.target, target.entry, supermodules)
-        parameters = read_calibrated_parameters(parameterisation.params_for_id_path, where)
-        resolved_step = ResolvedStep(step=step, parameterisation=parameterisation, path=path,
-                                     parameters=parameters, target_paths=target_paths)
+                raise WorkflowError(f'{where}: its {what} file {path} does not exist.')
+        vessel_map = _vessel_map(step, model, workflow.target, target, supermodules)
+        parameters = read_calibrated_parameters(step.params_for_id, where)
+        resolved_step = ResolvedStep(step=step, model=model, vessel_map=vessel_map,
+                                     parameters=parameters, target=target)
         for parameter in parameters:
+            if parameter.vessel not in model.vessels and not naming.is_global(parameter.vessel):
+                raise WorkflowError(
+                    f'{where}: {step.params_for_id} names vessel "{parameter.vessel}", which '
+                    f'its model {step.model.label()} does not have (its vessels: '
+                    f'{sorted(model.vessels)}).')
             try:
                 name = resolved_step.target_model_name(parameter)
             except ValueError as exc:
+                raise WorkflowError(f'{where}: {step.params_for_id}: {exc}') from exc
+            landing = resolved_step.to_target(parameter.vessel)
+            if not naming.is_global(landing) and landing not in target.vessels:
                 raise WorkflowError(
-                    f'{where}: {parameterisation.params_for_id_path}: {exc}') from exc
+                    f'{where}: "{parameter.vessel}/{parameter.param}" lands on vessel '
+                    f'"{landing}" of the target {workflow.target.label()}, which has no such '
+                    f'vessel (its vessels: {sorted(target.vessels)}). Map it with '
+                    f'"vessel_map" (a module array) or "vessel"/"submodule" (a library module).')
             claimed.setdefault(name, []).append(step.id)
         resolved[step.id] = resolved_step
     _warn_recalibrated(workflow, {n: ids for n, ids in claimed.items() if len(ids) > 1})
 
     result = ResolvedWorkflow(workflow=workflow, target=target, steps=resolved,
-                              config_files=config_files, library_inputs=inputs)
+                              config_files=sources.config_files, library_inputs=inputs,
+                              components=components, supermodules=supermodules)
     for step in workflow.steps:
         for source in step.fixed_from + [p.step for p in step.priors_from]:
-            result.path_between(source, step.id)   # raises when not nested
+            mapped = result.map_between(source, step.id)
+            if not any(mapped(p.vessel) for p in resolved[source].parameters):
+                raise WorkflowError(
+                    f'step "{step.id}" takes values from "{source}", but none of the vessels '
+                    f'"{source}" calibrates is in {step.model.label()} '
+                    f'({sorted({p.vessel for p in resolved[source].parameters})}, as named in '
+                    f'the target: '
+                    f'{sorted({resolved[source].to_target(p.vessel) for p in resolved[source].parameters})}). '
+                    f'Values can only be passed into a model that contains what they were '
+                    f'calibrated on.')
     return result
+
+
+def _resolve_model(model, components, supermodules, where):
+    if model.kind == 'library':
+        return _resolve_parameterisation(model, components, supermodules, where)
+    for path, what in ((model.module_array, 'module array'), (model.parameters, 'parameters')):
+        if not os.path.isfile(path):
+            raise WorkflowError(f'{where}: its {what} file {path} does not exist.')
+    try:
+        records = read_module_array_records(model.module_array)
+    except Exception as exc:  # the readers raise a variety of errors for a malformed file
+        raise WorkflowError(f'{where}: cannot read {model.module_array}: {exc}') from exc
+    return ResolvedArray(model=model, records=records, supermodules=supermodules)
+
+
+def _vessel_map(step, model, workflow_target, target, supermodules):
+    '''How the step's model is named in the target (see the module docstring).'''
+    if model.kind == 'array':
+        mapping = dict(step.vessel_map)
+        if target.kind == 'library':
+            # a library target is generated as ``mod``: name its submodules by their path
+            mapping = {k: _library_vessel(v, target, step) for k, v in mapping.items()}
+        return naming.Renamed(mapping, model.vessels)
+    if target.kind == 'library':
+        if step.vessel:
+            raise WorkflowError(f'step "{step.id}": "vessel" places a library module in a '
+                                f'module-array target; in a supermodule target it is '
+                                f'"submodule".')
+        path = _submodule_path(step, workflow_target, target.entry, supermodules)
+        return naming.Nested(path, model.vessels)
+    if step.submodule:
+        raise WorkflowError(f'step "{step.id}": "submodule" places a library module in a '
+                            f'supermodule target; in a module-array target it is "vessel".')
+    key = (step.model.module_type, step.model.version)
+    places = target.places(key)
+    if step.vessel:
+        if step.vessel not in places:
+            raise WorkflowError(
+                f'step "{step.id}": "vessel" is "{step.vessel}", but {step.model.module_type} '
+                f'{step.model.version} is at {places or "no vessel"} in '
+                f'{workflow_target.label()}.')
+        return naming.Placed(step.vessel, model.vessels)
+    if len(places) != 1:
+        raise WorkflowError(
+            f'step "{step.id}": {step.model.module_type} {step.model.version} is at '
+            f'{places or "no vessel"} in {workflow_target.label()}; '
+            + ('say which with "vessel".' if places else 'its values have nowhere to go.'))
+    return naming.Placed(places[0], model.vessels)
+
+
+def _library_vessel(path, target, step):
+    '''A vessel_map value for a library supermodule target: a submodule path (``A``,
+    ``soma/i_M``) as the target names it when generated as ``mod``.'''
+    parts = tuple(path.split('/')) if '/' in path else None
+    for p in target.paths:
+        if p == parts or '_'.join(p) == path:
+            return f'{naming.STEP_VESSEL}_{"_".join(p)}'
+    raise WorkflowError(f'step "{step.id}": vessel_map maps to "{path}", which is not a '
+                        f'submodule of the target (its submodules: '
+                        f'{sorted("/".join(p) for p in target.paths)}).')
 
 
 def _warn_recalibrated(workflow, claimed):
@@ -202,7 +377,7 @@ def read_calibrated_parameters(params_for_id_path, where=''):
     return parameters
 
 
-def _resolve_parameterisation(target, components, supermodules, where, need_parameters):
+def _resolve_parameterisation(target, components, supermodules, where):
     key = (target.module_type, target.version)
     entry = supermodules.get(key) or components.get(key)
     if entry is None:
@@ -212,15 +387,13 @@ def _resolve_parameterisation(target, components, supermodules, where, need_para
             f'library (known: {known[:40]}{" ..." if len(known) > 40 else ""}).')
     parameterisation_dir = os.path.join(parameterisations_dir(entry['config_path']),
                                         target.parameterisation)
-    resolved = ResolvedParameterisation(target=target, entry=entry,
-                                        parameterisation_dir=parameterisation_dir)
     if not os.path.isdir(parameterisation_dir):
         raise WorkflowError(f'{where}: {target.label()} has no parameterisation directory '
                             f'{parameterisation_dir}.')
-    if need_parameters and not os.path.isfile(resolved.parameters_path):
-        raise WorkflowError(f'{where}: {target.label()} has no parameters file '
-                            f'{resolved.parameters_path}.')
-    return resolved
+    paths = tuple(submodule_path_parts(entry, supermodules)) if is_supermodule_entry(entry) \
+        else ()
+    return ResolvedParameterisation(target=target, entry=entry,
+                                    parameterisation_dir=parameterisation_dir, paths=paths)
 
 
 def submodule_paths(container_entry, key, supermodules, prefix=()):
@@ -247,13 +420,13 @@ def _matches(submodule, path):
 def _submodule_path(step, workflow_target, target_entry, supermodules):
     '''Where the step's module sits in the target, as the joined name its expanded vessel
     carries (``i_M``, ``soma_i_M``); '' for the target itself.'''
-    if (step.target.module_type, step.target.version) == \
+    if (step.model.module_type, step.model.version) == \
             (workflow_target.module_type, workflow_target.version):
         if step.submodule:
             raise WorkflowError(f'step "{step.id}" calibrates the target module itself, so it '
                                 f'has no "submodule".')
         return ''
-    key = (step.target.module_type, step.target.version)
+    key = (step.model.module_type, step.model.version)
     paths = submodule_paths(target_entry, key, supermodules) if \
         is_supermodule_entry(target_entry) else []
     shown = ['/'.join(p) for p in paths] or 'nowhere'
@@ -262,16 +435,16 @@ def _submodule_path(step, workflow_target, target_entry, supermodules):
         if len(chosen) != 1:
             raise WorkflowError(
                 f'step "{step.id}": "submodule" is "{step.submodule}", but '
-                f'{step.target.module_type} {step.target.version} is at {shown} '
+                f'{step.model.module_type} {step.model.version} is at {shown} '
                 f'in {workflow_target.label()}.')
         return '_'.join(chosen[0])
     if not paths:
         raise WorkflowError(
-            f'step "{step.id}": {step.target.module_type} {step.target.version} is not a '
+            f'step "{step.id}": {step.model.module_type} {step.model.version} is not a '
             f'submodule of {workflow_target.module_type} {workflow_target.version}, so its '
             f'calibrated values have nowhere to go.')
     if len(paths) > 1:
         raise WorkflowError(
-            f'step "{step.id}": {step.target.module_type} {step.target.version} is at '
+            f'step "{step.id}": {step.model.module_type} {step.model.version} is at '
             f'{shown} in {workflow_target.label()}; say which with "submodule".')
     return '_'.join(paths[0])

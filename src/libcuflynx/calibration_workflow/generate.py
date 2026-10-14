@@ -1,12 +1,14 @@
 '''
-Generating one module parameterisation on its own, with some of its parameters overridden.
+Generating a workflow model -- a library module on its own, or a module array -- with some of
+its parameters overridden.
 '''
 
 import csv
 import json
 import os
+import shutil
 
-from libcuflynx.calibration_workflow.naming import STEP_VESSEL
+from libcuflynx.calibration_workflow.naming import STEP_VESSEL, host_model_name
 
 PARAMETER_HEADER = ('variable_name', 'units', 'value', 'data_reference')
 _MODEL_EXTENSIONS = {'cellml': '.cellml', 'python': '.py', 'casadi_python': '.py',
@@ -35,21 +37,16 @@ def generate_parameterisation(target, work_dir, file_prefix, overrides=(), libra
 
     ``overrides`` are parameter rows (``variable_name`` in the generated model's naming,
     ``units``, ``value``, ``data_reference``) written as the host parameters file, which wins
-    over every parameterisation and supermodule default. ``library_inputs`` are the generation keys
-    that locate the modules (``module_library_dirs`` etc.).
+    over every parameterisation and supermodule default. ``library_inputs`` are the generation
+    keys that locate the modules (``module_library_dirs`` etc.).
 
     Returns ``{'model_path', 'flat_model_path', 'parameters_path', 'resources_dir',
     'generated_models_dir', 'inp_data_dict'}`` (``flat_model_path``: the CellML with its
     imports resolved, None for other model types); raises RuntimeError when generation
     fails. Not MPI-aware: call it on one rank.
     '''
-    # imported here: generation pulls in libCellML, which nothing else in the workflow needs
-    from libcuflynx.scripts.script_generate_with_new_architecture import \
-        generate_with_new_architecture
-
     work_dir = os.path.abspath(work_dir)
     resources_dir = os.path.join(work_dir, 'resources')
-    generated_models_dir = os.path.join(work_dir, 'generated_models')
     os.makedirs(resources_dir, exist_ok=True)
     record = {'name': vessel, 'module_type': target.module_type,
               'module_subtype': target.version, 'parameterisation': target.parameterisation,
@@ -58,7 +55,47 @@ def generate_parameterisation(target, work_dir, file_prefix, overrides=(), libra
         json.dump([record], f, indent=1)
     write_parameter_rows(os.path.join(resources_dir, f'{file_prefix}_parameters.csv'),
                          list(overrides))
+    return _generate(work_dir, resources_dir, file_prefix, model_type, solver, library_inputs,
+                     target.label())
 
+
+def generate_module_array(model, work_dir, file_prefix, overrides=(), library_inputs=None,
+                          model_type='cellml', solver=None):
+    '''Generate the module array ``model`` (a spec.ModuleArray) under ``work_dir``, from a copy
+    of its module array and parameters file. ``overrides`` (rows named as in the generated
+    model) replace the rows of the parameters file that set the same parameter, in whichever
+    form those rows name it. Returns as :func:`generate_parameterisation`.'''
+    work_dir = os.path.abspath(work_dir)
+    resources_dir = os.path.join(work_dir, 'resources')
+    os.makedirs(resources_dir, exist_ok=True)
+    extension = os.path.splitext(model.module_array)[1].lower() or '.csv'
+    shutil.copyfile(model.module_array,
+                    os.path.join(resources_dir, f'{file_prefix}_module_array{extension}'))
+    overridden = {row['variable_name'] for row in overrides}
+    rows = [r for r in read_parameter_rows(model.parameters)
+            if host_model_name(r.get('variable_name') or '') not in overridden]
+    write_parameter_rows(os.path.join(resources_dir, f'{file_prefix}_parameters.csv'),
+                         rows + list(overrides))
+    return _generate(work_dir, resources_dir, file_prefix, model_type, solver, library_inputs,
+                     model.label())
+
+
+def generate_model(model, work_dir, file_prefix, overrides=(), library_inputs=None,
+                   model_type='cellml', solver=None):
+    '''Generate a workflow model of either kind: :func:`generate_module_array` for a
+    spec.ModuleArray, :func:`generate_parameterisation` for a library module.'''
+    if model.kind == 'array':
+        return generate_module_array(model, work_dir, file_prefix, overrides, library_inputs,
+                                     model_type, solver)
+    return generate_parameterisation(model, work_dir, file_prefix, overrides, library_inputs,
+                                     model_type, solver)
+
+
+def _generate(work_dir, resources_dir, file_prefix, model_type, solver, library_inputs, label):
+    # imported here: generation pulls in libCellML, which nothing else in the workflow needs
+    from libcuflynx.scripts.script_generate_with_new_architecture import \
+        generate_with_new_architecture
+    generated_models_dir = os.path.join(work_dir, 'generated_models')
     config = {'file_prefix': file_prefix, 'input_param_file': f'{file_prefix}_parameters.csv',
               'model_type': model_type, 'resources_dir': resources_dir,
               'generated_models_dir': generated_models_dir, 'DEBUG': False}
@@ -66,8 +103,8 @@ def generate_parameterisation(target, work_dir, file_prefix, overrides=(), libra
         config['solver'] = solver
     config.update(library_inputs or {})
     if not generate_with_new_architecture(False, config):
-        raise RuntimeError(f'generating {target.label()} failed; the generator\'s messages '
-                           f'above say why.')
+        raise RuntimeError(f'generating {label} failed; the generator\'s messages above say '
+                           f'why.')
     model_dir = os.path.join(generated_models_dir, file_prefix)
     flat = os.path.join(model_dir, f'{file_prefix}_flat.cellml')
     return {

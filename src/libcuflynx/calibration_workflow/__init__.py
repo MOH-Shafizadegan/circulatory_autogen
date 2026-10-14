@@ -1,16 +1,13 @@
 '''
-Calibration workflows: ordered calibrations of module parameterisations (typically a
-supermodule's submodules, then the supermodule itself), merged into one supermodule
-parameterisation's parameters.
+Calibration workflows: calibrations run in order, whose results are merged into one model.
 
-The workflow is a ``calibration_workflow.json`` (schema
-``libcuflynx/schemas/calibration_workflow.schema.json``), usually kept in the target
-supermodule parameterisation's directory. Each step calibrates one parameterisation against
-that parameterisation's own ``<parameterisation>_obs_data.json`` and
-``<parameterisation>_params_for_id.csv``, through the normal param_id path; a later step can
-take earlier steps' calibrated values as fixed values (``fixed_from``) or their stored
-posteriors as priors (``priors_from``). Editing an obs_data file and re-running the workflow
-redoes everything downstream of it.
+A ``calibration_workflow.json`` (schema ``libcuflynx/schemas/calibration_workflow.schema.json``)
+names a ``target`` model and a list of steps. Each step names the three inputs of an ordinary
+param_id run -- a ``model``, an ``obs_data`` file and a ``params_for_id`` file -- where a model
+is a module array of CA or a module of a module library. A later step can take earlier steps'
+calibrated values as fixed values (``fixed_from``) or their stored posteriors as priors
+(``priors_from``). Editing an input and re-running the workflow redoes everything downstream of
+it.
 
 Not to be confused with ``cuflynx-sequential-param-id``, the unimplemented idea of staged
 fitting of *one* model (fit, drop unidentifiable parameters, refit).
@@ -18,22 +15,23 @@ fitting of *one* model (fit, drop unidentifiable parameters, refit).
 Entry points: :func:`run_calibration_workflow` (and the ``cuflynx-calibration-workflow``
 command), :func:`plan_workflow`, :func:`load_workflow`, :func:`load_workflow_run`,
 :func:`workflow_model` (the model a GUI tab shows), :class:`StoredDistribution`,
-:func:`generate_parameterisation`.
+:func:`generate_model`.
 '''
 
 from libcuflynx.calibration_workflow.distributions import StoredDistribution
-from libcuflynx.calibration_workflow.generate import generate_parameterisation
+from libcuflynx.calibration_workflow.generate import generate_model, generate_parameterisation
 from libcuflynx.calibration_workflow.resolve import resolve_workflow
 from libcuflynx.calibration_workflow.runner import (TARGET_VIEW, WorkflowStepError,
                                                     load_workflow_run, plan_workflow,
                                                     run_calibration_workflow, workflow_model,
                                                     workflow_status)
 from libcuflynx.calibration_workflow.spec import (ALLOWED_SETTINGS, PRIOR_KINDS,
-                                                  WORKFLOW_FILE_NAME, Workflow, WorkflowError,
-                                                  load_workflow)
+                                                  WORKFLOW_FILE_NAME, ModuleArray, Target,
+                                                  Workflow, WorkflowError, load_workflow)
 
-__all__ = ['ALLOWED_SETTINGS', 'PRIOR_KINDS', 'WORKFLOW_FILE_NAME', 'StoredDistribution',
-           'Workflow', 'WorkflowError', 'WorkflowStepError', 'generate_parameterisation',
+__all__ = ['ALLOWED_SETTINGS', 'PRIOR_KINDS', 'WORKFLOW_FILE_NAME', 'ModuleArray',
+           'StoredDistribution', 'Target', 'Workflow', 'WorkflowError', 'WorkflowStepError',
+           'generate_model', 'generate_parameterisation',
            'load_workflow', 'load_workflow_run', 'plan_workflow', 'resolve_workflow',
            'run_calibration_workflow', 'TARGET_VIEW', 'workflow_model',
            'workflow_status']

@@ -1009,29 +1009,28 @@ If you already have a model and do not want to run autogeneration, use:
 
 ## Calibration workflows
 
-Some parameters can only be calibrated on an assembled supermodule, after its submodules have
-been calibrated alone -- a neuron soma's leak conductances, say, once every channel has its own
-calibrated values. A **calibration workflow** records that order in a `calibration_workflow.json`
-and repeats it with one command:
+Some parameters can only be calibrated in a larger model, after its parts have been calibrated
+alone: a neuron soma's leak conductances once every channel has its own values, or a whole
+circulation once an isolated aorta has been fitted. A **calibration workflow** records that
+order in one JSON file and repeats it with one command:
 
 ```
-cuflynx-calibration-workflow <path>/calibration_workflow.json --module-library-dir <library>
-mpiexec -n 4 cuflynx-calibration-workflow <path>/calibration_workflow.json    # every step on 4 ranks
+cuflynx-calibration-workflow workflow.json
+mpiexec -n 4 cuflynx-calibration-workflow workflow.json    # every step on 4 ranks
 ```
 
 or from Python:
 
 ```python
 from libcuflynx.calibration_workflow import run_calibration_workflow
-result = run_calibration_workflow(path, module_library_dirs=[library], output_dir='wf_out')
-result['merged_parameters']    # [{'parameterisation_name': 'i_leak_Na/g_leak', 'value': ..., 'from_step': ...}]
+result = run_calibration_workflow('workflow.json', output_dir='wf_out')
+result['merged_parameters']    # [{'parameterisation_name': 'aortic_root/C', 'value': ..., 'from_step': ...}]
 ```
 
-It is built on [module parameterisations](design-model.md#module-versions-and-parameterisations):
-every step calibrates **one parameterisation** of a module in a module library, against that
-parameterisation's own `<parameterisation>_obs_data.json` and
-`<parameterisation>_params_for_id.csv`, through the ordinary param_id path. To redo a calibration, edit
-the obs_data and run the workflow again -- every step after it is redone with the new values.
+Each step is an ordinary calibration, named by its three inputs: a **model**, an **obs_data**
+file and a **params_for_id** file, the same three that `cuflynx-param-id` takes. The results of
+every step are merged into the workflow's **target** model. To redo a calibration, edit its
+obs_data and run the workflow again: every step that used its values is redone too.
 
 !!! note
     This is not `cuflynx-sequential-param-id`, which was the idea of fitting *one* model in
@@ -1039,75 +1038,96 @@ the obs_data and run the workflow again -- every step after it is redone with th
 
 ### Try it
 
-libcuflynx ships a small module library for trying workflows. Its models are algebraic, so a
-run takes seconds, and every answer is known. Write it anywhere:
+libcuflynx ships small example models for trying workflows. They are algebraic, so a run takes
+seconds, and every answer is known. Write them anywhere:
 
 ```
 python -c "from libcuflynx.external_testing.workflow_library import build_workflow_library as b; b('wf_example')"
-WF=wf_example/modules/chain/versions/v1/parameterisations/rest/calibration_workflow.json
+WF=wf_example/arrays/chain_array.json
 cuflynx-calibration-workflow $WF --dry-run              # the plan: where each parameter lands
 cuflynx-calibration-workflow $WF --output-dir wf_run    # A/p = 2, C/q = 3
 cuflynx-methods-latex --workflow $WF --run-dir wf_run -o methods.tex --pdf
 ```
 
-`chain` is a supermodule of `A` (`lin_a`, `y = 2 p^2`) feeding `C` (`lin_c`,
-`z = y + k q^2`). Step `fit_a` calibrates `p` of `lin_a` alone; step `rest` then calibrates
-`q` in the assembled `chain`, with `p` fixed. Read `$WF` and the parameterisation directories
-next to it for the layout to copy. The same run, with the LaTeX written and compiled, is the
-test `tests/test_reporting.py::test_methods_of_a_workflow_report_each_step_and_its_results`.
+`chain_module_array.json` is a model of two vessels: `A` (`lin_a`, `y = 2 p^2`) feeding `C`
+(`lin_c`, `z = y + k q^2`). Step `a-alone` calibrates `p` on a model of `A` alone; step `chain`
+then calibrates `q` in the whole chain, with `p` fixed. Read `$WF` and the files next to it for
+a layout to copy. The same chain written with library modules is
+`wf_example/modules/chain/versions/v1/parameterisations/rest/calibration_workflow.json`.
 
 ### The file
-
-The example below is from a neuron model, to show the shape of a real workflow. The file
-usually lives in the directory of the supermodule parameterisation it calibrates
-(`<module_type>/versions/<version>/parameterisations/<parameterisation>/calibration_workflow.json`);
-that parameterisation is then its **target**, the one whose parameters the results are merged
-into.
 
 ```json
 {
   "schema_version": 1,
-  "workflow_name": "soma_sympathetic_rest_balance",
-  "description": "Channel calibrations, then the soma's resting Na/K balance",
-  "module_library_dirs": ["../../../../../../.."],
+  "workflow_name": "aorta_then_circulation",
+  "module_library_dirs": ["../module_library"],
   "settings": {"param_id_method": "CMA-ES", "dt": 0.001,
                "optimiser_options": {"num_calls_to_function": 400}},
+  "target": "resources/circulation_module_array.csv",
   "steps": [
-    {"id": "M-type-K-channel",
-     "target": {"module_type": "i_M", "version": "Argus2026_v01",
-                "parameterisation": "davis2020_wistar"}},
-    {"id": "resting-balance",
-     "target": {"module_type": "soma", "version": "sympathetic",
-                "parameterisation": "rest_balance"},
-     "fixed_from": ["M-type-K-channel"]}
+    {"id": "aorta-compliance",
+     "model": "resources/aorta_only_module_array.csv",
+     "obs_data": "data/aorta_obs_data.json",
+     "params_for_id": "data/aorta_params_for_id.csv"},
+    {"id": "whole-circulation",
+     "model": "resources/circulation_module_array.csv",
+     "obs_data": "data/circulation_obs_data.json",
+     "params_for_id": "data/circulation_params_for_id.csv",
+     "fixed_from": ["aorta-compliance"]}
   ]
 }
 ```
 
+Paths are relative to the workflow file. A **model** is one of:
+
+- **a module array** of CA, as `"resources/<prefix>_module_array.csv"` (or `.json`). Its
+  parameters file is `<prefix>_parameters.csv` beside it, or name it:
+  `{"module_array": "...", "parameters": "..."}`.
+- **a module of a module library**, as `{"module_type": "i_M", "version": "Argus2026_v01",
+  "parameterisation": "davis2020_wistar"}`. The library is found through `module_library_dirs`
+  (see [module parameterisations](design-model.md#module-versions-and-parameterisations)).
+
 | Key | Meaning |
 |---|---|
-| `target` | the supermodule parameterisation (`module_type`, `version`, `parameterisation`) results are merged into; defaults to the parameterisation holding the file |
-| `module_library_dirs` | module libraries, relative to the file (more with `--module-library-dir`) |
+| `target` | the model the results are merged into |
+| `module_library_dirs` | module libraries, relative to the file (more with `--module-library-dir`); needed when a model is a library module |
 | `settings` | user_inputs settings for every step: `param_id_method`, `optimiser_options`, `solver`, `solver_info`, `dt`, `pre_time`, `sim_time`, `UQ_options`, `DEBUG`, ... (the model, obs_data, params_for_id and output paths are the workflow's, and cannot be set) |
 | step `id` | a label for the step, unique in the file: other steps refer to it, and it names the step's output directory. It is not a module or parameter name. |
-| step `target` | the parameterisation the step calibrates: its directory holds the step's obs_data and params_for_id (see [Preparing a step](#preparing-a-step)) |
-| step `submodule` | where that module sits in the workflow's target: `i_M`, or `soma/i_M` when nested (`soma_i_M` is also read); inferred unless the module occurs twice |
+| step `model`, `obs_data`, `params_for_id` | what the step calibrates, and against what |
+| step `vessel_map` | a module array whose vessels are named differently in the target: `{"aorta": "aortic_root"}` |
+| step `submodule` / `vessel` | where a library module sits in the target: a submodule of a library supermodule target (`i_M`, or `soma/i_M` when nested), or a vessel of a module-array target; inferred when the module occurs once |
 | step `fixed_from` | steps whose calibrated values -- and the values they were themselves given -- are fixed in this step's model, except those it calibrates itself |
 | step `priors_from` | steps whose stored posterior becomes this step's prior (below) |
 | step `store_distribution` | sample the posterior by MCMC after the fit and store it |
 | step `settings` | merged over the workflow's (one level deep, so `optimiser_options` add up) |
 
 A step runs after the steps in its `fixed_from` and `priors_from`, since it needs their results;
-steps that pass nothing between them run in file order. Here `resting-balance` runs after
-`M-type-K-channel` and calibrates the soma with the channel's calibrated values fixed.
+steps that pass nothing between them run in file order. Here `whole-circulation` runs after
+`aorta-compliance`, with the aorta's calibrated values fixed.
 
-The checks: a target names its parameter set with `parameterisation` (`instance` is an
-error); each step has its own parameterisation (two steps cannot calibrate the same one, and
-each must have its obs_data and params_for_id);
-every step's module is the target or one of its submodules; values only pass into a model that
-contains the module they were calibrated on. `--dry-run` runs every check and prints the plan --
-which parameter of each step lands where -- without calibrating anything. The schema is
-`libcuflynx/schemas/calibration_workflow.schema.json`.
+### How values move between models
+
+A value is named by its vessel and parameter (`aortic_root/C`, which is `C_aortic_root` in the
+generated model), and moves through the target's names:
+
+- **A module array** keeps its vessel names. A value calibrated on `aortic_root` in one model
+  fixes `aortic_root` in another, and lands on `aortic_root` in the target. When the names
+  differ, `vessel_map` renames the step's vessels into the target's.
+- **A library module** is generated alone as one vessel named `mod`, so its params_for_id rows
+  are `mod, <param>` (`mod_<submodule>, <param>` for a supermodule) and its obs_data operands
+  `mod/<variable>`. In the target it is renamed to where it sits: the submodule `i_M` of a
+  supermodule target (`rho_M_mod_i_M` in the model, `i_M/rho_M` in its parameterisation CSV),
+  or the vessel of a module-array target that it is.
+
+`--dry-run` checks that every calibrated parameter lands on a vessel the target has, and prints
+where each one lands and what each step is given. After the run, a value with no parameter of
+its name in the target is an error. A value passed to a model that lacks its vessel (an aorta
+value into a model without that vessel) is left out of that model with a warning.
+
+The other checks: a step's files exist; a library module exists in the library, and is in the
+target; a target written as a library module names its parameter set with `parameterisation`
+(`instance` is an error). The schema is `libcuflynx/schemas/calibration_workflow.schema.json`.
 
 A parameter may be calibrated by more than one step. The later step (in run order) wins: its
 value is the one merged into the target, and a step calibrates a parameter itself even when
@@ -1116,38 +1136,6 @@ calibration replaces the earlier one rather than building on it. To update an ea
 calibration with new data instead, take the parameter out of the later step's params_for_id
 and list the earlier step in its `priors_from` (below), so the earlier posterior becomes the
 prior.
-
-### Preparing a step
-
-Each step calibrates one parameterisation, in its own directory of the module library:
-
-```
-<module_type>/versions/<version>/parameterisations/<name>/
-    <name>_parameters.csv        the starting values of the module's parameters
-    <name>_obs_data.json         what this step is fitted to
-    <name>_params_for_id.csv     what this step calibrates
-```
-
-The link is by name only. A step's `target` picks the module version (`module_type`,
-`version`) and, with `parameterisation: "<name>"`, the directory `parameterisations/<name>/`
-in it; the files there are found by the prefix `<name>_`. A renamed file is not found, and
-`--dry-run` says which one is missing.
-
-1. Make the directory, for example by copying `default/`.
-2. Write the obs_data for the module alone. Its operands name the module's outputs
-   `mod/<variable>`, or `mod_<submodule>/<variable>` for a supermodule (see Naming).
-3. Write the params_for_id, with `vessel_name` `mod`, `mod_<submodule>` or `global`.
-4. Add the step to the workflow, with `fixed_from` or `priors_from` as needed, and check it
-   with `--dry-run`.
-
-### Naming
-
-Every step model is generated alone as a single vessel named `mod`, so a params_for_id row
-`mod, rho_M` names `rho_M_mod` in the step's model. In the target, where that module is the
-submodule `i_M`, supermodule expansion renames it `rho_M_mod_i_M` (and `i_M/rho_M` in the target
-parameterisation's parameters CSV). A supermodule step's own params_for_id therefore names its
-submodules' parameters `mod_<submodule>, <param>`, and its obs_data their outputs
-`mod_<submodule>/<variable>`.
 
 ### Outputs
 
@@ -1164,9 +1152,11 @@ submodules' parameters `mod_<submodule>, <param>`, and its obs_data their output
 
 `--from-step X` reruns X and everything after it, reusing the earlier results (and refusing if
 their obs_data, params_for_id or parameters changed since); `--only X` reruns one step.
-`--write-calibrated` writes the merged set as the target's `<parameterisation>_calibrated_parameters.csv`:
-the target's rows with the calibrated values in place, matched whether a row is written
-`i_M/rho_M` or `rho_M_i_M`, and new rows written `<submodule>/<variable>`.
+`--write-calibrated` writes the merged set beside the target's parameters file, as
+`<name>_calibrated_parameters.csv` (`<name>` is the module array's prefix or the
+parameterisation): the target's rows with the calibrated values in place, matched whichever
+form a row is written in (`aortic_root/C` or `C_aortic_root`), and new rows written
+`<vessel>/<variable>`.
 
 ### Distributions and priors
 

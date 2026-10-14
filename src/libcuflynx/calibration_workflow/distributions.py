@@ -75,9 +75,17 @@ class DistributionParameter:
         return [naming.model_name(v, p) for v, p in self.targets]
 
     def mapped(self, path):
-        return DistributionParameter(
-            targets=[[naming.map_vessel(v, path), p] for v, p in self.targets],
-            min=self.min, max=self.max, transform=self.transform)
+        return self.mapped_with(lambda v: naming.map_vessel(v, path))
+
+    def mapped_with(self, vessel_of):
+        '''The same parameter with each target's vessel renamed by ``vessel_of``; a target
+        it maps to None is left out (None when none is left).'''
+        targets = [[vessel_of(v), p] for v, p in self.targets]
+        targets = [t for t in targets if t[0] is not None]
+        if not targets:
+            return None
+        return DistributionParameter(targets=targets, min=self.min, max=self.max,
+                                     transform=self.transform)
 
     def as_dict(self):
         return {'targets': [list(t) for t in self.targets], 'model_names': self.model_names(),
@@ -187,6 +195,21 @@ class StoredDistribution:
             return self
         return StoredDistribution([p.mapped(path) for p in self.parameters], self.samples,
                                   source=dict(self.source, mapped_into=path),
+                                  directory=self.directory)
+
+    def mapped_with(self, vessel_of, label):
+        '''The same distribution named in another model: ``vessel_of`` renames a vessel of the
+        source step's model (None for one that model lacks). ValueError when a parameter has
+        nowhere to go in that model.'''
+        parameters = []
+        for par in self.parameters:
+            mapped = par.mapped_with(vessel_of)
+            if mapped is None:
+                raise ValueError(f'the stored posterior over {par.model_names()} has no '
+                                 f'parameter of that name in {label}.')
+            parameters.append(mapped)
+        return StoredDistribution(parameters, self.samples,
+                                  source=dict(self.source, mapped_into=label),
                                   directory=self.directory)
 
     def subset(self, names):

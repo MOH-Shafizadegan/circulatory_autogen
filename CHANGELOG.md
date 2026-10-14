@@ -78,23 +78,28 @@ the old name still works with a `FutureWarning`. The 0D/1D split writes `[file_p
 
 ### Added — calibration workflows
 
-`cuflynx-calibration-workflow <calibration_workflow.json>` (and
-`libcuflynx.calibration_workflow.run_calibration_workflow`) runs ordered calibrations of module
-parameterisations in a module library, typically a supermodule's submodules and then the
-supermodule, and merges the results into one supermodule parameterisation. A target is
-`{module_type, version, parameterisation}`. Each step is an ordinary param_id run against its
-parameterisation's own obs_data and params_for_id.
+`cuflynx-calibration-workflow <workflow.json>` (and
+`libcuflynx.calibration_workflow.run_calibration_workflow`) runs calibrations in order and merges
+their results into one target model. Each step names the three inputs of an ordinary param_id
+run -- `model`, `obs_data` and `params_for_id`, paths relative to the workflow file -- so a
+workflow works in any repository. A model is a CA module array, or a module of a module library
+(`{module_type, version, parameterisation}`).
 
+- **Names between models.** A module array keeps its vessel names (`vessel_map` renames them
+  into the target's); a library module sits at a `submodule` of a supermodule target or a
+  `vessel` of a module-array target, inferred when it occurs once. `--dry-run` checks that every
+  calibrated parameter lands on a vessel of the target.
 - **Fixed values.** A step can take earlier steps' calibrated values as fixed parameter values
-  (`fixed_from`). Names map from submodule to supermodule as supermodule expansion renames them.
+  (`fixed_from`); it runs after the steps it takes values from.
 - **Distributions and priors.** A step can store its MCMC posterior (`store_distribution`:
   chain, samples, stats; `StoredDistribution` samples and evaluates it). A later step can use it
   as a joint prior (`priors_from`), represented as a multivariate normal, independent normals or
   a KDE, each on a bounds-respecting scale.
 - **Reruns.** `--from-step` / `--only` rerun part of a workflow, refusing when an input it would
   reuse has changed. `--dry-run` checks everything against the library and prints the plan.
-  `--write-calibrated` writes the merged set as the target's `<parameterisation>_calibrated_parameters.csv`,
-  naming parameters `<submodule>/<variable>` and replacing rows written in either form.
+  `--write-calibrated` writes the merged set beside the target's parameters file, as
+  `<name>_calibrated_parameters.csv`, naming parameters `<vessel>/<variable>` and replacing rows
+  written in either form.
 - **A parameter calibrated by two steps** takes the later step's value, with a warning that
   suggests `priors_from` for a Bayesian update instead.
 - **A step's `submodule`** is written `soma/i_M` when nested (`soma_i_M` is also read).

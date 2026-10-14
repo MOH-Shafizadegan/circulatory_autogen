@@ -16,9 +16,9 @@ MPI = _get_MPI()
 from libcuflynx.scripts import _cli  # noqa: E402
 
 EPILOG = (
-    "Unlike the other stages, this command does not read user_inputs.yaml: each step's\n"
-    "model, obs_data and params_for_id come from its module parameterisation in the module\n"
-    "library, and its settings from the workflow file's \"settings\" (and the step's own).\n"
+    "Unlike the other stages, this command does not read user_inputs.yaml: each step names\n"
+    "its model, obs_data and params_for_id in the workflow file, and its settings come from\n"
+    "the file's \"settings\" (and the step's own).\n"
     "\n"
     "Outputs go to --output-dir (default ./workflow_output/<workflow_name>): one directory\n"
     "per step and workflow_result.json with the merged parameter set.\n"
@@ -33,14 +33,14 @@ def build_parser():
     # not _cli.build_parser: its --user-inputs option means nothing here
     parser = argparse.ArgumentParser(
         description='Run the calibrations of a calibration_workflow.json in order -- each '
-                    'step against its own parameterisation\'s obs_data and params_for_id, later '
-                    'steps taking earlier steps\' values as fixed values or priors -- and merge '
-                    'them into the target supermodule parameterisation.',
+                    'step a model, an obs_data and a params_for_id, later steps taking '
+                    'earlier steps\' values as fixed values or priors -- and merge them into '
+                    'the target model.',
         epilog=EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('workflow', help='the calibration_workflow.json to run')
     parser.add_argument('--module-library-dir', dest='module_library_dirs', action='append',
                         default=[], metavar='DIR',
-                        help='a module library to resolve the steps\' parameterisations in '
+                        help='a module library to find the library modules in '
                              '(repeatable; added to the file\'s own module_library_dirs)')
     parser.add_argument('--output-dir', default=None, metavar='DIR',
                         help='where to write the run (default ./workflow_output/<name>)')
@@ -53,17 +53,22 @@ def build_parser():
                         help='check the workflow against the library and print the plan; '
                              'run nothing')
     parser.add_argument('--write-calibrated', action='store_true',
-                        help='also write the merged set as the target parameterisation\'s '
-                             '<parameterisation>_calibrated_parameters.csv')
+                        help='also write the merged set beside the target\'s parameters '
+                             'file, as <name>_calibrated_parameters.csv')
     return parser
+
+
+def _model_label(model):
+    if 'module_array' in model:
+        return model['module_array']
+    return f"{model['module_type']}/{model['version']}/{model['parameterisation']}"
 
 
 def _print_progress(event):
     kind = event['event']
     if kind == 'step_started':
         print(f"[workflow] step {event['index'] + 1}/{event['total']}: {event['step']} "
-              f"({event['target']['module_type']}/{event['target']['version']}/"
-              f"{event['target']['parameterisation']})", flush=True)
+              f"({_model_label(event['model'])})", flush=True)
     elif kind == 'step_finished':
         print(f"[workflow] step {event['step']} done: best cost {event['best_cost']:.6g} "
               f"in {event['duration_s']:.1f} s", flush=True)
