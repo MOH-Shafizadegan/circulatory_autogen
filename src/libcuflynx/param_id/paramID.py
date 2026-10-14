@@ -23,6 +23,7 @@ from libcuflynx.utilities import paperPlotSetup
 from libcuflynx.utilities import stat_distributions
 from libcuflynx.utilities import diagnostics
 from libcuflynx.utilities import utility_funcs
+from libcuflynx.utilities import cuflynx_study
 import traceback
 from libcuflynx.utilities.utility_funcs import Normalise_class
 from libcuflynx.utilities.paths import default_param_id_output_dir, default_resources_dir
@@ -298,7 +299,8 @@ class CVS0DParamID():
                  param_id_output_dir=None, resources_dir=None, one_rank=False,
                  operation_funcs_external_path=None, cost_funcs_external_path=None,
                  modifier_funcs_external_path=None, mcmc_options=None,
-                 use_emulator=False, emulator_dir=None, emulator_settings=None):
+                 use_emulator=False, emulator_dir=None, emulator_settings=None,
+                 study_name=None, write_cuflynx_study=True, user_inputs_path=None):
         self.model_path = model_path
         self.param_id_method = param_id_method
         self.mcmc_instead = mcmc_instead
@@ -352,8 +354,23 @@ class CVS0DParamID():
             # Archive the input files (timestamped) used for this run so the user can
             # later check exactly what params_for_id / obs_data produced these outputs.
             self._archive_input_files(params_for_id_path, param_id_obs_path)
+            # Describe the study for CUFLynx: model, inputs, funcs and solver settings now; the
+            # run directory itself once it holds results (run / run_UQ), so a study is never
+            # opened on an empty run -- emulator training builds one of these and runs nothing.
+            self._study_inp = cuflynx_study.study_inputs(
+                param_id_output_dir=self.param_id_output_dir, study_name=study_name,
+                file_prefix=file_name_prefix, write_cuflynx_study=write_cuflynx_study,
+                user_inputs_path=user_inputs_path, model_path=model_path,
+                param_id_obs_path=param_id_obs_path, params_for_id_path=params_for_id_path,
+                operation_funcs_external_path=operation_funcs_external_path,
+                cost_funcs_external_path=cost_funcs_external_path,
+                modifier_funcs_external_path=modifier_funcs_external_path,
+                solver_info=self.solver_info, dt=dt, pre_time=pre_time, sim_time=sim_time,
+                use_emulator=self.use_emulator, emulator_dir=emulator_dir)
+            cuflynx_study.update_study(self._study_inp)
         else:
             self.output_dir = None
+            self._study_inp = None
         
         if resources_dir is None:
             self.resources_dir = default_resources_dir()
@@ -507,6 +524,7 @@ class CVS0DParamID():
             'one_rank', 'do_ad',
             'operation_funcs_external_path', 'cost_funcs_external_path',
             'modifier_funcs_external_path', 'use_emulator', 'emulator_settings',
+            'study_name', 'write_cuflynx_study', 'user_inputs_path',
         ]
         kwargs = {key: inp_data_dict[key] for key in arg_options if key in inp_data_dict}
 
@@ -598,6 +616,14 @@ class CVS0DParamID():
             except Exception:
                 pass
 
+        self._record_run_in_study(self.param_id_method)
+
+    def _record_run_in_study(self, method):
+        """Declare this run directory in the study manifest, now that it holds results."""
+        if getattr(self, 'rank', 0) == 0 and self._study_inp and self.output_dir:
+            cuflynx_study.update_study(self._study_inp, 'runs',
+                                       {'dir': self.output_dir, 'method': method})
+
     def run_UQ(self, UQ_options=None, mcmc_options=None):
         """Run uncertainty quantification (MCMC) on **this** object.
 
@@ -625,6 +651,7 @@ class CVS0DParamID():
         elif UQ_options is not None:
             mcmc_object._init_mcmc(UQ_options, DEBUG=self.DEBUG)
         mcmc_object.run()
+        self._record_run_in_study('mcmc')
 
     def run_mcmc(self):
         """Deprecated alias of :meth:`run_UQ`, kept so existing scripts keep working."""

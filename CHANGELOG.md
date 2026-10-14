@@ -46,6 +46,18 @@ differences are still used with `gradient_method: FD`, over an emulator, and, wi
 when Myokit's arm cannot take them: it needs every prediction feature in one and the same
 sub-experiment.
 
+### Added — every analysis records itself in a study manifest CUFLynx opens
+
+Calibration, UQ, sensitivity analysis and emulator training now record themselves in
+`<param_id_output_dir>/<study_name>_cuflynx_study.json` (`libcuflynx.utilities.cuflynx_study`):
+the model (the calibrated one once written), obs_data, params_for_id, the
+`*_funcs_external_path` files, the solver settings and `dt`, and each output directory as it
+finishes — including sensitivity results written outside `param_id_output_dir`. Dropping that
+file into CUFLynx reopens the whole study. Two new user_inputs keys: `study_name` (default
+`file_prefix`) and `write_cuflynx_study` (default `true`). Writing is atomic, merges rather
+than overwrites, and only ever warns on failure. `cuflynx-param-id` now also forwards
+`modifier_funcs_external_path`, which it used to drop.
+
 ### Changed — a module type several sources define comes from the most specific one
 
 A `(vessel_type, BC_type)` defined in more than one module source used to keep the first entry
