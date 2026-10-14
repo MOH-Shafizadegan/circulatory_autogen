@@ -74,7 +74,8 @@
           "type": "string",
           "not": {
             "const": "supermodule"
-          }
+          },
+          "description": "\"cellml\" (written into the generated CellML model), \"cpp\", or \"external_api\" (coupled through its api block); any other value is left out of the CellML model."
         },
         "entrance_ports": {
           "type": "array",
@@ -128,6 +129,48 @@
             ]
           },
           "description": "the older name of \"default_parameterisation\" (still read; give one of the two, or both with the same value)"
+        },
+        "api": {
+          "type": "object",
+          "required": [
+            "name",
+            "role",
+            "transport"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "Required. The api's name."
+            },
+            "description": {
+              "type": "string",
+              "description": "Free text."
+            },
+            "role": {
+              "enum": [
+                "consumer",
+                "provider",
+                "process"
+              ],
+              "description": "Required. \"consumer\": the generated model calls out to the other model (calls); \"provider\": the other model calls the generated model (functions, or a Python class); \"process\": a program run alongside the generated model (program, coordinator, channels)."
+            },
+            "transport": {
+              "enum": [
+                "named_pipe",
+                "cpp_class",
+                "python"
+              ],
+              "description": "Required. How the models talk: named pipes, a C++ class, or a Python class (python: {file, class}, file relative to this config)."
+            },
+            "exchange": {
+              "enum": [
+                "per_rhs",
+                "per_time_step"
+              ],
+              "description": "When values are exchanged. Default: \"per_time_step\"."
+            }
+          },
+          "description": "module_format \"external_api\" (or any entry with an api block): how the generated model is coupled to a model outside it; the other keys depend on role and transport (calls, functions, channels, process, python, variables, ...). Checked by libcuflynx/generators/cpp/api.py (validate_api_block)."
         }
       },
       "not": {
@@ -182,7 +225,8 @@
           "type": "string",
           "not": {
             "const": "supermodule"
-          }
+          },
+          "description": "\"cellml\" (written into the generated CellML model), \"cpp\", or \"external_api\" (coupled through its api block); any other value is left out of the CellML model."
         },
         "entrance_ports": {
           "type": "array",
@@ -236,6 +280,48 @@
             ]
           },
           "description": "the older name of \"default_parameterisation\" (still read; give one of the two, or both with the same value)"
+        },
+        "api": {
+          "type": "object",
+          "required": [
+            "name",
+            "role",
+            "transport"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "Required. The api's name."
+            },
+            "description": {
+              "type": "string",
+              "description": "Free text."
+            },
+            "role": {
+              "enum": [
+                "consumer",
+                "provider",
+                "process"
+              ],
+              "description": "Required. \"consumer\": the generated model calls out to the other model (calls); \"provider\": the other model calls the generated model (functions, or a Python class); \"process\": a program run alongside the generated model (program, coordinator, channels)."
+            },
+            "transport": {
+              "enum": [
+                "named_pipe",
+                "cpp_class",
+                "python"
+              ],
+              "description": "Required. How the models talk: named pipes, a C++ class, or a Python class (python: {file, class}, file relative to this config)."
+            },
+            "exchange": {
+              "enum": [
+                "per_rhs",
+                "per_time_step"
+              ],
+              "description": "When values are exchanged. Default: \"per_time_step\"."
+            }
+          },
+          "description": "module_format \"external_api\" (or any entry with an api block): how the generated model is coupled to a model outside it; the other keys depend on role and transport (calls, functions, channels, process, python, variables, ...). Checked by libcuflynx/generators/cpp/api.py (validate_api_block)."
         }
       },
       "not": {
