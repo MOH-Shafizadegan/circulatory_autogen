@@ -37,10 +37,7 @@ import json
 import os
 from dataclasses import dataclass, field
 
-from libcuflynx.utilities.parameterisations import (check_parameterisation_name,
-                                                    reject_instance_key)
 
-SCHEMA_VERSION = 1
 WORKFLOW_FILE_NAME = 'calibration_workflow.json'
 
 # The user_inputs keys a workflow (or a step) may set. Everything else in a step's
@@ -57,15 +54,8 @@ ALLOWED_SETTINGS = (
 PRIOR_KINDS = ('mvnormal', 'normal', 'kde')
 DEFAULT_PRIOR_KIND = 'mvnormal'
 
-_TOP_KEYS = {'schema_version', 'workflow_name', 'description', 'target', 'module_library_dirs',
-             'settings', 'steps', 'comment'}
-_STEP_KEYS = {'id', 'kind', 'model', 'obs_data', 'params_for_id', 'submodule', 'vessel',
-              'vessel_map', 'fixed_from', 'priors_from', 'store_distribution', 'emulator_from',
-              'result_from', 'sensitivity_from', 'params_for_id_from', 'reduction', 'settings',
-              'description', 'comment'}
 STEP_KINDS = ('calibration', 'sensitivity', 'reduction', 'emulation', 'identifiability')
 DEFAULT_KIND = 'calibration'
-_REDUCTION_KEYS = {'top_n', 'index_type', 'criterion', 'threshold'}
 #: the source keys of a step and the kind of step each must name
 SOURCE_KINDS = {'fixed_from': 'calibration', 'emulator_from': 'emulation',
                 'result_from': 'calibration', 'sensitivity_from': 'sensitivity',
@@ -78,12 +68,9 @@ _SOURCE_USERS = {'fixed_from': ('calibration', 'sensitivity', 'emulation', 'iden
                  'params_for_id_from': ('calibration', 'emulation')}
 #: the analysis options each kind needs in its settings
 _KIND_SETTINGS = {'sensitivity': 'sa_options', 'identifiability': 'ia_options'}
-_TARGET_KEYS = {'module_type', 'version', 'parameterisation'}
-_ARRAY_KEYS = {'module_array', 'parameters'}
 # a module array file's name is <prefix><suffix>
 ARRAY_SUFFIXES = ('_module_array.csv', '_module_array.json', '_vessel_array.csv',
                   '_vessel_array.json')
-_PRIOR_KEYS = {'step', 'kind', 'inflate', 'parameters'}
 
 
 class WorkflowError(ValueError):
@@ -253,111 +240,47 @@ def load_workflow(source, module_library_dirs=None):
 
 def parse_workflow(raw, path=None, module_library_dirs=None):
     where = path or 'calibration workflow'
-    if not isinstance(raw, dict):
-        raise WorkflowError(f'{where}: a calibration workflow is a JSON object.')
-    _no_unknown_keys(raw, _TOP_KEYS, where)
-    version = raw.get('schema_version', SCHEMA_VERSION)
-    if version != SCHEMA_VERSION:
-        raise WorkflowError(f'{where}: schema_version {version!r} is not supported by this '
-                            f'libcuflynx (it reads version {SCHEMA_VERSION}).')
-    name = raw.get('workflow_name')
-    if not isinstance(name, str) or not name.strip():
-        raise WorkflowError(f'{where}: "workflow_name" must be a non-empty string.')
-
-    base_dir = os.path.dirname(path) if path else os.getcwd()
-    library_dirs = [d if os.path.isabs(d) else os.path.normpath(os.path.join(base_dir, d))
-                    for d in _string_list(raw, 'module_library_dirs', where)]
-    for extra in module_library_dirs or []:
-        extra = os.path.abspath(str(extra))
-        if extra not in library_dirs:
-            library_dirs.append(extra)
-
-    if 'target' not in raw:
-        raise WorkflowError(
-            f'{where}: no "target". Name the model the results are merged into: a module array '
-            f'("resources/<prefix>_module_array.csv") or a library module '
-            f'({{"module_type", "version", "parameterisation"}}).')
-    target = _model(raw['target'], f'{where}: "target"', base_dir)
-
-    settings = _settings(raw.get('settings', {}), f'{where}: "settings"', base_dir)
-
-    raw_steps = raw.get('steps')
-    if not isinstance(raw_steps, list) or not raw_steps:
-        raise WorkflowError(f'{where}: "steps" must be a non-empty list.')
-    steps = [_step(s, i, where, base_dir) for i, s in enumerate(raw_steps)]
-
-    workflow = Workflow(name=name.strip(), target=target, steps=steps, settings=settings,
-                        module_library_dirs=library_dirs,
-                        description=raw.get('description', '') or '', path=path, raw=raw)
-    check_workflow(workflow)
-    # The schema refuses what the checks above do not look for; they come first for their
-    # more specific messages.
+    # The schema owns the file's structure (keys, types, enums, what each kind of step needs);
+    # what follows reads it, and checks what spans keys and steps.
     from libcuflynx.schemas import CALIBRATION_WORKFLOW_SCHEMA
     from libcuflynx.schemas.validation import SchemaValidationError, validate
     try:
         validate(CALIBRATION_WORKFLOW_SCHEMA, raw, source=where, what='calibration workflow')
     except SchemaValidationError as exc:
         raise WorkflowError(str(exc)) from exc
+
+    base_dir = os.path.dirname(path) if path else os.getcwd()
+    library_dirs = [_path(d, base_dir) for d in raw.get('module_library_dirs', [])]
+    for extra in module_library_dirs or []:
+        extra = os.path.abspath(str(extra))
+        if extra not in library_dirs:
+            library_dirs.append(extra)
+    workflow = Workflow(name=raw['workflow_name'].strip(), target=_model(raw['target'], base_dir),
+                        steps=[_step(s, where, base_dir) for s in raw['steps']],
+                        settings=_settings(raw.get('settings', {}), base_dir),
+                        module_library_dirs=library_dirs,
+                        description=raw.get('description', '') or '', path=path, raw=raw)
+    check_workflow(workflow)
     return workflow
 
 
-def _path(value, where, base_dir):
-    if not isinstance(value, str) or not value.strip():
-        raise WorkflowError(f'{where} must be a path (relative to the workflow file).')
+def _path(value, base_dir):
     value = os.path.expanduser(value.strip())
     return value if os.path.isabs(value) else os.path.normpath(os.path.join(base_dir, value))
 
 
-def _model(value, where, base_dir):
+def _model(value, base_dir):
     '''A ``model`` (or the workflow ``target``): a module array path, ``{"module_array",
     "parameters"}``, or a library module ``{"module_type", "version", "parameterisation"}``.'''
     if isinstance(value, str):
-        array = _path(value, where, base_dir)
-        return ModuleArray(array, os.path.join(os.path.dirname(array),
-                                               f'{array_prefix(array)}_parameters.csv'))
-    if isinstance(value, dict) and 'module_array' in value:
-        _no_unknown_keys(value, _ARRAY_KEYS, where)
-        array = _path(value['module_array'], f'{where}: "module_array"', base_dir)
-        parameters = (_path(value['parameters'], f'{where}: "parameters"', base_dir)
-                      if 'parameters' in value else
+        value = {'module_array': value}
+    if 'module_array' in value:
+        array = _path(value['module_array'], base_dir)
+        parameters = (_path(value['parameters'], base_dir) if 'parameters' in value else
                       os.path.join(os.path.dirname(array), f'{array_prefix(array)}_parameters.csv'))
         return ModuleArray(array, parameters)
-    return _target(value, where)
-
-
-def _no_unknown_keys(obj, allowed, where):
-    unknown = sorted(set(obj) - allowed)
-    if unknown:
-        raise WorkflowError(f'{where}: unknown key(s) {unknown}; allowed: {sorted(allowed)}.')
-
-
-def _string_list(obj, key, where):
-    value = obj.get(key, [])
-    if not isinstance(value, list) or not all(isinstance(v, str) and v for v in value):
-        raise WorkflowError(f'{where}: "{key}" must be a list of non-empty strings.')
-    return list(value)
-
-
-def _target(value, where):
-    if not isinstance(value, dict):
-        raise WorkflowError(f'{where} must be a module array path, or a library module '
-                            f'{sorted(_TARGET_KEYS)}.')
-    try:
-        reject_instance_key(value, where, what='A workflow target')
-    except ValueError as exc:
-        raise WorkflowError(str(exc)) from exc
-    _no_unknown_keys(value, _TARGET_KEYS, where)
-    missing = sorted(_TARGET_KEYS - set(value))
-    if missing:
-        raise WorkflowError(f'{where} is missing {missing}.')
-    for key in ('module_type', 'version'):
-        if not isinstance(value[key], str) or not value[key].strip():
-            raise WorkflowError(f'{where}: "{key}" must be a non-empty string.')
-    try:
-        parameterisation = check_parameterisation_name(value['parameterisation'], where)
-    except ValueError as exc:
-        raise WorkflowError(str(exc)) from exc
-    return Target(value['module_type'].strip(), value['version'].strip(), parameterisation)
+    return Target(value['module_type'].strip(), value['version'].strip(),
+                  value['parameterisation'].strip())
 
 
 #: settings that name a file or directory, relative to the workflow file like its other paths
@@ -365,116 +288,34 @@ PATH_SETTINGS = ('external_modules_dir', 'operation_funcs_external_path',
                  'cost_funcs_external_path', 'modifier_funcs_external_path')
 
 
-def _settings(value, where, base_dir):
-    if not isinstance(value, dict):
-        raise WorkflowError(f'{where} must be an object.')
-    unknown = sorted(set(value) - set(ALLOWED_SETTINGS))
-    if unknown:
-        raise WorkflowError(
-            f'{where}: {unknown} cannot be set by a workflow. The model, obs_data, '
-            f'params_for_id and output directories of each step are chosen by the workflow '
-            f'itself; settings may be {list(ALLOWED_SETTINGS)}.')
+def _settings(value, base_dir):
     settings = copy.deepcopy(value)
     for key in PATH_SETTINGS:
         if settings.get(key):
-            settings[key] = _path(settings[key], f'{where}: "{key}"', base_dir)
+            settings[key] = _path(settings[key], base_dir)
     return settings
 
 
-def _prior_source(value, where):
+def _prior_source(value):
     if isinstance(value, str):
         return PriorSource(step=value)
-    if not isinstance(value, dict):
-        raise WorkflowError(f'{where}: a priors_from entry is a step id or an object with '
-                            f'{sorted(_PRIOR_KEYS)}.')
-    _no_unknown_keys(value, _PRIOR_KEYS, where)
-    if not isinstance(value.get('step'), str):
-        raise WorkflowError(f'{where}: "step" must name a step.')
-    kind = value.get('kind', DEFAULT_PRIOR_KIND)
-    if kind not in PRIOR_KINDS:
-        raise WorkflowError(f'{where}: prior kind "{kind}" is not one of {list(PRIOR_KINDS)}.')
-    inflate = value.get('inflate', 1.0)
-    if isinstance(inflate, bool) or not isinstance(inflate, (int, float)) or inflate <= 0:
-        raise WorkflowError(f'{where}: "inflate" must be a positive number (a variance '
-                            f'multiplier), not {inflate!r}.')
     parameters = value.get('parameters')
-    if parameters is not None:
-        if not isinstance(parameters, list) or not all(isinstance(p, str) for p in parameters):
-            raise WorkflowError(f'{where}: "parameters" must be a list of parameter names.')
-        parameters = tuple(parameters)
-    return PriorSource(step=value['step'], kind=kind, inflate=float(inflate),
-                       parameters=parameters)
+    return PriorSource(step=value['step'], kind=value.get('kind', DEFAULT_PRIOR_KIND),
+                       inflate=float(value.get('inflate', 1.0)),
+                       parameters=tuple(parameters) if parameters is not None else None)
 
 
-def _step_ref(value, key, label):
-    given = value.get(key)
-    if given is not None and (not isinstance(given, str) or not given.strip()):
-        raise WorkflowError(f'{label}: "{key}" must name a step.')
-    return given.strip() if given else None
-
-
-def _reduction_options(value, label):
-    if not isinstance(value, dict):
-        raise WorkflowError(f'{label}: "reduction" must be an object with '
-                            f'{sorted(_REDUCTION_KEYS)}.')
-    _no_unknown_keys(value, _REDUCTION_KEYS, f'{label}: "reduction"')
-    top_n = value.get('top_n')
-    if isinstance(top_n, bool) or not isinstance(top_n, int) or top_n < 1:
-        raise WorkflowError(f'{label}: "reduction" needs "top_n", the number of parameters to '
-                            f'keep (a positive integer).')
-    index_type = str(value.get('index_type', 'ST')).upper()
-    if index_type not in ('ST', 'S1'):
-        raise WorkflowError(f'{label}: reduction "index_type" is "ST" (total) or "S1" (first '
-                            f'order), not {value.get("index_type")!r}.')
-    criterion = value.get('criterion', 'max')
-    if criterion not in ('max', 'mean'):
-        raise WorkflowError(f'{label}: reduction "criterion" is "max" or "mean" over the '
-                            f'outputs, not {criterion!r}.')
-    threshold = value.get('threshold')
-    if threshold is not None and (isinstance(threshold, bool)
-                                  or not isinstance(threshold, (int, float)) or threshold < 0):
-        raise WorkflowError(f'{label}: reduction "threshold" must be a number >= 0.')
-    return {'top_n': top_n, 'index_type': index_type, 'criterion': criterion,
-            'threshold': threshold}
-
-
-def _step(value, index, where, base_dir):
-    label = f'{where}: steps[{index}]'
-    if not isinstance(value, dict):
-        raise WorkflowError(f'{label} must be an object.')
-    if 'target' in value:
-        raise WorkflowError(f'{label}: a step names its "model", "obs_data" and '
-                            f'"params_for_id"; "target" is the workflow\'s, not a step\'s.')
-    if 'depends_on' in value:
-        raise WorkflowError(f'{label}: "depends_on" is not a key. A step runs after the steps '
-                            f'it takes something from ("fixed_from", "priors_from", '
-                            f'"emulator_from", ...); remove "depends_on".')
-    _no_unknown_keys(value, _STEP_KEYS, label)
-    step_id = value.get('id')
-    if not isinstance(step_id, str) or not step_id.strip():
-        raise WorkflowError(f'{label}: "id" must be a non-empty string.')
-    try:
-        check_parameterisation_name(step_id, label, key='id')  # it names an output directory
-    except ValueError as exc:
-        raise WorkflowError(str(exc)) from exc
+def _step(value, where, base_dir):
+    step_id = value['id'].strip()
     label = f'{where}: step "{step_id}"'
     kind = value.get('kind', DEFAULT_KIND)
-    if kind not in STEP_KINDS:
-        raise WorkflowError(f'{label}: "kind" is {kind!r}; it is one of {list(STEP_KINDS)}.')
-
-    refs = {key: _step_ref(value, key, label) for key in
+    refs = {key: (value[key].strip() if value.get(key) else None) for key in
             ('emulator_from', 'result_from', 'sensitivity_from', 'params_for_id_from')}
-    fixed_from = _string_list(value, 'fixed_from', label)
-    priors = value.get('priors_from', [])
-    if not isinstance(priors, list):
-        raise WorkflowError(f'{label}: "priors_from" must be a list.')
-    priors_from = [_prior_source(p, label) for p in priors]
+    fixed_from = list(value.get('fixed_from', []))
+    priors_from = [_prior_source(p) for p in value.get('priors_from', [])]
     store = value.get('store_distribution', False)
-    if not isinstance(store, bool):
-        raise WorkflowError(f'{label}: "store_distribution" must be true or false.')
-    given = dict(refs, fixed_from=fixed_from)
     for key, users in _SOURCE_USERS.items():
-        if given.get(key) and kind not in users:
+        if dict(refs, fixed_from=fixed_from).get(key) and kind not in users:
             raise WorkflowError(f'{label}: a {kind} step has no "{key}" (it is for '
                                 f'{" and ".join(users)} steps).')
     if (priors_from or store) and kind != 'calibration':
@@ -483,6 +324,9 @@ def _step(value, index, where, base_dir):
     if kind == 'identifiability' and not refs['result_from']:
         raise WorkflowError(f'{label}: an identifiability step needs "result_from", the '
                             f'calibration whose result it analyses.')
+    if (kind == 'reduction') != ('reduction' in value):
+        raise WorkflowError(f'{label}: "reduction" (the options) is for a reduction step, '
+                            f'and a reduction step needs it.')
 
     if kind == 'reduction':
         present = sorted(k for k in ('model', 'obs_data', 'params_for_id', 'submodule',
@@ -490,62 +334,42 @@ def _step(value, index, where, base_dir):
         if present:
             raise WorkflowError(f'{label}: a reduction step reads a sensitivity step\'s '
                                 f'results and has no {present}.')
-        if not refs['sensitivity_from']:
-            raise WorkflowError(f'{label}: a reduction step needs "sensitivity_from", the '
-                                f'Sobol sensitivity step whose indices it reads.')
-        return Step(id=step_id.strip(), model=None, obs_data=None, params_for_id=None,
-                    kind=kind, depends_on=[refs['sensitivity_from']],
+        options = value['reduction']
+        return Step(id=step_id, model=None, obs_data=None, params_for_id=None, kind=kind,
+                    depends_on=[refs['sensitivity_from']],
                     sensitivity_from=refs['sensitivity_from'],
-                    reduction=_reduction_options(value.get('reduction'), label),
+                    reduction={'top_n': options['top_n'],
+                               'index_type': options.get('index_type', 'ST'),
+                               'criterion': options.get('criterion', 'max'),
+                               'threshold': options.get('threshold')},
                     description=value.get('description', '') or '')
-    if 'reduction' in value:
-        raise WorkflowError(f'{label}: "reduction" is for a reduction step.')
 
-    needed = ['model', 'obs_data'] + ([] if refs['params_for_id_from'] else ['params_for_id'])
-    missing = [k for k in needed if k not in value]
-    if missing:
-        raise WorkflowError(f'{label} has no {missing}. A {kind} step names its "model", '
-                            f'"obs_data" and "params_for_id" (a calibration may take its '
-                            f'params_for_id from a reduction step: "params_for_id_from").')
-    if refs['params_for_id_from'] and 'params_for_id' in value:
-        raise WorkflowError(f'{label}: give "params_for_id" or "params_for_id_from", not both.')
     if refs['emulator_from'] and (fixed_from or refs['result_from']):
         raise WorkflowError(f'{label}: a step that uses an emulator ("emulator_from") runs on '
                             f'the emulation step\'s model, with the values that step was given; '
                             f'it has no "fixed_from" or "result_from" of its own.')
-    model = _model(value['model'], f'{label}: "model"', base_dir)
-    for key in ('submodule', 'vessel'):
-        given_place = value.get(key)
-        if given_place is not None and (not isinstance(given_place, str) or not given_place.strip()):
-            raise WorkflowError(f'{label}: "{key}" must be a non-empty string.')
-        if given_place is not None and model.kind != 'library':
-            raise WorkflowError(f'{label}: "{key}" places a library module in the target; '
-                                f'a module-array model maps its vessels with "vessel_map".')
+    model = _model(value['model'], base_dir)
+    submodule, vessel = value.get('submodule'), value.get('vessel')
+    if (submodule or vessel) and model.kind != 'library':
+        raise WorkflowError(f'{label}: "submodule" and "vessel" place a library module in the '
+                            f'target; a module-array model maps its vessels with "vessel_map".')
     vessel_map = value.get('vessel_map', {})
-    if not isinstance(vessel_map, dict) or not all(
-            isinstance(k, str) and k and isinstance(v, str) and v for k, v in vessel_map.items()):
-        raise WorkflowError(f'{label}: "vessel_map" maps vessel names to vessel names.')
     if vessel_map and model.kind != 'array':
         raise WorkflowError(f'{label}: "vessel_map" is for a module-array model; a library '
                             f'module is placed with "submodule" or "vessel".')
-    submodule, vessel = value.get('submodule'), value.get('vessel')
     depends_on = fixed_from + [p.step for p in priors_from] + [r for r in refs.values() if r]
-    return Step(id=step_id.strip(), model=model,
-                obs_data=_path(value['obs_data'], f'{label}: "obs_data"', base_dir),
-                params_for_id=(_path(value['params_for_id'], f'{label}: "params_for_id"',
-                                     base_dir) if 'params_for_id' in value else None),
+    return Step(id=step_id, model=model, obs_data=_path(value['obs_data'], base_dir),
+                params_for_id=(_path(value['params_for_id'], base_dir)
+                               if 'params_for_id' in value else None),
                 kind=kind,
                 submodule=submodule.strip() if submodule else None,
                 vessel=vessel.strip() if vessel else None,
                 vessel_map={k.strip(): v.strip() for k, v in vessel_map.items()},
                 depends_on=list(dict.fromkeys(depends_on)),
-                fixed_from=fixed_from,
-                priors_from=priors_from,
-                store_distribution=store,
+                fixed_from=fixed_from, priors_from=priors_from, store_distribution=store,
                 emulator_from=refs['emulator_from'], result_from=refs['result_from'],
                 params_for_id_from=refs['params_for_id_from'],
-                settings=_settings(value.get('settings', {}), f'{label}: "settings"',
-                                   base_dir),
+                settings=_settings(value.get('settings', {}), base_dir),
                 description=value.get('description', '') or '')
 
 

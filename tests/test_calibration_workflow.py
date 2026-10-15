@@ -93,7 +93,7 @@ def test_the_shipped_schema_accepts_the_fixture_workflows_and_rejects_unknown_ke
     raw['steps'][0]['fixed_values'] = {}
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(raw, schema)
-    with pytest.raises(WorkflowError, match='unknown key'):
+    with pytest.raises(WorkflowError, match="'fixed_values' was unexpected"):
         parse_workflow(raw, path=library['chain_rest'])
 
 
@@ -105,8 +105,8 @@ def test_a_target_names_its_parameterisation_not_an_instance(library):
     target['instance'] = target.pop('parameterisation')
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(raw, load_schema(CALIBRATION_WORKFLOW_SCHEMA))
-    with pytest.raises(WorkflowError, match='A workflow target names its parameter set with '
-                                            '"parameterisation"'):
+    with pytest.raises(WorkflowError, match=r"(?s)at target: .*'instance' was unexpected.*"
+                                            r"'parameterisation' is a required property"):
         parse_workflow(raw, path=library['chain_rest'])
 
 
@@ -129,14 +129,14 @@ def _edit(library, edit):
     (lambda w: w['steps'][0].update(fixed_from=['rest']), 'cycle'),
     (lambda w: w['steps'][1].update(fixed_from=['nope']), 'unknown step "nope"'),
     (lambda w: w['steps'][0].update(fixed_from=['fit_a']), 'from itself'),
-    (lambda w: w['steps'][1].update(depends_on=['fit_a']), '"depends_on" is not a key'),
+    (lambda w: w['steps'][1].update(depends_on=['fit_a']), r"'depends_on' was unexpected"),
     (lambda w: w['steps'].append(dict(w['steps'][0])), 'more than once'),
-    (lambda w: w['steps'][0].update(target=w['steps'][0]['model']), '"target" is the workflow'),
-    (lambda w: w['steps'][0].pop('obs_data'), "has no \\['obs_data'\\]"),
-    (lambda w: w.pop('target'), 'no "target"'),
+    (lambda w: w['steps'][0].update(target=w['steps'][0]['model']), r"steps\[0\] \('fit_a'\): .*'target' was unexpected"),
+    (lambda w: w['steps'][0].pop('obs_data'), r"'obs_data' is a required property"),
+    (lambda w: w.pop('target'), r"'target' is a required property"),
     (lambda w: w['steps'][0].update(vessel_map={'A': 'B'}), '"vessel_map" is for a module-array'),
     (lambda w: w['steps'][0].update(model='a_module_array.csv', vessel='A'),
-     '"vessel" places a library module'),
+     '"vessel" place a library module'),
     (lambda w: w['settings'].update(param_id_obs_path='x.json'), 'cannot be set'),
     (lambda w: w['steps'][1].update(priors_from=['fit_a'], fixed_from=[]),
      'does not store its distribution'),
@@ -820,13 +820,13 @@ def _steps(raw):
 
 @pytest.mark.unit
 @pytest.mark.parametrize('edit, message', [
-    (lambda w: _steps(w)['screen'].update(kind='screening'), "it is one of"),
+    (lambda w: _steps(w)['screen'].update(kind='screening'), r"kind: 'screening' is not one of"),
     (lambda w: _steps(w)['reduce'].update(model=_steps(w)['screen']['model']),
      "a reduction step reads a sensitivity step's results and has no \['model'\]"),
-    (lambda w: _steps(w)['reduce'].pop('sensitivity_from'), 'needs "sensitivity_from"'),
-    (lambda w: _steps(w)['reduce'].update(reduction={'top_n': 0}), '"top_n"'),
+    (lambda w: _steps(w)['reduce'].pop('sensitivity_from'), r"'sensitivity_from' is a required property"),
+    (lambda w: _steps(w)['reduce'].update(reduction={'top_n': 0}), r"reduction\.top_n: 0 is less than the minimum of 1"),
     (lambda w: _steps(w)['reduce'].update(reduction={'top_n': 1, 'criterion': 'median'}),
-     '"criterion"'),
+     r"reduction\.criterion: 'median' is not one of"),
     (lambda w: _steps(w)['reduce'].update(sensitivity_from='fit_a'),
      '"sensitivity_from" names "fit_a", a calibration step; it takes a sensitivity step'),
     (lambda w: _steps(w)['screen']['settings']['sa_options'].update(method='local'),

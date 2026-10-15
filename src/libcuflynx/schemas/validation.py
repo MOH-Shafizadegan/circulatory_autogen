@@ -207,7 +207,8 @@ def _rule_descriptions(schema):
 
 def _leaves(error):
     """What is wrong, for an ``anyOf``/``oneOf``: every error of the branch the document
-    meant (the one whose type it has, with the fewest errors), each followed down."""
+    meant (the one whose type it has, with the fewest errors, counting each unexpected key),
+    each followed down."""
     if not error.context:
         return [error]
     branches = {}
@@ -218,7 +219,13 @@ def _leaves(error):
         return any(e.validator == 'type' and list(e.absolute_path) == list(error.absolute_path)
                    for e in errs)
 
-    meant = min(branches.values(), key=lambda errs: (wrong_type(errs), len(errs)))
+    def weight(errs):
+        # each unexpected key counts, so the branch whose keys the document uses wins
+        return sum(len(set(e.instance) - set(e.schema.get('properties', {})))
+                   if e.validator == 'additionalProperties' and isinstance(e.instance, dict)
+                   else 1 for e in errs)
+
+    meant = min(branches.values(), key=lambda errs: (wrong_type(errs), weight(errs)))
     return [leaf for sub in meant for leaf in _leaves(sub)]
 
 
