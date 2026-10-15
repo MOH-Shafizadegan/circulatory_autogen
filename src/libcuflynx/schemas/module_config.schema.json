@@ -431,7 +431,7 @@
       ]
     },
     "phlynxRecord": {
-      "title": "instance record, PhLynx keys",
+      "title": "instance record, current (PhLynx) keys",
       "type": "object",
       "required": [
         "name",
@@ -510,7 +510,7 @@
       ]
     },
     "libcuflynxRecord": {
-      "title": "instance record, libcuflynx keys",
+      "title": "instance record, older libcuflynx keys",
       "type": "object",
       "required": [
         "name",
