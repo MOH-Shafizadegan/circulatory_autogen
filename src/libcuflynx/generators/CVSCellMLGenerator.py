@@ -536,7 +536,7 @@ class CVS0DCellMLGenerator(object):
 
             # A set, built once: this is tested on every line of every module file, and with
             # pandas 3 a test against `.values` (a StringArray) costs ~2 s per generation.
-            used_module_types = set(self.model.vessels_df.module_type) | {'zero_flow'}
+            used_component_types = set(self.model.vessels_df.component_type) | {'zero_flow'}
             for II, module_file_path in enumerate(self.module_scripts):
                 with open(module_file_path, 'r') as rf:
                     # skip first lines that are either intro lines written above or comments.
@@ -561,9 +561,9 @@ class CVS0DCellMLGenerator(object):
                     for line in lines:
                         if "<component name" in line:
                             # check the name of the module we are in
-                            module_type = re.search('name="(.*?)"', line).group(1)
-                        if module_type in used_module_types \
-                                and self.module_sources.uses_component(module_file_path, module_type):
+                            component_type = re.search('name="(.*?)"', line).group(1)
+                        if component_type in used_component_types \
+                                and self.module_sources.uses_component(module_file_path, component_type):
                             # (a type a more specific module source defines is written from there)
                             wf.write(line)
             wf.write('</model>\n')
@@ -707,7 +707,7 @@ class CVS0DCellMLGenerator(object):
         # input and output modules
         main_module = module_row["name"]
         main_module_BC_type = module_row["BC_type"]
-        main_module_type = module_row["module_type"]
+        main_component_type = module_row["component_type"]
 
         # create a list of dicts that stores info for the exit ports of this main module
         # entrance_port_types is the corresponding connection check for entrance ports and is stored in 
@@ -750,11 +750,11 @@ class CVS0DCellMLGenerator(object):
                 exit()
             inp_module_row = module_df.loc[module_df["name"] == inp_module].squeeze()
             inp_module_BC_type = inp_module_row["BC_type"]
-            inp_module_type = inp_module_row["module_type"]
+            inp_component_type = inp_module_row["component_type"]
 
             self.__check_input_output_modules(module_df, inp_module, main_module,
                                               inp_module_BC_type, main_module_BC_type,
-                                              inp_module_type, main_module_type)
+                                              inp_component_type, main_component_type)
 
         for out_module_idx, out_module in enumerate(module_row["out_vessels"]):
             if not (module_df["name"] == out_module).any():
@@ -762,13 +762,13 @@ class CVS0DCellMLGenerator(object):
                 exit()
             out_module_row = module_df.loc[module_df["name"] == out_module].squeeze()
             out_module_BC_type = out_module_row["BC_type"]
-            out_module_type = out_module_row["module_type"]
+            out_component_type = out_module_row["component_type"]
 
             # check that input and output modules are defined as connection variables
             # for that module and they have corresponding BCs # TODO this should be done in the model parsing stage
             self.__check_input_output_modules(module_df, main_module, out_module,
                                               main_module_BC_type, out_module_BC_type,
-                                              main_module_type, out_module_type)
+                                              main_component_type, out_component_type)
             self.__check_input_output_ports(module_row["exit_ports"], module_row["general_ports"], out_module_row["entrance_ports"],
                                             out_module_row["general_ports"], main_module, out_module)
 
@@ -810,7 +810,7 @@ class CVS0DCellMLGenerator(object):
                                     entrance_port_idx = JJ
                                     break
                             else:
-                                # if (out_module_BC_type=='nn' and out_module_type=='Muller_1d'):
+                                # if (out_module_BC_type=='nn' and out_component_type=='Muller_1d'):
                                 if out_module_row["vessel_type"]=='FV1D_vessel': #XXX TODO Bea add comment here to explain
                                     entrance_port_idx = -2
                                     break
@@ -1059,7 +1059,7 @@ class CVS0DCellMLGenerator(object):
                             # get the entrance port idx for the output module
 
                             # TODO the below if isnt general. Figure out how to generalise this.
-                            # if out_module_type == 'flow_sum_2_type':
+                            # if out_component_type == 'flow_sum_2_type':
                             #     for II in range(len(out_module_row["inp_vessels"])):
                             #         # check that the entrance port corresponds to the main_vessel
                             #         if out_module_row["inp_vessels"][II] == main_module:
@@ -1091,7 +1091,7 @@ class CVS0DCellMLGenerator(object):
 
                             # TODO make this more general. Have a entry in module_config.json entrance and exit 
                             # types that specify a certain operation, like averaging wrt flow, like this gas port.
-                            elif main_module_type == 'tissue_GE_simple_type' and out_module_type == "gas_transport_simple_type":
+                            elif main_component_type == 'tissue_GE_simple_type' and out_component_type == "gas_transport_simple_type":
                                 # this connection is done through the terminal_venous_connection
                                 # TODO after this if loop I set that this connection is done. It is actually done later on
                                 # when doing the venous_terminal_connection. Fine for now.
@@ -2237,12 +2237,12 @@ class CVS0DCellMLGenerator(object):
                                  ['time'], ['t'])
 
     def __write_import(self, wf, vessel_tup):
-        module_type = vessel_tup.module_type
+        component_type = vessel_tup.component_type
 
         str_addon = '_module'
 
         wf.writelines([f'<import xlink:href="{self.file_prefix}_modules.cellml">\n',
-                       f'    <component component_ref="{module_type}" name="{vessel_tup.name + str_addon}"/>\n',
+                       f'    <component component_ref="{component_type}" name="{vessel_tup.name + str_addon}"/>\n',
                        '</import>\n'])
 
     def __check_input_output_modules(self, vessel_df, main_vessel, out_vessel,

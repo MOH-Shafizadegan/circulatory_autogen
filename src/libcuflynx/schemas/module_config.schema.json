@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/physiomelinks/circulatory_autogen/schemas/module_config.schema.json",
   "title": "libcuflynx module config (*_modules_config.json)",
-  "description": "A list of module config entries: component entries in libcuflynx keys (vessel_type, BC_type, module_file, module_type) or PhLynx keys (module_type, module_subtype, component_file, component_type), and supermodule entries (module_format \"supermodule\" with a submodules list of instance records). See libcuflynx/utilities/config_schemas.py. Any entry may name a default_parameterisation (older name: default_instance): a directory under parameterisations/ (instances/ in older libraries) next to the config file holding <name>_parameters.csv.",
+  "description": "A list of module config entries: component entries in the current (PhLynx) keys (module_type, module_subtype, component_file, component_type) or the older libcuflynx keys (vessel_type, BC_type, module_file, module_type), and supermodule entries (module_format \"supermodule\" with a submodules list of instance records). See libcuflynx/utilities/config_schemas.py. Any entry may name a default_parameterisation (older name: default_instance): a directory under parameterisations/ (instances/ in older libraries) next to the config file holding <name>_parameters.csv.",
   "type": "array",
   "items": {
     "$ref": "#/$defs/entry"
@@ -48,7 +48,7 @@
       }
     },
     "libcuflynxComponent": {
-      "title": "component entry, libcuflynx keys",
+      "title": "component entry, older libcuflynx keys",
       "type": "object",
       "required": [
         "vessel_type",
@@ -156,7 +156,7 @@
       }
     },
     "phlynxComponent": {
-      "title": "component entry, PhLynx keys",
+      "title": "component entry, current (PhLynx) keys",
       "type": "object",
       "required": [
         "module_type",
@@ -167,7 +167,7 @@
       "properties": {
         "module_type": {
           "type": "string",
-          "description": "the libcuflynx vessel_type"
+          "description": "older key: vessel_type"
         },
         "module_subtype": {
           "type": "string"

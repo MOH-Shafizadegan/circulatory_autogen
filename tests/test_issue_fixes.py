@@ -34,7 +34,7 @@ def test_json_reader_ignores_appledouble_sidecar(tmp_path):
     good.mkdir()
     empty.mkdir()
     (good / 'module.json').write_text(json.dumps([{'vessel_type': 'x', 'BC_type': 'y',
-                                                   'module_file': 'x.cellml', 'module_type': 'x_type'}]))
+                                                   'component_file': 'x.cellml', 'component_type': 'x_type'}]))
     # An AppleDouble sidecar is binary; if it were read as JSON it would raise.
     (good / '._module.json').write_bytes(b'\x00\x05\x16\x07Mac OS X\x00binary junk')
 
@@ -131,9 +131,9 @@ def test_microvasculature_config_has_no_duplicate_input_flow_modules():
                       'boundary_condition_modules_config.json')
     with open(bc) as rf:
         bc_entries = json.load(rf)
-    bc_module_types = {e.get('module_type') for e in bc_entries}
+    bc_component_types = {e.get('component_type') for e in bc_entries}
     # the canonical replacements still exist
-    assert {'constant_flow_BC_type', 'constant_pressure_BC_type'} <= bc_module_types
+    assert {'constant_flow_BC_type', 'constant_pressure_BC_type'} <= bc_component_types
 
 
 # ---------------------------------------------------------------------------

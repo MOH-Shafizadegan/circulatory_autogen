@@ -100,8 +100,8 @@ def create_unit_conversion_test_files(temp_model_dir):
                         "vessel_type": "test_type1",  
                         "BC_type": "test",  
                         "module_format": "cellml",  
-                        "module_file": "test_modules.cellml",  
-                        "module_type": "test_type1_type",  
+                        "component_file": "test_modules.cellml",  
+                        "component_type": "test_type1_type",  
                         "entrance_ports": [],  
                         "exit_ports": [  
                         {  
@@ -119,8 +119,8 @@ def create_unit_conversion_test_files(temp_model_dir):
                         "vessel_type": "test_type2",  
                         "BC_type": "test",  
                         "module_format": "cellml",  
-                        "module_file": "test_modules.cellml",  
-                        "module_type": "test_type2_type",  
+                        "component_file": "test_modules.cellml",  
+                        "component_type": "test_type2_type",  
                         "entrance_ports": [  
                         {  
                             "port_type": "vessel_port",  

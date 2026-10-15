@@ -182,13 +182,13 @@ def _port(port_type, variables, multi_port=None):
     return port
 
 
-def _module(vessel_type, BC_type, module_type, entrance_ports, exit_ports, variables_and_units):
+def _module(vessel_type, BC_type, component_type, entrance_ports, exit_ports, variables_and_units):
     return {
         "vessel_type": vessel_type,
         "BC_type": BC_type,
         "module_format": "cellml",
-        "module_file": "multiport_test_modules.cellml",
-        "module_type": module_type,
+        "component_file": "multiport_test_modules.cellml",
+        "component_type": component_type,
         "entrance_ports": entrance_ports,
         "exit_ports": exit_ports,
         "general_ports": [],
@@ -196,8 +196,8 @@ def _module(vessel_type, BC_type, module_type, entrance_ports, exit_ports, varia
     }
 
 
-def _source_config(vessel_type, module_type, flow_units):
-    return _module(vessel_type, "nn", module_type, [], [_port("vessel_port", ["v", "u_out"])], [
+def _source_config(vessel_type, component_type, flow_units):
+    return _module(vessel_type, "nn", component_type, [], [_port("vessel_port", ["v", "u_out"])], [
         ["v", flow_units, "access", "variable"],
         ["u_out", "J_per_m3", "access", "boundary_condition"],
         ["v_mean", flow_units, "access", "constant"],

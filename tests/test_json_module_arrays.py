@@ -778,7 +778,8 @@ def test_a_bad_submodule_record_is_reported_in_its_module_config():
 
 
 def _component_entry(**port):
-    return {'vessel_type': 'v', 'BC_type': 'nn', 'module_file': 'v.cellml', 'module_type': 'v_type',
+    return {'module_type': 'v', 'module_subtype': 'nn', 'component_file': 'v.cellml',
+            'component_type': 'v_type',
             'entrance_ports': [dict({'port_type': 'p', 'variables': ['x']}, **port)],
             'exit_ports': [], 'variables_and_units': [['x', 'm', 'access', 'variable']]}
 
@@ -807,10 +808,10 @@ def test_multi_port_true_and_false_in_any_form(value, expected):
 
 
 @pytest.mark.unit
-def test_a_libcuflynx_component_entry_needs_its_cellml_file():
+def test_a_component_entry_needs_its_cellml_file():
     entry = _component_entry()
-    del entry['module_file']
-    with pytest.raises(ValueError, match=r"is missing \['module_file'\]"):
+    del entry['component_file']
+    with pytest.raises(ValueError, match=r"is missing \['component_file'\]"):
         normalise_module_config_entry(entry)
 
 

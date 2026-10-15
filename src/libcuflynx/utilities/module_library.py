@@ -139,10 +139,10 @@ def resolve_duplicate_types(config_files, source_of, precedence):
         shadowed[key] = (ranked[0][0], losers)
 
     def component(path, entry):
-        if not entry.get('module_file') or not entry.get('module_type'):
+        if not entry.get('component_file') or not entry.get('component_type'):
             return None
-        cellml = os.path.join(os.path.dirname(os.path.abspath(path)), entry['module_file'])
-        return os.path.realpath(cellml), entry['module_type']
+        cellml = os.path.join(os.path.dirname(os.path.abspath(path)), entry['component_file'])
+        return os.path.realpath(cellml), entry['component_type']
 
     kept = {component(path, entry) for found in definitions.values() for path, entry in found
             if (path, (entry['vessel_type'], entry['BC_type'])) not in excluded}

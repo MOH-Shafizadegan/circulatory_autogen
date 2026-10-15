@@ -80,16 +80,16 @@ _check = CVS0DCellMLGenerator._CVS0DCellMLGenerator__check_input_output_modules
 
 def _pair_df(main_bc, main_ports, out_bc, out_ports):
     return pd.DataFrame([
-        {'name': 'a', 'BC_type': main_bc, 'module_type': 'a_type', 'vessel_type': 'a_type',
+        {'name': 'a', 'BC_type': main_bc, 'component_type': 'a_type', 'vessel_type': 'a_type',
          'inp_vessels': [], 'out_vessels': ['b'], **main_ports},
-        {'name': 'b', 'BC_type': out_bc, 'module_type': 'b_type', 'vessel_type': 'b_type',
+        {'name': 'b', 'BC_type': out_bc, 'component_type': 'b_type', 'vessel_type': 'b_type',
          'inp_vessels': ['a'], 'out_vessels': [], **out_ports},
     ])
 
 
 def _run_check(df):
     a, b = df.iloc[0], df.iloc[1]
-    _check(None, df, 'a', 'b', a.BC_type, b.BC_type, a.module_type, b.module_type)
+    _check(None, df, 'a', 'b', a.BC_type, b.BC_type, a.component_type, b.component_type)
 
 
 @pytest.mark.parametrize('main_bc, out_bc', [('vv', 'vp'), ('vp', 'pv'), ('pv_micro', 'vv_micro')])
@@ -178,11 +178,11 @@ UNITS_CELLML = """\
 """
 
 
-def _config_entry(vessel_type, bc_type, file_stem, module_type, entrance, exit_, variables):
+def _config_entry(vessel_type, bc_type, file_stem, component_type, entrance, exit_, variables):
     import json
     return json.dumps([{
         'vessel_type': vessel_type, 'BC_type': bc_type, 'module_format': 'cellml',
-        'module_file': f'{file_stem}_modules.cellml', 'module_type': module_type,
+        'component_file': f'{file_stem}_modules.cellml', 'component_type': component_type,
         'entrance_ports': entrance, 'exit_ports': exit_, 'general_ports': [],
         'variables_and_units': variables,
     }], indent=2)
@@ -408,7 +408,7 @@ def test_renaming_junction_non_vessel_neighbours_changes_nothing(tmp_path):
     builtin = builtin_modules_dir()
     entry = next(m for m in json.load(open(os.path.join(builtin, 'vessel_properties_modules_config.json')))
                  if m['vessel_type'] == 'material_prop_visco_const' and m['BC_type'] == 'nn')
-    cellml = open(os.path.join(builtin, entry['module_file'])).read()
+    cellml = open(os.path.join(builtin, entry['component_file'])).read()
     component = re.search(r'<component name="material_prop_visco_const_type".*?</component>',
                           cellml, re.S).group(0)
     component = component.replace('"material_prop_visco_const_type"', '"K_tube_lv_test_type"', 1)
@@ -419,8 +419,8 @@ def test_renaming_junction_non_vessel_neighbours_changes_nothing(tmp_path):
         "<?xml version='1.0' encoding='UTF-8'?>\n"
         '<model name="modules" xmlns="http://www.cellml.org/cellml/1.1#" '
         'xmlns:cellml="http://www.cellml.org/cellml/1.1#">\n' + component + '\n</model>\n')
-    entry = dict(entry, BC_type='lv_test', module_type='K_tube_lv_test_type',
-                 module_file='K_tube_lv_test_modules.cellml')
+    entry = dict(entry, BC_type='lv_test', component_type='K_tube_lv_test_type',
+                 component_file='K_tube_lv_test_modules.cellml')
     (module_dir / 'K_tube_lv_test_modules_config.json').write_text(json.dumps([entry]))
 
     resources = os.path.join(os.path.dirname(__file__), '..', 'resources')
