@@ -81,9 +81,9 @@ _check = CVS0DCellMLGenerator._CVS0DCellMLGenerator__check_input_output_modules
 def _pair_df(main_bc, main_ports, out_bc, out_ports):
     return pd.DataFrame([
         {'name': 'a', 'module_subtype': main_bc, 'component_type': 'a_type', 'module_type': 'a_type',
-         'inp_vessels': [], 'out_vessels': ['b'], **main_ports},
+         'inp_instances': [], 'out_instances': ['b'], **main_ports},
         {'name': 'b', 'module_subtype': out_bc, 'component_type': 'b_type', 'module_type': 'b_type',
-         'inp_vessels': ['a'], 'out_vessels': [], **out_ports},
+         'inp_instances': ['a'], 'out_instances': [], **out_ports},
     ])
 
 
@@ -253,7 +253,7 @@ def test_non_vessel_modules_with_arbitrary_names_connect_and_generate(tmp_path, 
     generated_dir = _generate(
         tmp_path, 'bc_names',
         f"""\
-        name,module_subtype,module_type,inp_vessels,out_vessels
+        name,module_subtype,module_type,inp_instances,out_instances
         src,{source_bc},bc_test_source,,snk
         snk,{sink_bc},bc_test_sink,src,
         """,
@@ -318,7 +318,7 @@ def test_min_junction_with_non_vessel_neighbour(tmp_path, reader_bc):
     generated_dir = _generate(
         tmp_path, 'junction_reader',
         f"""\
-        name,module_subtype,module_type,inp_vessels,out_vessels
+        name,module_subtype,module_type,inp_instances,out_instances
         inflow_a,nn_constant,inlet_flow,,junc
         inflow_b,nn_constant,inlet_flow,,junc
         junc,vp,Min_junction,inflow_a inflow_b,outp reader
@@ -349,7 +349,7 @@ def test_non_vessel_neighbour_of_nout_junction_keeps_its_connections(tmp_path):
     generated_dir = _generate(
         tmp_path, 'nout_reader',
         """\
-        name,module_subtype,module_type,inp_vessels,out_vessels
+        name,module_subtype,module_type,inp_instances,out_instances
         p_in,nn_constant,inlet_pressure,,junc
         junc,pv,Nout_junction,p_in,va fb reader
         va,pv,arterial_simple,junc,fa reader

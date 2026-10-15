@@ -207,14 +207,14 @@ def _expand_one(records, index, registry, source, ancestry):
                                  f'each host is linked once per submodule.')
     by_name = {r['name']: r for i, r in enumerate(records) if i != index}
     for other in by_name.values():
-        for list_key in ('out_vessels', 'inp_vessels'):
+        for list_key in ('out_instances', 'inp_instances'):
             if other[list_key].count(name) > 1:
                 raise ValueError(f'{where}: "{other["name"]}" lists "{name}" more than once in its '
                                  f'{list_key.split("_")[0]} list. List it once; the instance\'s '
                                  f'per_submodule_* entries say which of its submodules it links to.')
     for per_key, per, host_key, host_list in (
-            ('per_submodule_inputs', per_inputs, 'out', 'out_vessels'),
-            ('per_submodule_outputs', per_outputs, 'inp', 'inp_vessels')):
+            ('per_submodule_inputs', per_inputs, 'out', 'out_instances'),
+            ('per_submodule_outputs', per_outputs, 'inp', 'inp_instances')):
         for sub, hosts in per.items():
             for host in hosts:
                 if host not in by_name:
@@ -229,18 +229,18 @@ def _expand_one(records, index, registry, source, ancestry):
     input_hosts = {h for hosts in per_inputs.values() for h in hosts}
     output_hosts = {h for hosts in per_outputs.values() for h in hosts}
     for other in by_name.values():
-        if name in other['out_vessels'] and other['name'] not in input_hosts:
+        if name in other['out_instances'] and other['name'] not in input_hosts:
             raise ValueError(
                 f'{where}: "{other["name"]}" lists "{name}" in its out list, but no '
                 f'per_submodule_inputs entry of "{name}" names "{other["name"]}", so it is not '
                 f'known which submodule it feeds.')
-        if name in other['inp_vessels'] and other['name'] not in output_hosts:
+        if name in other['inp_instances'] and other['name'] not in output_hosts:
             raise ValueError(
                 f'{where}: "{other["name"]}" lists "{name}" in its inp list, but no '
                 f'per_submodule_outputs entry of "{name}" names "{other["name"]}", so it is not '
                 f'known which submodule feeds it.')
-    for list_key, hosts, per_key in (('inp_vessels', input_hosts, 'per_submodule_inputs'),
-                                     ('out_vessels', output_hosts, 'per_submodule_outputs')):
+    for list_key, hosts, per_key in (('inp_instances', input_hosts, 'per_submodule_inputs'),
+                                     ('out_instances', output_hosts, 'per_submodule_outputs')):
         stray = [h for h in instance[list_key] if h not in hosts]
         if stray:
             raise ValueError(f'{where}: its {list_key.split("_")[0]} list names {stray}, which '
@@ -253,9 +253,9 @@ def _expand_one(records, index, registry, source, ancestry):
     for sub in submodules:
         record = copy.deepcopy(sub)
         record['name'] = prefixed(sub['name'])
-        record['inp_vessels'] = (list(per_inputs.get(sub['name'], []))
-                                 + [prefixed(n) for n in sub['inp_vessels']])
-        record['out_vessels'] = ([prefixed(n) for n in sub['out_vessels']]
+        record['inp_instances'] = (list(per_inputs.get(sub['name'], []))
+                                 + [prefixed(n) for n in sub['inp_instances']])
+        record['out_instances'] = ([prefixed(n) for n in sub['out_instances']]
                                  + list(per_outputs.get(sub['name'], [])))
         for per_key in PER_SUBMODULE_KEYS:
             if per_key in record:
@@ -269,13 +269,13 @@ def _expand_one(records, index, registry, source, ancestry):
                          f'in the module array. Rename the instance or the clashing records.')
 
     for other in by_name.values():
-        if name in other['out_vessels']:
-            other['out_vessels'] = _splice(
-                other['out_vessels'], name,
+        if name in other['out_instances']:
+            other['out_instances'] = _splice(
+                other['out_instances'], name,
                 [prefixed(s) for s, hosts in per_inputs.items() if other['name'] in hosts])
-        if name in other['inp_vessels']:
-            other['inp_vessels'] = _splice(
-                other['inp_vessels'], name,
+        if name in other['inp_instances']:
+            other['inp_instances'] = _splice(
+                other['inp_instances'], name,
                 [prefixed(s) for s, hosts in per_outputs.items() if other['name'] in hosts])
         # another instance not expanded yet that names this one as a host: its per_submodule_*
         # lists now name the submodules that link to it (whichever of the two expands first)

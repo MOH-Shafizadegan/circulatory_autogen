@@ -210,7 +210,7 @@ def _generate_module_array_csv(output_dir, vessel_name, file_prefix):
     file_path = os.path.join(resources_dir, f"{file_prefix}_module_array.csv")
 
     with open(file_path, "w") as fh:
-        fh.writelines(["name,module_subtype,module_type,inp_vessels,out_vessels\n"])
+        fh.writelines(["name,module_subtype,module_type,inp_instances,out_instances\n"])
         fh.writelines([f"{vessel_name},nn,{file_prefix},,\n"])
 
     print(f"Generated module_array.csv file: {file_prefix}_module_array.csv")

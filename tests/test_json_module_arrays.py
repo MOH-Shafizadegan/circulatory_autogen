@@ -2,7 +2,7 @@
 
 A module array may be ``<prefix>_module_array.json`` -- a list of records in PhLynx keys
 (``name, module_type, module_subtype, inp_instances, out_instances``) or libcuflynx keys
-(``name, module_type, module_subtype, inp_vessels, out_vessels``) -- and a CSV array is read by
+(``name, module_type, module_subtype, inp_instances, out_instances``) -- and a CSV array is read by
 converting each row to the same record (utilities/config_schemas.py).
 
 A supermodule is a module config entry with ``"module_format": "supermodule"`` and a list of
@@ -55,7 +55,7 @@ def _rec(name, module_type, inp=(), out=(), subtype='nn', **extra):
 
 def _to_libcuflynx(record):
     keys = {'module_type': 'module_type', 'module_subtype': 'module_subtype',
-            'inp_instances': 'inp_vessels', 'out_instances': 'out_vessels'}
+            'inp_instances': 'inp_instances', 'out_instances': 'out_instances'}
     return {keys.get(k, k): v for k, v in record.items()}
 
 
@@ -116,7 +116,7 @@ def registry(super_library_dir):
 
 def _write_csv(path, records):
     with open(path, 'w') as f:
-        f.write('name,module_subtype,module_type,inp_vessels,out_vessels\n')
+        f.write('name,module_subtype,module_type,inp_instances,out_instances\n')
         for r in records:
             f.write(f"{r['name']},{r['module_subtype']},{r['module_type']},"
                     f"{' '.join(r['inp_instances'])},{' '.join(r['out_instances'])}\n")
@@ -184,7 +184,7 @@ def read_records(records):
 
 
 def _links(records):
-    return {r['name']: (r['inp_vessels'], r['out_vessels']) for r in records}
+    return {r['name']: (r['inp_instances'], r['out_instances']) for r in records}
 
 
 # the host model the flowpair instance sits in: two sources feed its collector, its gain
@@ -244,8 +244,8 @@ def test_json_and_csv_give_the_same_frame(tmp_path):
         frames[fmt] = load_module_array(_write_array(str(directory), 'm', records, fmt))[0]
     for fmt in ('json', 'json_libcuflynx'):
         assert frames[fmt].equals(frames['csv'])
-    assert list(frames['csv'].columns) == ['name', 'module_subtype', 'module_type', 'inp_vessels',
-                                           'out_vessels']
+    assert list(frames['csv'].columns) == ['name', 'module_subtype', 'module_type', 'inp_instances',
+                                           'out_instances']
     assert frames['csv'].iloc[2].tolist() == ['coll', 'nn', 'collector', ['src_a', 'src_b'], []]
 
 
@@ -253,17 +253,17 @@ def test_json_and_csv_give_the_same_frame(tmp_path):
 def test_space_separated_lists_are_accepted_in_json(tmp_path):
     path = tmp_path / 'm_module_array.json'
     path.write_text(json.dumps([_rec('a', 'flow_src', out=['b c'])]))
-    assert read_module_array_records(str(path))[0]['out_vessels'] == ['b', 'c']
+    assert read_module_array_records(str(path))[0]['out_instances'] == ['b', 'c']
     path.write_text(json.dumps([{'name': 'a', 'module_type': 'x', 'module_subtype': 'nn',
                                  'out_instances': 'b  c'}]))
     record = read_module_array_records(str(path))[0]
-    assert record['out_vessels'] == ['b', 'c'] and record['inp_vessels'] == []
+    assert record['out_instances'] == ['b', 'c'] and record['inp_instances'] == []
 
 
 @pytest.mark.unit
 @pytest.mark.parametrize('record, message', [
-    ({'name': 'a', 'module_type': 'x', 'module_subtype': 'nn', 'out_vessels': []},
-     r'record 1 \("a"\) mixes libcuflynx keys \[\'out_vessels\'\] and PhLynx keys'),
+    ({'name': 'a', 'module_type': 'x', 'module_subtype': 'nn', 'out_instances': []},
+     r'record 1 \("a"\) mixes libcuflynx keys \[\'out_instances\'\] and PhLynx keys'),
     ({'name': 'a', 'module_type': 'x', 'module_subtype': 'nn', 'module_subtype': 'nn'},
      'mixes libcuflynx keys'),
     ({'name': 'a', 'module_type': 'x'}, r'record 1 \("a"\): "module_subtype" is required'),
@@ -328,7 +328,7 @@ def test_csv_to_json_round_trip(tmp_path, style):
     assert len(text.splitlines()) == len(raw) + 2  # one record per line
     expected_keys = (['name', 'module_type', 'module_subtype', 'inp_instances', 'out_instances']
                      if style == 'phlynx' else
-                     ['name', 'module_subtype', 'module_type', 'inp_vessels', 'out_vessels'])
+                     ['name', 'module_subtype', 'module_type', 'inp_instances', 'out_instances'])
     assert list(raw[0]) == expected_keys
 
 
@@ -670,11 +670,11 @@ def test_a_heart_inside_a_supermodule_is_still_the_heart(tmp_path):
         record = dict(record)
         if record['name'] == 'heart':
             record.update(name='H', module_type='cardio', module_subtype='supermodule',
-                          per_submodule_inputs={'heart': record['inp_vessels']},
-                          per_submodule_outputs={'heart': record['out_vessels']})
+                          per_submodule_inputs={'heart': record['inp_instances']},
+                          per_submodule_outputs={'heart': record['out_instances']})
         else:
-            record['inp_vessels'] = ['H' if n == 'heart' else n for n in record['inp_vessels']]
-            record['out_vessels'] = ['H' if n == 'heart' else n for n in record['out_vessels']]
+            record['inp_instances'] = ['H' if n == 'heart' else n for n in record['inp_instances']]
+            record['out_instances'] = ['H' if n == 'heart' else n for n in record['out_instances']]
         wrapped.append(record)
     renamed = [(n[:-len('_heart')] + '_H_heart' if n.endswith('_heart') else n, u, v) for n, u, v in params]
     model = _generate(tmp_path / 'wrapped', str(library), '3compartment', wrapped, renamed)
@@ -723,7 +723,7 @@ def test_the_1d_generator_reads_the_merged_parameters(tmp_path):
     params = tmp_path / 'm_parameters.csv'
     params.write_text('variable_name,units,value,data_reference\nr_FV1D_0,metre,0.01,file\n')
     vessels = tmp_path / 'm_1d_module_array.csv'
-    vessels.write_text('name,module_subtype,module_type,inp_vessels,out_vessels\nFV1D_0,nn,FV1D_vessel,,\n')
+    vessels.write_text('name,module_subtype,module_type,inp_instances,out_instances\nFV1D_0,nn,FV1D_vessel,,\n')
     merged = merge_default_parameters(
         CSVFileParser().get_data_as_nparray(str(params), True),
         [{'variable_name': 'l_FV1D_0', 'units': 'metre', 'value': '0.2', 'data_reference': 'default'}])
@@ -819,12 +819,12 @@ def test_a_component_entry_needs_its_cellml_file():
 def test_a_null_connection_list_is_empty_in_the_code_and_the_schema(tmp_path):
     jsonschema = pytest.importorskip('jsonschema')
     from libcuflynx.schemas import MODULE_ARRAY_SCHEMA, load_schema
-    records = [{'name': 'a', 'module_type': 'x', 'module_subtype': 'nn', 'inp_vessels': None, 'out_vessels': None}]
+    records = [{'name': 'a', 'module_type': 'x', 'module_subtype': 'nn', 'inp_instances': None, 'out_instances': None}]
     assert jsonschema.Draft202012Validator(load_schema(MODULE_ARRAY_SCHEMA)).is_valid(records)
     path = tmp_path / 'm_module_array.json'
     path.write_text(json.dumps(records))
     record = read_module_array_records(str(path))[0]
-    assert record['inp_vessels'] == [] and record['out_vessels'] == []
+    assert record['inp_instances'] == [] and record['out_instances'] == []
 
 
 def _two_flowpairs_in_a_row():
@@ -895,8 +895,8 @@ def test_a_name_with_whitespace_is_an_error(record, message):
 def test_a_space_separated_string_is_still_a_list_of_names():
     from libcuflynx.utilities.config_schemas import normalise_vessel_record
     record = normalise_vessel_record({"name": "a", "module_type": "heart", "module_subtype": "vp",
-                                      "inp_vessels": "b  c"})
-    assert record['inp_vessels'] == ['b', 'c']
+                                      "inp_instances": "b  c"})
+    assert record['inp_instances'] == ['b', 'c']
 
 
 @pytest.mark.unit
@@ -906,7 +906,7 @@ def test_the_schema_rejects_a_name_with_whitespace():
     validator = jsonschema.Draft202012Validator(load_schema(MODULE_ARRAY_SCHEMA))
     assert not validator.is_valid([{"name": "a b", "module_type": "heart", "module_subtype": "vp"}])
     assert validator.is_valid([{"name": "a", "module_type": "heart", "module_subtype": "vp",
-                                "inp_vessels": "b c"}])
+                                "inp_instances": "b c"}])
 
 
 @pytest.mark.integration
@@ -975,7 +975,7 @@ def test_resources_module_arrays_and_module_configs_validate_against_the_json_sc
     # what the loaders reject, the schemas reject too
     assert not vessel_validator.is_valid([{'name': 'a', 'module_type': 'x', 'module_subtype': 'nn'}])
     assert not vessel_validator.is_valid([{'name': 'a', 'module_type': 'x', 'module_subtype': 'nn',
-                                           'inp_vessels': []}])
+                                           'inp_instances': []}])
     assert not vessel_validator.is_valid([{'name': 'a', 'module_type': 'x', 'module_subtype': 'nn',
                                            'out_instances': []}])
     assert not vessel_validator.is_valid([{'name': 'a', 'module_type': 'x'}])

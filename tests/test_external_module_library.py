@@ -82,7 +82,7 @@ def _write_resources(resources_dir, prefix, module_type, k=0.5, x_init=2.0):
     os.makedirs(resources_dir, exist_ok=True)
     with open(os.path.join(resources_dir, f'{prefix}_module_array.csv'), 'w') as f:
         f.write(textwrap.dedent(f"""\
-            name,module_subtype,module_type,inp_vessels,out_vessels
+            name,module_subtype,module_type,inp_instances,out_instances
             decay,nn,{module_type},,
             """))
     with open(os.path.join(resources_dir, f'{prefix}_parameters.csv'), 'w') as f:

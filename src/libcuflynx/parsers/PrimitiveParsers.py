@@ -3220,7 +3220,7 @@ class CSVFileParser(object):
                 else:
                     sub_entries = entry.split()
 
-                if column_name in ['vessel_name', 'inp_vessels', 'out_vessels']:
+                if column_name in ['vessel_name', 'inp_instances', 'out_instances']:
                     if sub_entries == []:
                         new_entry = []
                         pass

@@ -145,7 +145,7 @@ def create_unit_conversion_test_files(temp_model_dir):
     # Create module_array.csv  
     module_array_file = os.path.join(resources_dir, 'unit_test_module_array.csv')  
     with open(module_array_file, 'w') as f:  
-        f.write("""name,module_subtype,module_type,inp_vessels,out_vessels  
+        f.write("""name,module_subtype,module_type,inp_instances,out_instances  
 vessel1,test,test_type1,,vessel2  
 vessel2,test,test_type2,vessel1,  
 """)  

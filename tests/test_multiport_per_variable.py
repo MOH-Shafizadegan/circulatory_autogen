@@ -372,7 +372,7 @@ def _generate(tmp_path, external_modules_dir, prefix, vessel_rows, params, model
     """Write the module array and parameters for ``vessel_rows`` and generate the model."""
     resources_dir = tmp_path / "resources"
     resources_dir.mkdir(parents=True, exist_ok=True)
-    lines = ["name,module_subtype,module_type,inp_vessels,out_vessels"]
+    lines = ["name,module_subtype,module_type,inp_instances,out_instances"]
     for name, module_subtype, module_type, inp, out in vessel_rows:
         lines.append(f"{name},{module_subtype},{module_type},{' '.join(inp)},{' '.join(out)}")
     (resources_dir / f"{prefix}_module_array.csv").write_text("\n".join(lines) + "\n")

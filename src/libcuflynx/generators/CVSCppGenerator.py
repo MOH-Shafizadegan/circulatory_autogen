@@ -250,8 +250,8 @@ class CVS0DCppGenerator(object):
         fv1d_vessel_index_list = []
         for idx0, vessel_tup in enumerate(self.model.vessels_df.itertuples()):
             if vessel_tup.module_type!="FV1D_vessel":
-                # print(vessel_tup.name, vessel_tup.inp_vessels, vessel_tup.out_vessels)
-                for out_vessel in vessel_tup.out_vessels:
+                # print(vessel_tup.name, vessel_tup.inp_instances, vessel_tup.out_instances)
+                for out_vessel in vessel_tup.out_instances:
                     out_vessel_row = self.model.vessels_df.loc[self.model.vessels_df["name"] == out_vessel].squeeze()
                     if out_vessel_row["module_type"] == "FV1D_vessel":
                         # Finbar's format: get the index from the out_vessel name which is of format "FV1D_#", or "FV1D_##", or "FV1D_###", etc
@@ -399,7 +399,7 @@ class CVS0DCppGenerator(object):
                             if FV_resistance_port == -1:
                                 self.control_variables.append( None )
                 
-                for inp_vessel in vessel_tup.inp_vessels:
+                for inp_vessel in vessel_tup.inp_instances:
                     inp_vessel_row = self.model.vessels_df.loc[self.model.vessels_df["name"] == inp_vessel].squeeze()
                     if inp_vessel_row["module_type"] == "FV1D_vessel":
                         # # fv1d_vessel_index = re.findall(r'\d+$', inp_vessel)[0]
