@@ -375,6 +375,7 @@ class CVS0DParamID():
         self.protocol_info = None
         self.obs_info = None
         self.prediction_info = None
+        self.prediction_plots = []
         self.params_for_id_path = params_for_id_path
         self.optimiser_options = optimiser_options
         self.obs_and_param_parser = ObsAndParamDataParser(
@@ -391,6 +392,7 @@ class CVS0DParamID():
             self.gt_df = parsed_data["gt_df"]
             self.protocol_info = parsed_data["protocol_info"]
             self.prediction_info = parsed_data["prediction_info"]
+            self.prediction_plots = parsed_data["prediction_plots"]
 
             self.obs_info = self.obs_and_param_parser.process_obs_info(gt_df=self.gt_df, output_dir=self.output_dir, dt=self.dt)
             self.protocol_info = self.obs_and_param_parser.process_protocol_and_weights(
@@ -801,6 +803,7 @@ class CVS0DParamID():
         self.gt_df = parsed_data["gt_df"]
         self.protocol_info = parsed_data["protocol_info"]
         self.prediction_info = parsed_data["prediction_info"]
+        self.prediction_plots = parsed_data["prediction_plots"]
 
         self.obs_info = self.obs_and_param_parser.process_obs_info(gt_df=self.gt_df, output_dir=self.output_dir, dt=self.dt)
         self.protocol_info = self.obs_and_param_parser.process_protocol_and_weights(
@@ -1572,18 +1575,50 @@ class CVS0DParamID():
     def run_single_sensitivity(self, do_triples_and_quads):
         self.param_id.run_single_sensitivity(self.output_dir, do_triples_and_quads)
 
+    def _best_fit(self):
+        """The best-fit parameter values, read from best_param_vals.npy if not in memory."""
+        if self.param_id.best_param_vals is None:
+            self.param_id.best_param_vals = np.load(
+                os.path.join(self.output_dir, 'best_param_vals.npy'))
+        return self.param_id.best_param_vals
+
     def _prediction_result(self):
         """The prediction items at the best fit (``protocol_runners.predict_on``)."""
         from libcuflynx.protocol_runners.predictions import predict_on
-        best = self.param_id.best_param_vals
-        if best is None:
-            best = np.load(os.path.join(self.output_dir, 'best_param_vals.npy'))
-            self.param_id.best_param_vals = best
+        best = self._best_fit()
         info = self.param_id.param_id_info
         return predict_on(self.param_id._protocol_executor, self.protocol_info,
                           self.prediction_info, self.param_id.operation_funcs_dict,
                           id_param_names=info['param_names'],
                           id_param_vals=expand_modifier_param_vals(info, best))
+
+    def _data_item_feature_values(self, plots):
+        """``{data_item_name: value}`` at the best fit for the data_items in ``plots``' groups,
+        through the cost path (each item evaluated over its own segment)."""
+        from libcuflynx.param_id import prediction_plots
+        groups = prediction_plots.item_groups(self.gt_df, self.prediction_info)
+        labels = {plot[key] for plot in plots for key in ('x', 'y')
+                  if isinstance(plot.get(key), str)}
+        rows = self.gt_df.to_dict('records') if self.gt_df is not None else []
+        wanted = sorted({item['index'] for label in labels for item in groups.get(label, [])
+                         if item['source'] == 'data_items'})
+        if not wanted:
+            return {}
+        segments = {i: (int(rows[i]['experiment_idx']), int(rows[i]['subexperiment_idx']))
+                    for i in wanted}
+        _, operands, _ = self.param_id.get_cost_obs_and_pred_from_params(
+            self._best_fit(), exp_idxs=sorted({e for e, _ in segments.values()}))
+        num_sub = self.protocol_info['num_sub_per_exp']
+        const_idxs = self.obs_info['const_idx_to_obs_idx']
+        values = {}
+        for i, (exp_idx, sub_idx) in segments.items():
+            if i not in const_idxs:
+                continue  # not a scalar; plot_prediction_plots says so
+            with self.param_id.evaluating_segment(exp_idx, sub_idx):
+                obs_dict = self.param_id.get_obs_output_dict(
+                    operands[int(np.sum(num_sub[:exp_idx])) + sub_idx])
+            values[str(rows[i]['data_item_name'])] = float(obs_dict['const'][const_idxs.index(i)])
+        return values
 
     def save_prediction_data(self):
         if self.rank !=0:
@@ -1593,10 +1628,12 @@ class CVS0DParamID():
                   'traces, and the emulator predicts the scalar observable features only.')
             return
         operand_lists = obs_operand_lists(self.prediction_info)
+        features = {}
         if operand_lists:
             from libcuflynx.param_id import prediction_features
             print('Saving prediction data')
             result = self._prediction_result()
+            features = result.features
             num_items = len(operand_lists)
             segments = prediction_features.feature_segments(
                 self.prediction_info, list(range(num_items)), self.protocol_info)
@@ -1643,11 +1680,20 @@ class CVS0DParamID():
                 print(f'validation of {len(result.validation["items"])} held-out prediction '
                       f'item(s) saved in {path}')
 
+
         else:
             print(f'prediction variables have not been defined, if you want to save predicition variables,',
                   f'create a prediction_items entry in the obs_data.json file')
 
-        return
+        if self.prediction_plots:
+            from libcuflynx.param_id import prediction_plots
+            model_values = dict(features)
+            model_values.update(self._data_item_feature_values(self.prediction_plots))
+            for path in prediction_plots.plot_prediction_plots(
+                    self.prediction_plots, self.gt_df, self.prediction_info, self.protocol_info,
+                    model_values, self.output_dir, funcs=self.param_id.operation_funcs_dict,
+                    units=prediction_plots.group_units(self.gt_df, self.prediction_info)):
+                print(f'prediction plot saved in {path}')
 
     def set_bayesian_parameters(self, n_calls, n_initial_points, acq_func, random_state, acq_func_kwargs={}):
         """Configure the Bayesian optimiser.

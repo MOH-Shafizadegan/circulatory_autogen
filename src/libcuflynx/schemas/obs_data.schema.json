@@ -36,6 +36,13 @@
         "protocol_info": {
           "type": "object",
           "description": "pre_times, sim_times, params_to_change, and the optional experiment_*, offline_pre_time, comment, protocol_traces and protocol_shapes keys; unknown keys are rejected by the parser"
+        },
+        "prediction_plots": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/prediction_plot"
+          },
+          "description": "figures of a scalar feature against another feature or an input, across experiments (libcuflynx.param_id.prediction_plots); drawn by save_prediction_data and cuflynx-run-predictions"
         }
       }
     },
@@ -48,6 +55,34 @@
     }
   ],
   "$defs": {
+    "prediction_plot": {
+      "type": "object",
+      "description": "one figure. A group is the data_items and prediction_items sharing an item_name_for_plotting, at most one per experiment; a point is one experiment",
+      "required": ["name", "kind", "x", "y"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string", "pattern": "\\S", "description": "figure title and file stem; unique"},
+        "kind": {"enum": ["feature_vs_feature", "feature_vs_input"]},
+        "y": {"type": "string", "description": "the group on the y-axis"},
+        "x": {
+          "description": "feature_vs_feature: a group; feature_vs_input: the number params_to_change sets in that sub-experiment",
+          "oneOf": [{"type": "string"}, {"$ref": "#/$defs/input_reference"}]
+        },
+        "series": {
+          "description": "one line per distinct value of this input",
+          "oneOf": [{"type": "null"}, {"$ref": "#/$defs/input_reference"}]
+        }
+      }
+    },
+    "input_reference": {
+      "type": "object",
+      "required": ["params_to_change", "subexperiment_idx"],
+      "additionalProperties": false,
+      "properties": {
+        "params_to_change": {"type": "string"},
+        "subexperiment_idx": {"type": "integer", "minimum": 0}
+      }
+    },
     "item": {
       "type": "object",
       "description": "one data or prediction item; see the obs_data documentation"

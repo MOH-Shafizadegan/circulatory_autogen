@@ -28,6 +28,7 @@ from libcuflynx.utilities.obs_data_helpers import (LEGACY_OBS_ITEM_KEYS, LEGACY_
                                         migrate_legacy_obs_item_keys, check_obs_data_name,
                                         DEFAULT_COST_TYPE, PREVIOUS_DEFAULT_COST_TYPE,
                                         VALID_DATA_TYPES)
+from libcuflynx.param_id.prediction_plots import check_prediction_plots
 from libcuflynx.param_id.modifier_funcs import (BUILTIN_MODIFIER_FUNCS, get_modifier_funcs,
                                      probe_affine)
 
@@ -4169,12 +4170,18 @@ class ObsAndParamDataParser(object):
 
         check_data_item_names_unique(gt_df, prediction_info)
         check_prediction_operation_references(gt_df, prediction_info)
+        # Figures across experiments (#568): checked structurally here; that each item is a
+        # scalar feature needs the operation funcs, so plot_prediction_plots checks it.
+        prediction_plots = check_prediction_plots(
+            json_obj.get('prediction_plots') if isinstance(json_obj, dict) else None,
+            gt_df, prediction_info, protocol_info)
 
         return {
             "gt_df": gt_df, 
             "protocol_info": protocol_info, 
             "prediction_info": prediction_info,
             "obs_data_name": obs_data_name,
+            "prediction_plots": prediction_plots,
         }
 
     def process_obs_info(self, gt_df, output_dir, dt):

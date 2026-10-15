@@ -27,6 +27,7 @@ class PredictionResult:
     features: dict = field(default_factory=dict)
     segments: dict = field(default_factory=dict)
     validation: dict = field(default_factory=dict)
+    plots: list = field(default_factory=list)
 
 
 def segment_length(sim_time, dt):
@@ -127,14 +128,16 @@ def predict_on(executor, protocol_info, prediction_info, funcs,
 
 def run_prediction_items(model, obs, dt, solver_info=None, solver='CVODE_myokit',
                          operation_funcs_path=None, param_names=None, param_vals=None,
-                         model_type=None):
+                         model_type=None, plot_dir=None):
     """Run ``obs``'s protocol on ``model`` and evaluate its prediction items, with no calibration.
 
     ``obs`` is an obs_data path or dict, parsed as calibration parses it (shapes, legacy keys and
     item checks apply). ``operation_funcs_path`` adds user operations, as
     ``operation_funcs_external_path`` does. ``param_names``/``param_vals`` (for example a
     calibrated parameter set) are applied at the start of each experiment. ``model_type`` is
-    needed for a model that is not CellML.
+    needed for a model that is not CellML. With ``plot_dir``, the obs_data's
+    ``prediction_plots`` are drawn there (``result.plots`` lists them); a data_item point shows
+    its data only, as there is no calibration to evaluate it.
     """
     from libcuflynx.param_id.operation_funcs import get_operation_funcs_dict_for_mode
     from libcuflynx.parsers.PrimitiveParsers import ObsAndParamDataParser
@@ -150,5 +153,12 @@ def run_prediction_items(model, obs, dt, solver_info=None, solver='CVODE_myokit'
                             solver=solver, model_type=model_type)
     runner._apply_protocol_info(protocol_info)
     funcs = get_operation_funcs_dict_for_mode('numpy', operation_funcs_path)
-    return predict_on(runner._executor, protocol_info, prediction_info, funcs,
-                      id_param_names=param_names, id_param_vals=param_vals)
+    result = predict_on(runner._executor, protocol_info, prediction_info, funcs,
+                        id_param_names=param_names, id_param_vals=param_vals)
+    if plot_dir is not None and parsed['prediction_plots']:
+        from libcuflynx.param_id import prediction_plots
+        result.plots = prediction_plots.plot_prediction_plots(
+            parsed['prediction_plots'], parsed['gt_df'], prediction_info, protocol_info,
+            result.features, plot_dir, funcs=funcs,
+            units=prediction_plots.group_units(parsed['gt_df'], prediction_info))
+    return result

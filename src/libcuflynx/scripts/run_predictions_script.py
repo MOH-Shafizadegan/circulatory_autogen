@@ -9,7 +9,8 @@ Writes to the output directory:
 - ``traces.npz``: per item without an operation, ``<data_item_name>`` = rows ``[time, values]``
   over its segment, time from the end of the experiment's warm-up;
 - ``features.csv``: ``data_item_name,value`` per scalar feature item;
-- ``validation_results.json``: the items that carry a value against the model.
+- ``validation_results.json``: the items that carry a value against the model;
+- ``<name>.png`` per ``prediction_plots`` entry of the obs_data.
 
 ``--params`` is a CSV of ``name,value`` rows (``vessel/param`` names) applied at the start of
 each experiment, for example a calibrated parameter set.
@@ -79,8 +80,8 @@ def run(args):
     result = run_prediction_items(
         args.model, args.obs_data, args.dt, json.loads(args.solver_info), solver=args.solver,
         operation_funcs_path=args.operation_funcs, param_names=names, param_vals=values,
-        model_type=args.model_type)
-    for path in write_outputs(result, args.output_dir):
+        model_type=args.model_type, plot_dir=args.output_dir)
+    for path in write_outputs(result, args.output_dir) + result.plots:
         print(f'wrote {path}')
     return 0
 
