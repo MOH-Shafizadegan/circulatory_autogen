@@ -1044,10 +1044,6 @@ file and a **params_for_id** file, the same three that `cuflynx-param-id` takes.
 every step are merged into the workflow's **target** model. To redo a calibration, edit its
 obs_data and run the workflow again: every step that used its values is redone too.
 
-!!! note
-    This is not `cuflynx-sequential-param-id`, which was the idea of fitting *one* model in
-    stages (fit, drop the unidentifiable parameters, refit) and is not implemented.
-
 ### Try it
 
 libcuflynx ships small example models for trying workflows. They are algebraic, so a run takes

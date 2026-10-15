@@ -9,9 +9,6 @@ calibrated values as fixed values (``fixed_from``) or their stored posteriors as
 (``priors_from``). Editing an input and re-running the workflow redoes everything downstream of
 it.
 
-Not to be confused with ``cuflynx-sequential-param-id``, the unimplemented idea of staged
-fitting of *one* model (fit, drop unidentifiable parameters, refit).
-
 Entry points: :func:`run_calibration_workflow` (and the ``cuflynx-calibration-workflow``
 command), :func:`plan_workflow`, :func:`load_workflow`, :func:`load_workflow_run`,
 :func:`workflow_model` (the model a GUI tab shows), :class:`StoredDistribution`,

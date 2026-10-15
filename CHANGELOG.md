@@ -5,6 +5,12 @@ next release; add to that section as you land a change.
 
 ## Unreleased
 
+### Removed — `cuflynx-sequential-param-id`
+
+The command and `user_run_files/run_sequential_param_id.sh` are gone, with the script and the
+two obsolete copies behind them. The stage was never implemented: the command only said so.
+Ordered calibrations and analyses are run by `cuflynx-calibration-workflow`.
+
 ### Changed — multi-port coupling follows PhLynx (#575)
 
 - **Multiply on either end.** A `"Multiply"` port scales its variable into the neighbour
