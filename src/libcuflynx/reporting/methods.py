@@ -416,23 +416,54 @@ def _model_section(model, mapping_rows, module_info, mapping_path):
             + module_sections(model, by_name, module_info=module_info))
 
 
+#: how the overview counts each kind of step: (singular, plural)
+KIND_NAMES = {'calibration': ('calibration', 'calibrations'),
+              'sensitivity': ('sensitivity analysis', 'sensitivity analyses'),
+              'reduction': ('reduction', 'reductions'),
+              'emulation': ('emulator training', 'emulator trainings'),
+              'identifiability': ('identifiability analysis', 'identifiability analyses')}
+_INDEX_NAMES = {'ST': 'total', 'S1': 'first-order'}
+
+
+def _count_of(kind, n):
+    singular, plural = KIND_NAMES[kind]
+    return f'{n} {singular if n == 1 else plural}'
+
+
+def _join(items):
+    return items[0] if len(items) == 1 else ', '.join(items[:-1]) + ' and ' + items[-1]
+
+
+def _kind(step):
+    return step.get('kind', 'calibration')
+
+
 def _step_section(step, symbols):
     out = [f'\\subsection{{Step {escape(step["id"])}}}', r'\label{sec:step:'
            + step['id'].replace('_', '-') + '}']
     out.append(step.get('intro') or _step_intro(step))
     if step.get('description'):
         out.append(_sentence(step['description']))
-    if step['fixed_from']:
+    if _kind(step) == 'reduction':
+        return '\n\n'.join(out)
+    if step.get('emulator_from'):
+        out.append(f'It runs on the emulator trained in step {escape(step["emulator_from"])} '
+                   f'(Section~\\ref{{sec:step:{step["emulator_from"].replace("_", "-")}}}), '
+                   'not on the model.')
+    if step.get('params_for_id_from'):
+        out.append(f'It calibrates the parameters kept by step '
+                   f'{escape(step["params_for_id_from"])}.')
+    if step['fixed_from'] or step.get('result_from'):
         fixed = (step.get('result') or {}).get('fixed') or []
+        given = step['fixed_from'] + ([step['result_from']] if step.get('result_from') else [])
         if fixed:
             values = ', '.join(f'{symbols["target"].model_name(_target_name(f, step))}'
                                f'$\\,=\\,${_number(f["value"])} (from {escape(f["from_step"])})'
                                for f in fixed)
             out.append(f'The values calibrated in earlier steps were fixed: {values}.')
         else:
-            out.append('The values calibrated in step' + ('s ' if len(step['fixed_from']) > 1
-                                                           else ' ')
-                       + ', '.join(escape(s) for s in step['fixed_from'])
+            out.append('The values calibrated in step' + ('s ' if len(given) > 1 else ' ')
+                       + ', '.join(escape(s) for s in given)
                        + ' were fixed in this step\'s model.')
     for prior in step['priors_from']:
         out.append(f'The parameters calibrated in step {escape(prior["step"])} were '
@@ -445,19 +476,69 @@ def _step_section(step, symbols):
                                           (step['settings'].get('optimiser_options') or {})
                                           .get('cost_type') or 'gaussian_MLE')
     out.append(r'\paragraph{Observables.} ' + observables)
-    out.append(r'\paragraph{Parameters.} The calibrated parameters, their ranges and priors:'
-               + '\n' + parameters_text(step['params'], symbols['step']))
-    out.append(r'\paragraph{Method.} ' + method_text(step['settings']) + ' '
-               + cost_text(costs, step['settings']))
+    if _kind(step) == 'calibration':
+        out.append(r'\paragraph{Parameters.} The calibrated parameters, their ranges and '
+                   r'priors:' + '\n' + parameters_text(step['params'], symbols['step']))
+        out.append(r'\paragraph{Method.} ' + method_text(step['settings']) + ' '
+                   + cost_text(costs, step['settings']))
+    else:
+        out.append(r'\paragraph{Parameters.} The parameters ' + ANALYSED[_kind(step)]
+                   + ' and their ranges:\n' + parameters_text(step['params'], symbols['step']))
+        out.append(r'\paragraph{Method.} ' + _analysis_method(step))
     if step.get('store_distribution'):
         out.append(r'\paragraph{Uncertainty.} ' + uq_text(step['settings']))
-    if step.get('result'):
+    if step.get('result') and _kind(step) == 'calibration':
         out.append(r'\paragraph{Result.} ' + results_text(step['result'], symbols['step']))
+    elif _kind(step) == 'identifiability' and (step.get('result') or {}).get('laplace'):
+        result = step['result']
+        stds = ', '.join(f'{escape(name)}: {_number(value)}' for name, value in
+                         zip(result['parameters'], result['laplace']['std']))
+        out.append(r'\paragraph{Result.} The standard deviations of the Laplace '
+                   f'approximation: {stds}.')
     return '\n\n'.join(out)
 
 
+#: what the Parameters paragraph says a non-calibration step does with its parameters
+ANALYSED = {'sensitivity': 'whose influence was analysed',
+            'emulation': 'the emulator was trained over',
+            'identifiability': 'whose identifiability was analysed'}
+
+
+def _analysis_method(step):
+    settings, kind = step['settings'], _kind(step)
+    if kind == 'sensitivity':
+        sa = settings.get('sa_options') or {}
+        if sa.get('method', 'sobol') == 'sobol':
+            return (f'Sobol indices were estimated from {sa.get("num_samples", 32)} base '
+                    f'samples ({escape(str(sa.get("sample_type", "saltelli")))} sampling).')
+        return ('Local sensitivities, the derivatives of each observable with respect to each '
+                'parameter, were computed at the model\'s values.')
+    if kind == 'emulation':
+        em = settings.get('emulator_settings') or {}
+        return (f'An emulator of the observables was trained on '
+                f'{em.get("num_train_samples", 128)} model runs '
+                f'({escape(str(em.get("sample_type", "sobol")))} sampling).')
+    ia = settings.get('ia_options') or {}
+    return (f'The {escape(str(ia.get("method", "Laplace")))} approximation of the posterior '
+            f'at the calibrated values, with gradients by '
+            f'{escape(str(ia.get("gradient_source", "FD")))}.')
+
+
 def _step_intro(step):
-    '''What the step calibrates, on which model, against which observations.'''
+    '''What the step does, on which model, against which observations.'''
+    if _kind(step) == 'reduction':
+        options = step['reduction']
+        text = (f'This step ranks the parameters of step {escape(step["sensitivity_from"])} by '
+                f'the {options["criterion"]} over the observables of their '
+                f'{_INDEX_NAMES[options["index_type"]]} Sobol index, and keeps the top '
+                f'{options["top_n"]}'
+                + (f' scoring at least {_number(options["threshold"])}'
+                   if options.get('threshold') is not None else '') + '.')
+        selected = (step.get('result') or {}).get('selected')
+        if selected:
+            text += ' It kept ' + _join([f'{_tt(s["parameter"])} ({_number(s["score"])})'
+                                         for s in selected]) + '.'
+        return text
     m, obs = step['model'], _tt(os.path.basename(step['obs_path']))
     if 'module_array' in m:
         what = f'the model {_tt(_array_label(m))} ({_tt(os.path.basename(m["module_array"]))})'
@@ -466,7 +547,12 @@ def _step_intro(step):
         what = (f'parameterisation {_tt(m["parameterisation"])} of module '
                 f'{_tt(m["module_type"])} (version {_tt(m["version"])})')
         where = f', {_tt(step["place"])} in the target' if step.get('place') else ''
-    return f'This step calibrates {what}{where}, against the observations in {obs}.'
+    verb = {'calibration': 'calibrates', 'sensitivity': 'analyses the sensitivity of',
+            'emulation': 'trains an emulator of',
+            'identifiability': 'analyses the identifiability of'}[_kind(step)]
+    at = (f', at the values calibrated in step {escape(step["result_from"])}'
+          if step.get('result_from') else '')
+    return f'This step {verb} {what}{where}{at}, against the observations in {obs}.'
 
 
 def _array_label(model):
@@ -526,23 +612,36 @@ def workflow_methods_latex(workflow_path, run_dir=None, mapping=None, module_lib
                 if result.get('status') != 'done':
                     result = None
         results[step.id] = result
-        steps.append({
-            'id': step.id, 'model': step.model.as_dict(), 'place': rs.place,
-            'to_target': rs.to_target,
-            'description': step.description,
-            'obs_path': rs.obs_data_path,
-            'obs': _load_json(rs.obs_data_path),
-            'params': read_params_for_id(rs.params_for_id_path),
+        entry = {
+            'id': step.id, 'kind': step.kind, 'description': step.description,
             'settings': workflow.step_settings(step), 'depends_on': list(step.depends_on),
             'fixed_from': list(step.fixed_from),
             'priors_from': [p.as_dict() for p in step.priors_from],
             'store_distribution': step.store_distribution, 'result': result,
-        })
+            'emulator_from': step.emulator_from, 'result_from': step.result_from,
+            'sensitivity_from': step.sensitivity_from,
+            'params_for_id_from': step.params_for_id_from, 'reduction': step.reduction,
+        }
+        if step.model is not None:
+            # a calibration of a reduction's choice: what it kept, once it has run; until
+            # then every parameter it chooses from
+            params_path = ((result or {}).get('params_for_id_used') or step.params_for_id
+                           or workflow.step(workflow.step(step.params_for_id_from)
+                                            .sensitivity_from).params_for_id)
+            entry.update({
+                'model': step.model.as_dict(), 'place': rs.place, 'to_target': rs.to_target,
+                'obs_path': rs.obs_data_path, 'obs': _load_json(rs.obs_data_path),
+                'params': read_params_for_id(params_path)})
+        else:
+            entry.update({'model': None, 'place': '', 'to_target': None, 'obs_path': None,
+                          'obs': {}, 'params': []})
+        steps.append(entry)
     graph_steps = [dict(s, n_parameters=len(s['params']),
                         n_data_items=len(s['obs'].get('data_items') or []),
                         priors_from=[p['step'] for p in s['priors_from']]) for s in steps]
-    n_merged = sum(len(r['calibrated']) for r in results.values() if r) or \
-        sum(len(s['params']) for s in steps)
+    calibrations = [s for s in steps if s['kind'] == 'calibration']
+    n_merged = sum(len(results[s['id']]['calibrated']) for s in calibrations
+                   if results[s['id']]) or sum(len(s['params']) for s in calibrations)
     nodes, edges = flowchart.workflow_graph(
         graph_steps + [{'id': None, 'model': workflow.target.as_dict(), 'n_merged': n_merged}])
     figure = flowchart.figure(
@@ -556,6 +655,8 @@ def workflow_methods_latex(workflow_path, run_dir=None, mapping=None, module_lib
 
     calibrated = {}
     for step in workflow.topological_order():
+        if step.kind != 'calibration':
+            continue
         result = results.get(step.id)
         if result:
             names = [r['target_model_name'] for r in result['calibrated']]
@@ -569,14 +670,23 @@ def workflow_methods_latex(workflow_path, run_dir=None, mapping=None, module_lib
 
     body = [_model_section(model, rows, module_info, mapping),
             parameter_sources_section(model, {r['variable_name']: r for r in rows}, sources)]
+    if len(calibrations) == len(steps):
+        overview = (f'The parameters were calibrated in {len(steps)} step'
+                    + ('s' if len(steps) != 1 else '')
+                    + ' (Figure~\\ref{fig:calibration-flowchart}), each a calibration of one '
+                    'model against its own observations, in the order shown; the values of '
+                    'every step were then merged into the target, ')
+    else:
+        counts = [_count_of(kind, sum(s['kind'] == kind for s in steps))
+                  for kind in KIND_NAMES if any(s['kind'] == kind for s in steps)]
+        overview = (f'The workflow has {len(steps)} steps '
+                    '(Figure~\\ref{fig:calibration-flowchart}), run in the order shown: '
+                    + _join(counts) + '. Each calibration fits one model against its own '
+                    'observations, and the values of every calibration were then merged into '
+                    'the target, ')
     body.append('\\section{Calibration}\n'
                 + (_sentence(workflow.description) + ' ' if workflow.description else '')
-                + f'The parameters were calibrated in {len(steps)} step'
-                + ('s' if len(steps) != 1 else '')
-                + ' (Figure~\\ref{fig:calibration-flowchart}), each a calibration of one model '
-                'against its own observations, in the order shown; the values of every step '
-                'were then merged into the target, '
-                + _tt(workflow.target.label()) + '.\n\n' + figure)
+                + overview + _tt(workflow.target.label()) + '.\n\n' + figure)
     for step in steps:
         symbols = {'step': Symbols(rows, step['to_target']), 'target': Symbols(rows)}
         body.append(_step_section(step, symbols))

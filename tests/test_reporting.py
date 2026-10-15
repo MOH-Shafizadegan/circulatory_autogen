@@ -212,6 +212,62 @@ def test_a_workflow_flow_chart_follows_its_dependencies():
 
 
 @pytest.mark.unit
+def test_a_flow_chart_merges_only_calibrations_and_labels_what_each_step_takes():
+    target = {'id': None,
+              'model': {'module_type': 'soma', 'version': 'v', 'parameterisation': 'r'},
+              'n_merged': 1}
+    screen = dict(_step('screen'), kind='sensitivity', settings={'sa_options': {}})
+    reduce = {'id': 'reduce', 'kind': 'reduction', 'model': None, 'n_parameters': 0,
+              'n_data_items': 0, 'settings': {}, 'depends_on': ['screen'], 'fixed_from': [],
+              'priors_from': [], 'sensitivity_from': 'screen', 'reduction': {'top_n': 2}}
+    fit = dict(_step('fit', depends=['reduce']), params_for_id_from='reduce')
+    ia = dict(_step('ia', depends=['fit']), kind='identifiability', result_from='fit',
+              settings={'ia_options': {'method': 'Laplace'}})
+    nodes, edges = flowchart.workflow_graph([screen, reduce, fit, ia, target])
+    by_edge = {(e['from'], e['to']): e for e in edges}
+    assert [by_edge[k]['label'] for k in (('screen', 'reduce'), ('reduce', 'fit'),
+                                          ('fit', 'ia'))] == ['indices', 'parameters',
+                                                              'at its fit']
+    # fit's values reach the target although ia analyses them; the analyses add none
+    assert [k for k in by_edge if k[1] == '__target__'] == [('fit', '__target__')]
+    kinds = {n['id']: n['kind'] for n in nodes}
+    assert kinds['fit'] == 'step' and kinds['screen'] == kinds['ia'] == 'analysis'
+    lines = {n['id']: n['lines'] for n in nodes}
+    assert lines['reduce'] == ['keeps the top 2 by Sobol ST']
+    assert lines['screen'][-1] == 'Sobol sensitivity analysis'
+    assert lines['ia'][-1] == 'Laplace identifiability analysis'
+
+
+@pytest.mark.integration
+def test_methods_of_a_workflow_with_analyses_describe_each_kind(tmp_path):
+    from libcuflynx.calibration_workflow import run_calibration_workflow
+    from libcuflynx.external_testing.workflow_library import build_workflow_library
+
+    library = build_workflow_library(str(tmp_path / 'library'))
+    run_dir = str(tmp_path / 'run')
+    text = workflow_methods_latex(library['chain_analysed'])
+    assert ('The workflow has 5 steps (Figure~\\ref{fig:calibration-flowchart}), run in the '
+            'order shown: 2 calibrations, 1 sensitivity analysis, 1 reduction and 1 '
+            'identifiability analysis.') in text
+    assert ('This step ranks the parameters of step screen by the max over the observables '
+            'of their total Sobol index, and keeps the top 1.') in text
+    assert 'It calibrates the parameters kept by step reduce.' in text
+    assert 'analyses the identifiability of parameterisation' in text
+
+    run_calibration_workflow(library['chain_analysed'], output_dir=run_dir)
+    text = workflow_methods_latex(library['chain_analysed'], run_dir=run_dir)
+    assert 'It kept \\texttt{mod\\_\\_C/q} (' in text
+    assert 'The standard deviations of the Laplace approximation: mod\\_\\_C/q: ' in text
+    # only the calibrations' values are the target's; q is fit's
+    assert r'Calibrated in step \texttt{fit} (Section~\ref{sec:step:fit})' in text
+    if shutil.which('pdflatex'):
+        tex = str(tmp_path / 'methods.tex')
+        with open(tex, 'w') as f:
+            f.write(workflow_methods_latex(library['chain_analysed'], run_dir=run_dir))
+        assert 'Undefined control sequence' not in _compile(tex)
+
+
+@pytest.mark.unit
 def test_a_single_calibration_flow_chart_has_its_stages():
     nodes, edges = flowchart.single_calibration_graph(3, 4, 2, {}, do_uq=True, do_ia=True)
     ids = [n['id'] for n in nodes]

@@ -122,6 +122,9 @@ class EmulatorTrainer:
                 'emulator. Build it with use_emulator: false so training runs the real solver.')
         self.pid = param_id
         self.settings = dict(emulator_settings or {})
+        # The parsed config, when built through init_from_dict, so a trained emulator can be
+        # declared in the study manifest. A trainer built directly has no study to record in.
+        self.study_inp = None
         self.comm = comm if comm is not None else _discover_comm()
         self.rank = self.comm.Get_rank() if self.comm is not None else 0
         self.num_procs = self.comm.Get_size() if self.comm is not None else 1
@@ -152,6 +155,7 @@ class EmulatorTrainer:
             engine.set_params_for_id(inp_data_dict['params_for_id'])
         trainer = cls(engine.param_id, inp_data_dict.get('emulator_settings') or {}, comm=comm)
         trainer.output_dir = resolve_emulator_dir(inp_data_dict)
+        trainer.study_inp = dict(inp_data_dict)
         return trainer
 
     def _check_observables_are_scalar(self):
@@ -811,6 +815,9 @@ class EmulatorTrainer:
         output_dir = self.output_directory()
         bundle.save(output_dir)
         print(f'[emulator] saved to {output_dir}')
+        if self.study_inp is not None:
+            from libcuflynx.utilities import cuflynx_study
+            cuflynx_study.update_study(self.study_inp, emulator=output_dir)
         for label, score in zip(bundle.feature_labels, meta['feature_r2']):
             print(f'    held-out R2 {score:8.4f}   {label}')
         return bundle

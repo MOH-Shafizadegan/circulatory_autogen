@@ -11,6 +11,7 @@ from libcuflynx.reporting.latex_names import escape
 
 NODE_STYLES = {
     'step': 'draw, rounded corners, fill=blue!6',
+    'analysis': 'draw, rounded corners, fill=yellow!10',
     'target': 'draw, rounded corners, very thick, fill=green!8',
     'stage': 'draw, rounded corners, fill=gray!8',
     'data': 'draw, fill=orange!8',
@@ -130,40 +131,68 @@ def _model_line(model):
             + escape(model['parameterisation']) + '}')
 
 
+#: what an edge from each source key is labelled
+_SOURCE_LABELS = {'fixed_from': 'fixed', 'priors_from': 'prior', 'emulator_from': 'emulator',
+                  'result_from': 'at its fit', 'sensitivity_from': 'indices',
+                  'params_for_id_from': 'parameters'}
+
+
+def _kind_line(s):
+    '''What a step that is not a calibration does, in one line.'''
+    settings, kind = s.get('settings') or {}, s.get('kind')
+    if kind == 'sensitivity':
+        method = (settings.get('sa_options') or {}).get('method', 'sobol')
+        return f'{method.capitalize()} sensitivity analysis'
+    if kind == 'emulation':
+        return 'emulator trained'
+    if kind == 'identifiability':
+        method = (settings.get('ia_options') or {}).get('method', 'Laplace')
+        return f'{escape(method)} identifiability analysis'
+    return escape(_method_label(settings)) + (' on the emulator' if s.get('emulator_from')
+                                              else '')
+
+
 def workflow_graph(steps):
-    '''Nodes and edges for a workflow. ``steps`` are dicts ``{'id', 'model', 'n_parameters',
-    'n_data_items', 'settings', 'depends_on', 'fixed_from', 'priors_from' (step ids),
-    'store_distribution'}`` plus ``model`` (the workflow's target) and ``n_merged`` in a final
-    dict with ``'id': None``. A model is a library module ``{module_type, version,
-    parameterisation}`` or ``{module_array}``.'''
+    '''Nodes and edges for a workflow. ``steps`` are dicts ``{'id', 'kind', 'model',
+    'n_parameters', 'n_data_items', 'settings', 'depends_on', 'fixed_from', 'priors_from' (step
+    ids), 'store_distribution'}``, with ``emulator_from``, ``result_from``,
+    ``sensitivity_from``, ``params_for_id_from`` and (a reduction) ``reduction`` where a step
+    has them, plus ``model`` (the workflow's target) and ``n_merged`` in a final dict with
+    ``'id': None``. A model is a library module ``{module_type, version, parameterisation}`` or
+    ``{module_array}``; a reduction has none.'''
     *step_list, target = steps
     nodes, edges = [], []
     for s in step_list:
-        lines = [_model_line(s['model']),
-                 f'{_count(s["n_parameters"], "parameter")}, '
-                 f'{_count(s["n_data_items"], "observable")}',
-                 escape(_method_label(s['settings']))]
+        kind = s.get('kind', 'calibration')
+        if kind == 'reduction':
+            options = s.get('reduction') or {}
+            lines = [f'keeps the top {options.get("top_n")} by Sobol '
+                     f'{options.get("index_type", "ST")}']
+        else:
+            lines = [_model_line(s['model']),
+                     f'{_count(s["n_parameters"], "parameter")}, '
+                     f'{_count(s["n_data_items"], "observable")}',
+                     _kind_line(s)]
         if s.get('store_distribution'):
             lines.append('then MCMC: posterior stored')
         nodes.append({'id': s['id'], 'title': escape(s['id']), 'lines': lines,
-                      'kind': 'step'})
+                      'kind': 'step' if kind == 'calibration' else 'analysis'})
         for dep in s['depends_on']:
-            kinds = []
-            if dep in s['fixed_from']:
-                kinds.append('fixed')
-            if dep in s['priors_from']:
-                kinds.append('prior')
+            kinds = [label for key, label in _SOURCE_LABELS.items()
+                     if dep in (s.get(key) or []) or dep == s.get(key)]
             edges.append({'from': dep, 'to': s['id'], 'label': ' + '.join(kinds),
                           'style': 'prior' if 'prior' in kinds else
-                          ('fixed' if kinds else 'order')})
+                          ('fixed' if 'fixed' in kinds else 'order')})
     t = target['model']
     nodes.append({'id': '__target__', 'title': 'Merged: ' + escape(_model_name(t)),
                   'lines': [_model_detail(t),
                             f'{_count(target["n_merged"], "calibrated value")}'],
                   'kind': 'target'})
-    referenced = {d for s in step_list for d in s['depends_on']}
-    for s in step_list:
-        if s['id'] not in referenced:       # the last step(s) of each branch
+    # the calibrations whose values no later calibration takes are merged into the target
+    calibrations = [s for s in step_list if s.get('kind', 'calibration') == 'calibration']
+    referenced = {d for s in calibrations for d in s['fixed_from'] + list(s['priors_from'])}
+    for s in calibrations:
+        if s['id'] not in referenced:
             edges.append({'from': s['id'], 'to': '__target__', 'label': '',
                           'style': 'merge'})
     return nodes, edges

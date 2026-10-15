@@ -33,7 +33,6 @@ _SRC_DIR = _REPO_ROOT / "src"
 EXPECTED_ENTRY_POINTS = {
     "cuflynx-generate",
     "cuflynx-param-id",
-    "cuflynx-sequential-param-id",
     "cuflynx-calibration-workflow",
     "cuflynx-variable-mapping",
     "cuflynx-methods-latex",
@@ -210,7 +209,6 @@ PIPELINE_LAUNCHERS = {
     "run_autogeneration.sh": "cuflynx-generate",
     "run_autogeneration_with_id_params.sh": "cuflynx-generate",
     "run_param_id.sh": "cuflynx-param-id",
-    "run_sequential_param_id.sh": "cuflynx-sequential-param-id",
     "run_sensitivity_analysis.sh": "cuflynx-sensitivity",
     "run_identifiability_analysis.sh": "cuflynx-identifiability",
     "run_emulator_training.sh": "cuflynx-train-emulator",

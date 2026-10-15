@@ -166,10 +166,11 @@ def test_the_built_wheel_carries_the_data_files_and_not_the_dead_code(tmp_path):
     assert any(n.startswith('libcuflynx/scripts/example_data/') and n.endswith('.csv')
                for n in names), sorted(n for n in names if 'example_data' in n)
 
-    # The JSON Schemas of the module array, module config and obs_data files.
+    # The JSON Schemas of the module array, module config, obs_data and params_for_id files.
     assert 'libcuflynx/schemas/module_array.schema.json' in names
     assert 'libcuflynx/schemas/module_config.schema.json' in names
     assert 'libcuflynx/schemas/obs_data.schema.json' in names
+    assert 'libcuflynx/schemas/params_for_id.schema.json' in names
 
     # ...and the dead code that packages.find excludes stays excluded.
     obsolete = sorted(n for n in names if n.startswith('libcuflynx/obsolete/'))

@@ -10,8 +10,8 @@
   "$defs": {
     "name": {
       "type": "string",
-      "pattern": "^\\S+$",
-      "description": "an instance name"
+      "pattern": "^\\s*\\S+\\s*$",
+      "description": "A name with no whitespace inside it (surrounding whitespace is stripped): names become CellML component and variable names."
     },
     "nameList": {
       "description": "instance names: a list, or one space-separated string (null: none). A name may be a path to a submodule of a supermodule instance, \"heart/ra\" (\"neuron/soma/membrane\" two levels down)",
@@ -62,27 +62,32 @@
       ],
       "properties": {
         "name": {
-          "$ref": "#/$defs/instanceName"
+          "$ref": "#/$defs/instanceName",
+          "description": "Required. The instance name, unique in the array; a module's parameters and variables are named <variable>_<name>."
         },
         "module_type": {
           "$ref": "#/$defs/name",
-          "description": "the module type (older key: vessel_type)"
+          "description": "Required. The module type: the module_type of a module config entry (older key: vessel_type)."
         },
         "module_subtype": {
           "$ref": "#/$defs/name",
-          "description": "the module variant (older key: BC_type)"
+          "description": "Required. The module version: the module_subtype of that entry (older key: BC_type)."
         },
         "inp_instances": {
-          "$ref": "#/$defs/nameList"
+          "$ref": "#/$defs/nameList",
+          "description": "The instances feeding this one (connected to its entrance ports). Default: none."
         },
         "out_instances": {
-          "$ref": "#/$defs/nameList"
+          "$ref": "#/$defs/nameList",
+          "description": "The instances this one feeds (connected to its exit ports). Default: none."
         },
         "per_submodule_inputs": {
-          "$ref": "#/$defs/perSubmodule"
+          "$ref": "#/$defs/perSubmodule",
+          "description": "Supermodule instances only: {submodule: [host instance, ...]}, the host instances feeding each submodule. Each host must list this instance in its out list. Default: none."
         },
         "per_submodule_outputs": {
-          "$ref": "#/$defs/perSubmodule"
+          "$ref": "#/$defs/perSubmodule",
+          "description": "Supermodule instances only: {submodule: [host instance, ...]}, the host instances each submodule feeds. Each host must list this instance in its inp list. Default: none."
         },
         "parameterisation": {
           "type": "string",
@@ -146,25 +151,32 @@
       ],
       "properties": {
         "name": {
-          "$ref": "#/$defs/instanceName"
+          "$ref": "#/$defs/instanceName",
+          "description": "Required. The instance name, unique in the array; a module's parameters and variables are named <variable>_<name>."
         },
         "vessel_type": {
-          "$ref": "#/$defs/name"
+          "$ref": "#/$defs/name",
+          "description": "Required. The module type: the vessel_type (PhLynx: module_type) of a module config entry."
         },
         "BC_type": {
-          "$ref": "#/$defs/name"
+          "$ref": "#/$defs/name",
+          "description": "Required. The module version: the BC_type (PhLynx: module_subtype) of that entry."
         },
         "inp_vessels": {
-          "$ref": "#/$defs/nameList"
+          "$ref": "#/$defs/nameList",
+          "description": "The instances feeding this one (connected to its entrance ports). Default: none."
         },
         "out_vessels": {
-          "$ref": "#/$defs/nameList"
+          "$ref": "#/$defs/nameList",
+          "description": "The instances this one feeds (connected to its exit ports). Default: none."
         },
         "per_submodule_inputs": {
-          "$ref": "#/$defs/perSubmodule"
+          "$ref": "#/$defs/perSubmodule",
+          "description": "Supermodule instances only: {submodule: [host instance, ...]}, the host instances feeding each submodule. Each host must list this instance in its out list. Default: none."
         },
         "per_submodule_outputs": {
-          "$ref": "#/$defs/perSubmodule"
+          "$ref": "#/$defs/perSubmodule",
+          "description": "Supermodule instances only: {submodule: [host instance, ...]}, the host instances each submodule feeds. Each host must list this instance in its inp list. Default: none."
         },
         "parameterisation": {
           "type": "string",
@@ -230,8 +242,8 @@
     },
     "instanceName": {
       "type": "string",
-      "pattern": "^(?!_)(?!.*__)(?!.*_$)[^\\s/]+$",
-      "description": "an instance name: no whitespace or \"/\", no \"__\", and no \"_\" at either end (nested levels are joined with \"__\": heart/lv is heart__lv)"
+      "pattern": "^\\s*(?!_)(?![^\\s/]*__)[^\\s/]*[^\\s/_]\\s*$",
+      "description": "an instance name (surrounding whitespace is dropped): no whitespace inside, no \"/\", no \"__\", and no \"_\" at either end (nested levels are joined with \"__\": heart/lv is heart__lv)"
     }
   }
 }

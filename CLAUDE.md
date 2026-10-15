@@ -28,7 +28,6 @@ Runs are launched via shell scripts in `user_run_files/`. Each one invokes a **c
 | `run_autogeneration.sh` | `cuflynx-generate False` → `script_generate_with_new_architecture` | Generate model from CSV arrays |
 | `run_autogeneration_with_id_params.sh` | `cuflynx-generate True` → (same) | Regenerate using previously fitted params |
 | `run_param_id.sh` (arg: `num_processors`, uses `mpiexec`) | `cuflynx-param-id` → `param_id_run_script` | Generate + calibrate |
-| `run_sequential_param_id.sh` | `cuflynx-sequential-param-id` → `sequential_param_id_run_script` | Staged/sequential calibration — **not currently implemented**, the `SequentialParamID` class it drives is not in the tree; the command says so and exits 2 |
 | _(no run script)_ | `cuflynx-calibration-workflow <calibration_workflow.json>` → `calibration_workflow_run_script` | Ordered calibrations of module-library parameterisations (submodules, then a supermodule), each against its own obs_data/params_for_id, merged into the target parameterisation; `fixed_from` / `priors_from` pass values or stored posteriors between steps. Takes the workflow path, not the yaml — see `libcuflynx.calibration_workflow` and the "Calibration workflows" docs section. |
 | _(no run script)_ | `cuflynx-variable-mapping` / `cuflynx-methods-latex` → `variable_mapping_script` / `methods_latex_script` | Write-up: a model's `<prefix>_variable_mapping.csv` (LaTeX symbol per canonical variable name; regenerating keeps edits), and a methods `.tex` — equations per module (Myokit's LaTeX writer), a TikZ flow chart of the calibration (workflow steps or single-calibration stages), and per-step methods. `libcuflynx.reporting`; docs `tutorial/docs/methods-latex.md`. |
 | `run_multiple_param_id.sh` | *(no console command)* → `python -m libcuflynx.scripts.run_multiple_param_id` | Batch calibration over models |
@@ -181,6 +180,17 @@ Add/extend tests in `tests/` for **every feature and bugfix**; a bugfix should i
 - **`manual`** is stronger than `slow`: those tests are **not collected at all** without `--run-manual`, so they run neither in CI nor in a default local run. It is for a test that is too expensive to justify on every run *and* has a faster stand-in — the full-model UQ posterior-recovery tests in `test_UQ.py` (~80 min; the bimodal one alone took 56 on CI) versus `test_uq_on_emulator.py`, which makes the same assertions through an emulator in ~5. Reach for `manual` only with that pairing; a slow test with no cheaper equivalent should stay `slow` and keep running.
 - Fixtures in `tests/conftest.py`: `base_user_inputs`, `resources_dir`, `temp_output_dir`, `temp_generated_models_dir`, `mpi_comm`.
 - Reuse existing CellML models / obs_data.json patterns from `resources/`; put new fixtures under `tests/test_inputs/` when needed.
+
+## PR review guides
+
+When asked for a review page for a PR, publish an HTML artifact with:
+
+- **What it does**, in the PR's main parts, from the current diff rather than the PR description; say where the description is out of date.
+- **Multiple-choice questions**: four options, one correct; picking one marks it right or wrong at once and shows the reason with a `file:line` reference, with a running score and a reset.
+- **No give-aways**: options of similar length (the correct one is not the longest or shortest more than chance would make it), correct answers spread evenly over A-D, and wrong options that are plausible misreadings of the code.
+- **Before you merge**: merge-order holds, conflicts with other open PRs, stale descriptions, and what a local test run needs.
+
+Check every answer against the code at the PR's head before publishing.
 
 ## Docs
 

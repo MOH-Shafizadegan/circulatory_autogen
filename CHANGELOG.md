@@ -81,6 +81,50 @@ next release; add to that section as you land a change.
   calibration-parameter restriction; the benchmarks note and the Myokit docstring describe the
   run-once behaviour.
 
+### Added — packing a calibration workflow
+
+`pack_workflow(workflow, dest_dir)` and `cuflynx-calibration-workflow <workflow> --pack DIR`
+copy every file a workflow needs to run into one directory: the workflow rewritten to the
+packed files, each step's obs_data, params_for_id and module array with its parameters file,
+each module version it uses (with every units file of its library), and the files its settings
+name. Results are not packed. CUFLynx's OMEX export packs a workflow with it.
+
+### Changed — workflow settings paths are relative to the workflow file
+
+`external_modules_dir` and the `*_funcs_external_path` settings of a calibration workflow are
+read relative to the workflow file, like its other paths, not to the directory it is run from.
+
+### Added — analysis steps in calibration workflows
+
+A workflow step has a `kind`: `calibration` (the default, so existing files are unchanged),
+`sensitivity`, `reduction`, `emulation` or `identifiability`, so one `calibration_workflow.json`
+records the whole order of a study.
+
+- `sensitivity` runs Sobol or local sensitivity analysis (`settings.sa_options`).
+- `reduction` ranks a Sobol step's parameters (`sensitivity_from`) and keeps the `top_n`
+  (`reduction`: `index_type`, `criterion`, `threshold`), writing those rows of its
+  params_for_id; a calibration fits them with `params_for_id_from`.
+- `emulation` trains an emulator (`settings.emulator_settings`); a calibration or sensitivity
+  step with `emulator_from` runs on it, with a copy of the emulation step's model.
+- `identifiability` runs a Laplace analysis (`settings.ia_options`) at the values of the
+  calibration in its `result_from`.
+
+An emulation step may be trained on a reduction's parameters (`params_for_id_from`), and a
+calibration with the same `params_for_id_from` and `emulator_from` pointing at it can sample
+its posterior on that emulator (`store_distribution`). `SobolReduction`
+(`libcuflynx.sensitivity_analysis.parameter_reduction`) is the reduction, usable on its own.
+
+Only calibrations are merged into the target. The study manifest, `--dry-run` plan, status and
+methods LaTeX (text and flow chart) show each step's kind, what it takes from where and its
+outputs. `run_identifiability_analysis` takes `best_param_vals`, and Sobol indices are ranked by
+`libcuflynx.sensitivity_analysis.sobol_ranking`.
+
+### Removed — `cuflynx-sequential-param-id`
+
+The command and `user_run_files/run_sequential_param_id.sh` are gone, with the script and the
+two obsolete copies behind them. The stage was never implemented: the command only said so.
+Ordered calibrations and analyses are run by `cuflynx-calibration-workflow`.
+
 ### Changed — multi-port coupling follows PhLynx (#575)
 
 - **Multiply on either end.** A `"Multiply"` port scales its variable into the neighbour
@@ -99,6 +143,13 @@ next release; add to that section as you land a change.
   components are gone. Couplings between affine units (kelvin and celsius) are a `ValueError`.
 - **Port sizes.** A plain port pair with different numbers of variables is a `ValueError`; it
   used to raise an `IndexError` or silently shift later mappings.
+
+### Added — JSON Schemas for all four input files
+
+- **`params_for_id.schema.json`**, new: the JSON form of params_for_id (version 1) that a CSV is converted to on read. Its entry keys, priors and prior settings are tested against `PARAMS_FOR_ID_ENTRY_KEYS` and `PARAM_PRIOR_TYPES`.
+- **`obs_data.schema.json`** now describes the data items, prediction items and `protocol_info` (with `protocol_traces` and `protocol_shapes`), not just the top level: every key with its default, and the rules the parser enforces (unknown keys, required keys, constant vs series shapes, a ground truth per item).
+- **`module_config.schema.json`, `module_array.schema.json`**: every key described; `variables_and_units` rows checked as `[name, units, access, kind]`; `multiply_factor` only on a Multiply port (and as a numeric string); list-form `multi_port` entries `"sum"`/`"True"`; `only_one_port` and `delay_info` added; names may carry surrounding whitespace, as the reader strips it.
+- Tests check each schema against its reader: key sets, and inputs both refuse.
 
 ### Added — parameter names written `<vessel>/<variable>`
 
@@ -121,6 +172,27 @@ as the data_items of a second engine and differentiated by the existing code. Fi
 differences are still used with `gradient_method: FD`, over an emulator, and, with a warning,
 when Myokit's arm cannot take them: it needs every prediction feature in one and the same
 sub-experiment.
+
+### Added — every analysis records itself in a study manifest CUFLynx opens
+
+Calibration, UQ, sensitivity analysis and emulator training now record themselves in
+`<param_id_output_dir>/<study_name>_cuflynx_study.json` (`libcuflynx.utilities.cuflynx_study`):
+the model (the calibrated one once written), obs_data, params_for_id, the
+`*_funcs_external_path` files, the solver settings and `dt`, and each output directory —
+including sensitivity results written outside `param_id_output_dir`. A calibration or MCMC run
+is entered when it starts (`status: running`), so a run cut short is there with what it wrote
+each iteration, and is marked `finished`, `stopped` or `failed` when it ends. Dropping that
+file into CUFLynx reopens the whole study. Two new user_inputs keys: `study_name` (default
+`file_prefix`) and `write_cuflynx_study` (default `true`). Writing is atomic, merges rather
+than overwrites, and only ever warns on failure. `cuflynx-param-id` now also forwards
+`modifier_funcs_external_path`, which it used to drop.
+
+A calibration workflow writes one manifest for the whole run,
+`<output_dir>/<workflow_name>_cuflynx_study.json`, whose `workflow` key records the workflow as
+run, its result, the target (as named and as generated, and its calibrated parameters file) and
+each step (model, obs_data, params_for_id, sources, status, run directory). Each step's own
+manifest links back with `workflow: {manifest, step}`. `write_cuflynx_study` is also a workflow
+setting.
 
 ### Changed — a module type several sources define comes from the most specific one
 
