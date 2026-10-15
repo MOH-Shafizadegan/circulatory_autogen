@@ -19,7 +19,7 @@ class CVS0DModel(object):
         self.param_id_date = param_id_date
         self.param_id_name_and_vals = param_id_name_and_vals
         self.possible_module_types = None
-        self.possible_BC_types = None
+        self.possible_module_subtypes = None
 
 
     

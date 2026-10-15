@@ -229,8 +229,8 @@ def test_a_parameterisation_names_its_variables_without_a_vessel(tmp_path):
     os.makedirs(directory / 'parameterisations' / 'x')
     (directory / 'parameterisations' / 'x' / 'x_parameters.csv').write_text(
         'variable_name,units,value,data_reference\ns1/mean,m3_per_s,1,r\n')
-    entry = {'module_type': 'pulse_src', 'BC_type': 'v1', 'variables_and_units': [],
+    entry = {'module_type': 'pulse_src', 'module_subtype': 'v1', 'variables_and_units': [],
              'config_path': str(directory / 'pulse_v1_modules_config.json')}
-    record = {'name': 's1', 'module_type': 'pulse_src', 'BC_type': 'v1', 'parameterisation': 'x'}
+    record = {'name': 's1', 'module_type': 'pulse_src', 'module_subtype': 'v1', 'parameterisation': 'x'}
     with pytest.raises(ValueError, match='named without a vessel'):
         component_parameterisation_rows([record], {('pulse_src', 'v1'): entry})

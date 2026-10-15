@@ -108,7 +108,7 @@ def host_places(module_array, config_files):
     components = load_component_registry(config_files)
     written = {}
     for record in read_module_array_records(module_array):
-        entry = supermodules.get((record['module_type'], record['BC_type']))
+        entry = supermodules.get((record['module_type'], record['module_subtype']))
         if entry is None:
             written[record['name']] = record['name']
             continue
@@ -118,7 +118,7 @@ def host_places(module_array, config_files):
     records, _ = load_expanded_vessel_records(module_array, supermodules, components)
     variables = {}
     for record in records:
-        entry = components.get((record['module_type'], record['BC_type']))
+        entry = components.get((record['module_type'], record['module_subtype']))
         variables[record['name']] = _variables(entry) if entry else {}
         written.setdefault(record['name'], record['name'])
     places = {name: written[name] for name in variables}
@@ -134,8 +134,8 @@ def supermodule_places(entry, config_files):
         container, leaf = entry, None
         for part in parts:
             leaf = next(s for s in container['submodules'] if s['name'] == part)
-            container = supermodules.get((leaf['module_type'], leaf['BC_type']), {})
-        component = components.get((leaf['module_type'], leaf['BC_type']))
+            container = supermodules.get((leaf['module_type'], leaf['module_subtype']), {})
+        component = components.get((leaf['module_type'], leaf['module_subtype']))
         joined = '_'.join(parts)
         variables[joined] = _variables(component) if component else {}
         places[joined] = SEPARATOR.join(parts)

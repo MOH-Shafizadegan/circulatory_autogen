@@ -2,7 +2,7 @@
 
 A module array may be ``<prefix>_module_array.json`` -- a list of records in PhLynx keys
 (``name, module_type, module_subtype, inp_instances, out_instances``) or libcuflynx keys
-(``name, module_type, BC_type, inp_vessels, out_vessels``) -- and a CSV array is read by
+(``name, module_type, module_subtype, inp_vessels, out_vessels``) -- and a CSV array is read by
 converting each row to the same record (utilities/config_schemas.py).
 
 A supermodule is a module config entry with ``"module_format": "supermodule"`` and a list of
@@ -54,7 +54,7 @@ def _rec(name, module_type, inp=(), out=(), subtype='nn', **extra):
 
 
 def _to_libcuflynx(record):
-    keys = {'module_type': 'module_type', 'module_subtype': 'BC_type',
+    keys = {'module_type': 'module_type', 'module_subtype': 'module_subtype',
             'inp_instances': 'inp_vessels', 'out_instances': 'out_vessels'}
     return {keys.get(k, k): v for k, v in record.items()}
 
@@ -72,7 +72,7 @@ FLOWPAIR_DEFAULTS = [  # (variable_name, units, value)
 ]
 # "inner": a gain feeding a reader, internally; "outer" nests an "inner" next to a collector
 INNER = {
-    'module_type': 'inner', 'BC_type': 'supermodule', 'module_format': 'supermodule',
+    'module_type': 'inner', 'module_subtype': 'supermodule', 'module_format': 'supermodule',
     'submodules': [_rec('g', 'gain', out=['rd']), _rec('rd', 'reader', inp=['g'])],
 }
 OUTER = {
@@ -116,7 +116,7 @@ def registry(super_library_dir):
 
 def _write_csv(path, records):
     with open(path, 'w') as f:
-        f.write('name,BC_type,module_type,inp_vessels,out_vessels\n')
+        f.write('name,module_subtype,module_type,inp_vessels,out_vessels\n')
         for r in records:
             f.write(f"{r['name']},{r['module_subtype']},{r['module_type']},"
                     f"{' '.join(r['inp_instances'])},{' '.join(r['out_instances'])}\n")
@@ -244,7 +244,7 @@ def test_json_and_csv_give_the_same_frame(tmp_path):
         frames[fmt] = load_module_array(_write_array(str(directory), 'm', records, fmt))[0]
     for fmt in ('json', 'json_libcuflynx'):
         assert frames[fmt].equals(frames['csv'])
-    assert list(frames['csv'].columns) == ['name', 'BC_type', 'module_type', 'inp_vessels',
+    assert list(frames['csv'].columns) == ['name', 'module_subtype', 'module_type', 'inp_vessels',
                                            'out_vessels']
     assert frames['csv'].iloc[2].tolist() == ['coll', 'nn', 'collector', ['src_a', 'src_b'], []]
 
@@ -264,7 +264,7 @@ def test_space_separated_lists_are_accepted_in_json(tmp_path):
 @pytest.mark.parametrize('record, message', [
     ({'name': 'a', 'module_type': 'x', 'module_subtype': 'nn', 'out_vessels': []},
      r'record 1 \("a"\) mixes libcuflynx keys \[\'out_vessels\'\] and PhLynx keys'),
-    ({'name': 'a', 'module_type': 'x', 'BC_type': 'nn', 'module_subtype': 'nn'},
+    ({'name': 'a', 'module_type': 'x', 'module_subtype': 'nn', 'module_subtype': 'nn'},
      'mixes libcuflynx keys'),
     ({'name': 'a', 'module_type': 'x'}, r'record 1 \("a"\): "module_subtype" is required'),
     ({'module_type': 'x', 'module_subtype': 'nn'}, r'record 1: "name" is required'),
@@ -328,7 +328,7 @@ def test_csv_to_json_round_trip(tmp_path, style):
     assert len(text.splitlines()) == len(raw) + 2  # one record per line
     expected_keys = (['name', 'module_type', 'module_subtype', 'inp_instances', 'out_instances']
                      if style == 'phlynx' else
-                     ['name', 'BC_type', 'module_type', 'inp_vessels', 'out_vessels'])
+                     ['name', 'module_subtype', 'module_type', 'inp_vessels', 'out_vessels'])
     assert list(raw[0]) == expected_keys
 
 
@@ -355,7 +355,7 @@ def test_supermodule_entries_are_normalised_and_kept_out_of_the_module_dataframe
         super_library_dir, registry):
     from libcuflynx.parsers.PrimitiveParsers import JSONFileParser
     entry = normalise_module_config_entry(FLOWPAIR)
-    assert (entry['module_type'], entry['BC_type']) == ('flowpair', 'supermodule')
+    assert (entry['module_type'], entry['module_subtype']) == ('flowpair', 'supermodule')
     assert entry['submodules'][0]['module_type'] == 'collector'
     assert normalise_module_config_entry(INNER)['module_type'] == 'inner'
     assert set(registry) == {('flowpair', 'supermodule'), ('inner', 'supermodule'),
@@ -371,7 +371,7 @@ def test_supermodule_entries_are_normalised_and_kept_out_of_the_module_dataframe
 @pytest.mark.unit
 @pytest.mark.parametrize('entry, message', [
     (dict(FLOWPAIR, component_file='x.cellml'), 'has "component_file"'),
-    (dict(FLOWPAIR, BC_type='supermodule'), 'mixes the libcuflynx keys'),
+    (dict(FLOWPAIR, module_subtype='supermodule'), 'mixes the libcuflynx keys'),
     (dict(FLOWPAIR, submodules=[]), 'needs "submodules"'),
     (dict(FLOWPAIR, submodules=[_rec('a', 'gain', out=['nowhere'])]), 'not submodules of this'),
     (dict(FLOWPAIR, submodules=[_rec('a', 'gain'), _rec('a', 'reader')]), 'repeated'),
@@ -669,7 +669,7 @@ def test_a_heart_inside_a_supermodule_is_still_the_heart(tmp_path):
     for record in plain:
         record = dict(record)
         if record['name'] == 'heart':
-            record.update(name='H', module_type='cardio', BC_type='supermodule',
+            record.update(name='H', module_type='cardio', module_subtype='supermodule',
                           per_submodule_inputs={'heart': record['inp_vessels']},
                           per_submodule_outputs={'heart': record['out_vessels']})
         else:
@@ -704,7 +704,7 @@ def test_convert_0d_to_1d_keeps_a_json_arrays_supermodule_links(tmp_path, regist
     raw = json.loads(hybrid.read_text())
     assert ('module_type' in raw[0]) == (style == 'phlynx')
     converted = {r['name']: r for r in read_module_array_records(str(hybrid))}
-    assert (converted['A']['module_type'], converted['A']['BC_type']) == ('FV1D_vessel', 'nn')
+    assert (converted['A']['module_type'], converted['A']['module_subtype']) == ('FV1D_vessel', 'nn')
     assert converted['pair']['per_submodule_inputs'] == {'coll': ['src_a', 'src_b']}
     assert converted['pair']['per_submodule_outputs'] == {'g': ['rd']}
     expanded, _ = expand_supermodules(list(converted.values()), registry, 'test')
@@ -723,7 +723,7 @@ def test_the_1d_generator_reads_the_merged_parameters(tmp_path):
     params = tmp_path / 'm_parameters.csv'
     params.write_text('variable_name,units,value,data_reference\nr_FV1D_0,metre,0.01,file\n')
     vessels = tmp_path / 'm_1d_module_array.csv'
-    vessels.write_text('name,BC_type,module_type,inp_vessels,out_vessels\nFV1D_0,nn,FV1D_vessel,,\n')
+    vessels.write_text('name,module_subtype,module_type,inp_vessels,out_vessels\nFV1D_0,nn,FV1D_vessel,,\n')
     merged = merge_default_parameters(
         CSVFileParser().get_data_as_nparray(str(params), True),
         [{'variable_name': 'l_FV1D_0', 'units': 'metre', 'value': '0.2', 'data_reference': 'default'}])
@@ -819,7 +819,7 @@ def test_a_component_entry_needs_its_cellml_file():
 def test_a_null_connection_list_is_empty_in_the_code_and_the_schema(tmp_path):
     jsonschema = pytest.importorskip('jsonschema')
     from libcuflynx.schemas import MODULE_ARRAY_SCHEMA, load_schema
-    records = [{'name': 'a', 'module_type': 'x', 'BC_type': 'nn', 'inp_vessels': None, 'out_vessels': None}]
+    records = [{'name': 'a', 'module_type': 'x', 'module_subtype': 'nn', 'inp_vessels': None, 'out_vessels': None}]
     assert jsonschema.Draft202012Validator(load_schema(MODULE_ARRAY_SCHEMA)).is_valid(records)
     path = tmp_path / 'm_module_array.json'
     path.write_text(json.dumps(records))
@@ -878,8 +878,8 @@ def test_two_sibling_supermodule_instances_inside_a_supermodule_link(registry):
 
 @pytest.mark.unit
 @pytest.mark.parametrize('record, message', [
-    ({"name": "a b", "module_type": "heart", "BC_type": "vp"}, '"name" \'a b\' contains whitespace'),
-    ({"name": "a", "module_type": "he art", "BC_type": "vp"}, '"module_type" \'he art\' contains whitespace'),
+    ({"name": "a b", "module_type": "heart", "module_subtype": "vp"}, '"name" \'a b\' contains whitespace'),
+    ({"name": "a", "module_type": "he art", "module_subtype": "vp"}, '"module_type" \'he art\' contains whitespace'),
     ({"name": "a", "module_type": "heart", "module_subtype": "v p"},
      '"module_subtype" \'v p\' contains whitespace'),
 ])
@@ -894,7 +894,7 @@ def test_a_name_with_whitespace_is_an_error(record, message):
 @pytest.mark.unit
 def test_a_space_separated_string_is_still_a_list_of_names():
     from libcuflynx.utilities.config_schemas import normalise_vessel_record
-    record = normalise_vessel_record({"name": "a", "module_type": "heart", "BC_type": "vp",
+    record = normalise_vessel_record({"name": "a", "module_type": "heart", "module_subtype": "vp",
                                       "inp_vessels": "b  c"})
     assert record['inp_vessels'] == ['b', 'c']
 
@@ -904,8 +904,8 @@ def test_the_schema_rejects_a_name_with_whitespace():
     jsonschema = pytest.importorskip('jsonschema')
     from libcuflynx.schemas import MODULE_ARRAY_SCHEMA, load_schema
     validator = jsonschema.Draft202012Validator(load_schema(MODULE_ARRAY_SCHEMA))
-    assert not validator.is_valid([{"name": "a b", "module_type": "heart", "BC_type": "vp"}])
-    assert validator.is_valid([{"name": "a", "module_type": "heart", "BC_type": "vp",
+    assert not validator.is_valid([{"name": "a b", "module_type": "heart", "module_subtype": "vp"}])
+    assert validator.is_valid([{"name": "a", "module_type": "heart", "module_subtype": "vp",
                                 "inp_vessels": "b c"}])
 
 
@@ -973,12 +973,12 @@ def test_resources_module_arrays_and_module_configs_validate_against_the_json_sc
     module_validator.validate([phlynx_component])
 
     # what the loaders reject, the schemas reject too
-    assert not vessel_validator.is_valid([{'name': 'a', 'module_type': 'x', 'BC_type': 'nn'}])
+    assert not vessel_validator.is_valid([{'name': 'a', 'module_type': 'x', 'module_subtype': 'nn'}])
     assert not vessel_validator.is_valid([{'name': 'a', 'module_type': 'x', 'module_subtype': 'nn',
                                            'inp_vessels': []}])
-    assert not vessel_validator.is_valid([{'name': 'a', 'module_type': 'x', 'BC_type': 'nn',
+    assert not vessel_validator.is_valid([{'name': 'a', 'module_type': 'x', 'module_subtype': 'nn',
                                            'out_instances': []}])
     assert not vessel_validator.is_valid([{'name': 'a', 'module_type': 'x'}])
     assert not module_validator.is_valid([dict(FLOWPAIR, component_file='x.cellml')])
-    assert not module_validator.is_valid([dict(phlynx_component, BC_type='nn')])
+    assert not module_validator.is_valid([dict(phlynx_component, module_subtype='nn')])
     assert not module_validator.is_valid([dict(FLOWPAIR, submodules=[])])

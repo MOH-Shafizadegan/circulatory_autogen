@@ -33,7 +33,7 @@ def test_json_reader_ignores_appledouble_sidecar(tmp_path):
     empty = tmp_path / 'empty'
     good.mkdir()
     empty.mkdir()
-    (good / 'module.json').write_text(json.dumps([{'module_type': 'x', 'BC_type': 'y',
+    (good / 'module.json').write_text(json.dumps([{'module_type': 'x', 'module_subtype': 'y',
                                                    'component_file': 'x.cellml', 'component_type': 'x_type'}]))
     # An AppleDouble sidecar is binary; if it were read as JSON it would raise.
     (good / '._module.json').write_bytes(b'\x00\x05\x16\x07Mac OS X\x00binary junk')

@@ -59,20 +59,20 @@ _MAX_DEPTH = 64
 
 
 def _key(record):
-    return (record['module_type'], record['BC_type'])
+    return (record['module_type'], record['module_subtype'])
 
 
 def _is_instance(record, registry, source):
     '''Whether ``record`` is a supermodule instance; errors for an unknown supermodule.'''
     if _key(record) in registry:
         return True
-    looks_like_one = (record['BC_type'] == SUPERMODULE_FORMAT
+    looks_like_one = (record['module_subtype'] == SUPERMODULE_FORMAT
                       or any(k in record for k in PER_SUBMODULE_KEYS))
     if looks_like_one:
         known = sorted(registry) or 'none'
         raise ValueError(
             f'{source}: "{record["name"]}" is a supermodule instance of type '
-            f'({record["module_type"]}, {record["BC_type"]}), but no supermodule entry of that '
+            f'({record["module_type"]}, {record["module_subtype"]}), but no supermodule entry of that '
             f'type was found in the module configs (known supermodules: {known}). Add it to a '
             f'*_modules_config.json in module_library_dirs or external_modules_dir.')
     return False
@@ -148,7 +148,7 @@ def read_default_parameters(supermodule, instance, where, registry=None):
     path = file_name if os.path.isabs(file_name) else os.path.join(config_dir, file_name)
     if not os.path.isfile(path):
         raise ValueError(f'{where}: default_parameters file {path} of supermodule '
-                         f'({supermodule["module_type"]}, {supermodule["BC_type"]}) not found '
+                         f'({supermodule["module_type"]}, {supermodule["module_subtype"]}) not found '
                          f'(it is resolved against {supermodule.get("config_path")}).')
     rows = read_parameter_rows(path, where, 'default_parameters file')
     return _rename_rows(rows, instance, submodule_path_parts(supermodule, registry), path)
@@ -309,7 +309,7 @@ def expand_supermodules(records, registry, source=None, settings=None):
     '''
     ``(records, extra_param_rows)``: ``records`` (normalised vessel records, see
     ``config_schemas.normalise_vessel_record``) with every supermodule instance -- a record
-    whose (module_type, BC_type) is in ``registry`` -- replaced by its prefixed submodules,
+    whose (module_type, module_subtype) is in ``registry`` -- replaced by its prefixed submodules,
     recursively, and the instances' renamed parameters -- parameterisation, then
     default_parameters -- each name once, the first occurrence kept (so an outer supermodule's
     values win over a nested one's). ``records`` is not modified.

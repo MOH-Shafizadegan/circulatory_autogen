@@ -182,10 +182,10 @@ def _port(port_type, variables, multi_port=None):
     return port
 
 
-def _module(module_type, BC_type, component_type, entrance_ports, exit_ports, variables_and_units):
+def _module(module_type, module_subtype, component_type, entrance_ports, exit_ports, variables_and_units):
     return {
         "module_type": module_type,
-        "BC_type": BC_type,
+        "module_subtype": module_subtype,
         "module_format": "cellml",
         "component_file": "multiport_test_modules.cellml",
         "component_type": component_type,
@@ -372,9 +372,9 @@ def _generate(tmp_path, external_modules_dir, prefix, vessel_rows, params, model
     """Write the module array and parameters for ``vessel_rows`` and generate the model."""
     resources_dir = tmp_path / "resources"
     resources_dir.mkdir(parents=True, exist_ok=True)
-    lines = ["name,BC_type,module_type,inp_vessels,out_vessels"]
-    for name, BC_type, module_type, inp, out in vessel_rows:
-        lines.append(f"{name},{BC_type},{module_type},{' '.join(inp)},{' '.join(out)}")
+    lines = ["name,module_subtype,module_type,inp_vessels,out_vessels"]
+    for name, module_subtype, module_type, inp, out in vessel_rows:
+        lines.append(f"{name},{module_subtype},{module_type},{' '.join(inp)},{' '.join(out)}")
     (resources_dir / f"{prefix}_module_array.csv").write_text("\n".join(lines) + "\n")
     param_lines = ["variable_name,units,value,data_reference"]
     for variable_name, units, value in params:

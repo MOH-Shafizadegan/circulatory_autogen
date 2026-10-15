@@ -447,7 +447,7 @@ def test_a_supermodule_s_parameterisation_beats_its_submodules(tmp_path, real_li
 
     overridden = 0
     for sub in soma['submodules']:
-        key = (sub['module_type'], sub['BC_type'])
+        key = (sub['module_type'], sub['module_subtype'])
         globals_ = global_constants(_entry(lib, key))
         instance = sub.get('parameterisation') or _entry(lib, key).get('default_parameterisation')
         for name, value in _parameterisation_values(lib, key, instance).items():
@@ -469,7 +469,7 @@ def test_a_nested_supermodule_s_parameterisation_is_renamed_through_the_nesting(
     subs = [s['name'] for s in soma['submodules']]
     neuron = lib.supermodules[NEURON]
     soma_path = next(s['name'] for s in neuron['submodules']
-                     if (s['module_type'], s['BC_type']) == SOMA)
+                     if (s['module_type'], s['module_subtype']) == SOMA)
     records, rows = _real_load(tmp_path, lib, [_rec('neuron', *NEURON)])
     names = [r['name'] for r in records]
     assert f'neuron_{soma_path}_{subs[0]}' in names
@@ -922,11 +922,11 @@ def test_resources_models_generate_identically_without_the_parameterisation_look
 def test_appended_vessel_rows_fill_extra_columns():
     import pandas as pd
     from libcuflynx.parsers.ModelParsers import _append_vessel_row
-    df = pd.DataFrame(columns=['name', 'BC_type', 'module_type', 'inp_vessels', 'out_vessels', 'instance'])
+    df = pd.DataFrame(columns=['name', 'module_subtype', 'module_type', 'inp_vessels', 'out_vessels', 'instance'])
     _append_vessel_row(df, 'par', 'vp', 'arterial_simple', ['heart'], ['pvn'])
     assert list(df.loc[0]) == ['par', 'vp', 'arterial_simple', ['heart'], ['pvn'], '']
     # a frame with the columns in another order still gets each value in its column
-    df2 = pd.DataFrame(columns=['instance', 'name', 'BC_type', 'module_type', 'inp_vessels', 'out_vessels'])
+    df2 = pd.DataFrame(columns=['instance', 'name', 'module_subtype', 'module_type', 'inp_vessels', 'out_vessels'])
     _append_vessel_row(df2, 'volume_sum_1D', 'nn', 'FV1D_volume_sum', '', 'total')
     assert df2.loc[0, 'name'] == 'volume_sum_1D' and df2.loc[0, 'instance'] == ''
 
@@ -969,7 +969,7 @@ def test_an_empty_optional_csv_cell_is_not_set(tmp_path):
     than giving an invalid empty name.'''
     from libcuflynx.utilities.config_schemas import read_module_array_records
     p = tmp_path / 'm_module_array.csv'
-    p.write_text('name,BC_type,module_type,inp_vessels,out_vessels,parameterisation\n'
+    p.write_text('name,module_subtype,module_type,inp_vessels,out_vessels,parameterisation\n'
                  'a,nn,pulse_src,,b,other\n'
                  'b,nn,volume_sum,a,,\n')
     recs = read_module_array_records(str(p))

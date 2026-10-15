@@ -37,7 +37,7 @@ DECAY_CONFIG = """\
 [
   {{
     "module_type": "{module_type}",
-    "BC_type": "nn",
+    "module_subtype": "nn",
     "module_format": "cellml",
     "component_file": "{name}_modules.cellml",
     "component_type": "{component_type}",
@@ -82,7 +82,7 @@ def _write_resources(resources_dir, prefix, module_type, k=0.5, x_init=2.0):
     os.makedirs(resources_dir, exist_ok=True)
     with open(os.path.join(resources_dir, f'{prefix}_module_array.csv'), 'w') as f:
         f.write(textwrap.dedent(f"""\
-            name,BC_type,module_type,inp_vessels,out_vessels
+            name,module_subtype,module_type,inp_vessels,out_vessels
             decay,nn,{module_type},,
             """))
     with open(os.path.join(resources_dir, f'{prefix}_parameters.csv'), 'w') as f:
@@ -141,7 +141,7 @@ def test_module_library_dir_only(tmp_path):
 
 @pytest.mark.integration
 def test_module_library_redefines_builtin_when_builtins_off(tmp_path):
-    """A library may redefine a built-in (module_type, BC_type) once built-ins are off."""
+    """A library may redefine a built-in (module_type, module_subtype) once built-ins are off."""
     library_dir = str(tmp_path / 'library')
     _write_module(library_dir, 'Lotka_Volterra', 'Lotka_Volterra', 'Lotka_Volterra_lib')
     _write_resources(str(tmp_path / 'resources'), 'lib_lv', 'Lotka_Volterra')
