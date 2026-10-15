@@ -50,6 +50,7 @@ from libcuflynx.utilities.mpi_utils import get_MPI as _get_MPI
 
 MPI = _get_MPI()
 from libcuflynx.parsers.PrimitiveParsers import CSVFileParser, ObsAndParamDataParser
+from libcuflynx.sensitivity_analysis.sobol_ranking import read_sobol_indices
 import csv
 from tqdm import tqdm  # make sure tqdm is installed
 from libcuflynx.utilities.obs_data_helpers import obs_item_names, obs_item_labels
@@ -1045,26 +1046,7 @@ class sobol_SA():
             dict: { 'S1': {out_name: {param: val}}, 'ST': {out_name: {param: val}} }
         """
         file_name = f"all_outputs_n{self.num_samples}_Sobol_indices.csv"
-        file_path = os.path.join(self.output_dir, file_name)
-        
-        # Load the CSV
-        df = pd.read_csv(file_path)
-        
-        # Use the 'Parameter' column as the index for easy dict conversion
-        df.set_index('Parameter', inplace=True)
-        
-        results = {'S1': {}, 'ST': {}}
-        
-        # Iterate through columns to separate S1 and ST by output name
-        for col in df.columns:
-            if col.startswith('S1_'):
-                out_name = col.replace('S1_', '', 1)
-                results['S1'][out_name] = df[col].to_dict()
-            elif col.startswith('ST_'):
-                out_name = col.replace('ST_', '', 1)
-                results['ST'][out_name] = df[col].to_dict()
-                
-        return results
+        return read_sobol_indices(os.path.join(self.output_dir, file_name))
  
     def run(self):
         samples = self.generate_samples()

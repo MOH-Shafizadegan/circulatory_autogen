@@ -55,6 +55,7 @@ def sa_method_choices():
 import warnings
 warnings.filterwarnings( "ignore", module = "matplotlib/..*" )
 from libcuflynx.sensitivity_analysis.sobolSA import sobol_SA
+from libcuflynx.sensitivity_analysis.sobol_ranking import rank_sobol_parameters
 
 GREEN = '\033[92m'
 CYAN = '\033[36m'
@@ -561,44 +562,16 @@ class SensitivityAnalysis():
             print(f"{RED}ERROR: Index type '{index_type}' not found.{RESET}")
             return []
 
-        data = indices_dict[index_type.upper()]
-        
-        # Flatten structure: {param_name: [val_out1, val_out2, ...]}
-        param_scores_list = {}
-        for out_name, params in data.items():
-            for p_name, val in params.items():
-                if p_name not in param_scores_list:
-                    param_scores_list[p_name] = []
-                param_scores_list[p_name].append(val)
-
-        # Mapping criterion to calculation
-        if criterion == 'max':
-            calc_func = max
-        elif criterion == 'mean':
-            calc_func = lambda x: sum(x) / len(x)
-        elif callable(criterion):
-            calc_func = criterion
-        else:
-            print(f"{RED}ERROR: Invalid criterion '{criterion}'{RESET}")
+        try:
+            top_items = rank_sobol_parameters(indices_dict, top_n, index_type, criterion,
+                                              threshold if use_threshold else None)
+        except ValueError as exc:
+            print(f"{RED}ERROR: {exc}{RESET}")
             return []
-
-        # 1. Calculate scores
-        processed_scores = {p: calc_func(vals) for p, vals in param_scores_list.items()}
-
-        # 2. Filter only if requested
-        if use_threshold:
-            filtered_data = {p: s for p, s in processed_scores.items() if s >= threshold}
-            status_msg = f"filtered by threshold >= {threshold}"
-        else:
-            filtered_data = processed_scores
-            status_msg = "unfiltered"
-
-        # 3. Sort and select
-        sorted_items = sorted(filtered_data.items(), key=lambda x: x[1], reverse=True)
-        top_items = sorted_items[:top_n]
         top_params = [item[0] for item in top_items]
+        status_msg = (f"filtered by threshold >= {threshold}" if use_threshold
+                      else "unfiltered")
 
-        # 4. Final output
         if not top_params:
             print(f"{RED}No parameters found for criterion '{criterion}' ({status_msg}).{RESET}")
             return []

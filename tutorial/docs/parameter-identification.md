@@ -1040,9 +1040,12 @@ result['merged_parameters']    # [{'parameterisation_name': 'aortic_root/C', 'va
 ```
 
 Each step is an ordinary calibration, named by its three inputs: a **model**, an **obs_data**
-file and a **params_for_id** file, the same three that `cuflynx-param-id` takes. The results of
-every step are merged into the workflow's **target** model. To redo a calibration, edit its
-obs_data and run the workflow again: every step that used its values is redone too.
+file and a **params_for_id** file, the same three that `cuflynx-param-id` takes. A step can
+instead be one of the analyses around a calibration -- a sensitivity analysis, an emulator, an
+identifiability analysis, or a reduction that picks which parameters a later calibration fits
+(see [Step kinds](#step-kinds)) -- so the file records the whole order of a study. The results
+of every calibration are merged into the workflow's **target** model. To redo a calibration,
+edit its obs_data and run the workflow again: every step that used its values is redone too.
 
 ### Try it
 
@@ -1061,7 +1064,9 @@ cuflynx-methods-latex --workflow $WF --run-dir wf_run -o methods.tex --pdf
 (`lin_c`, `z = y + k q^2`). Step `a-alone` calibrates `p` on a model of `A` alone; step `chain`
 then calibrates `q` in the whole chain, with `p` fixed. Read `$WF` and the files next to it for
 a layout to copy. The same chain written with library modules is
-`wf_example/modules/chain/versions/v1/parameterisations/rest/calibration_workflow.json`.
+`wf_example/modules/chain/versions/v1/parameterisations/rest/calibration_workflow.json`, and
+`.../screened/calibration_workflow.json` adds a Sobol screen, a reduction and an
+identifiability analysis to it (see [Step kinds](#step-kinds)).
 
 ### The file
 
@@ -1110,9 +1115,54 @@ Paths are relative to the workflow file. A **model** is one of:
 | step `store_distribution` | sample the posterior by MCMC after the fit and store it |
 | step `settings` | merged over the workflow's (one level deep, so `optimiser_options` add up) |
 
-A step runs after the steps in its `fixed_from` and `priors_from`, since it needs their results;
-steps that pass nothing between them run in file order. Here `whole-circulation` runs after
-`aorta-compliance`, with the aorta's calibrated values fixed.
+A step runs after every step it takes something from (`fixed_from`, `priors_from` and the keys
+in [Step kinds](#step-kinds)), since it needs their results; steps that pass nothing between
+them run in file order. Here `whole-circulation` runs after `aorta-compliance`, with the aorta's
+calibrated values fixed.
+
+### Step kinds
+
+A step's `kind` is `calibration` unless it says otherwise. The other kinds run the analyses
+`cuflynx-sensitivity`, `cuflynx-train-emulator` and `cuflynx-identifiability` run, on the step's
+model, obs_data and params_for_id, and only calibrations' values are merged into the target.
+
+| `kind` | What it does | Needs | Takes from |
+|---|---|---|---|
+| `calibration` | a param_id run; MCMC with `store_distribution` | | `fixed_from`, `priors_from`, `emulator_from`, `params_for_id_from` |
+| `sensitivity` | Sobol or local sensitivity analysis | `sa_options` in its settings | `fixed_from`, `emulator_from`, `result_from` |
+| `reduction` | keeps the parameters a Sobol step found most influential | `sensitivity_from`, `reduction`; no model or files | |
+| `emulation` | trains an emulator of the observables | `emulator_settings` (optional) | `fixed_from` |
+| `identifiability` | Laplace identifiability analysis at a calibration's result | `ia_options`, `result_from` | `fixed_from` |
+
+The keys that pass something on, each naming one step of the kind shown:
+
+| Key | Names a | What this step gets |
+|---|---|---|
+| `fixed_from` | calibration | its values, fixed in this step's model (above) |
+| `priors_from` | calibration with `store_distribution` | its posterior, as a prior (below) |
+| `result_from` | calibration | its values, including those of the parameters this step analyses: a local sensitivity or identifiability analysis is then at that fit |
+| `emulator_from` | emulation | its emulator, which this step (a calibration or sensitivity) runs on instead of the model. The step names the same model, obs_data and params_for_id as the emulation step (an emulator answers only for what it was trained on) and has no `fixed_from` or `result_from`: it runs on a copy of that step's model, with the values that step was given |
+| `sensitivity_from` | sensitivity (Sobol) | a reduction's indices |
+| `params_for_id_from` | reduction | the params_for_id the reduction wrote, in place of the step's own (a calibration of the same model as the sensitivity step) |
+
+A **reduction** ranks the sensitivity step's parameters by the `criterion` (`max`, default, or
+`mean`) over the observables of their `index_type` index (`ST`, total, default, or `S1`), keeps
+the `top_n` best, dropping any scoring below `threshold`, and writes those rows of the sensitivity
+step's params_for_id -- bounds and all -- as `<step_id>/<step_id>_params_for_id.csv`:
+
+```json
+{"id": "screen", "kind": "sensitivity", "model": {...}, "obs_data": "...",
+ "params_for_id": "candidates_params_for_id.csv",
+ "settings": {"sa_options": {"method": "sobol", "num_samples": 256}}},
+{"id": "keep-5", "kind": "reduction", "sensitivity_from": "screen",
+ "reduction": {"top_n": 5, "index_type": "ST", "criterion": "max", "threshold": 0.01}},
+{"id": "fit", "model": {...}, "obs_data": "...", "params_for_id_from": "keep-5"},
+{"id": "ia", "kind": "identifiability", "model": {...}, "obs_data": "...",
+ "params_for_id": "fitted_params_for_id.csv", "result_from": "fit",
+ "settings": {"ia_options": {"method": "Laplace", "gradient_source": "FD"}}}
+```
+
+Rerunning `screen` reruns `keep-5`, and so `fit` and `ia`, since each takes from the one before.
 
 ### How values move between models
 
@@ -1151,16 +1201,21 @@ prior.
 <output_dir>/                         --output-dir; default ./workflow_output/<workflow_name>
     calibration_workflow.json         the workflow as run
     workflow_result.json              order, provenance (obs_data/params_for_id hashes, times), merged parameters
-    <step_id>/step_result.json        calibrated values, the fixed values and priors it was given, input hashes
+    <step_id>/step_result.json        its kind; calibrated values, the fixed values and priors it was given, input hashes; an analysis's outputs
     <step_id>/model/                  the generated step model
     <step_id>/param_id/               the usual param_id outputs
     <step_id>/distribution/           with store_distribution
+    <step_id>/sensitivity/            a sensitivity step's indices and plots
+    <step_id>/emulator/               an emulation step's emulator
+    <step_id>/<step_id>_laplace_*.npy an identifiability step's Laplace mean and covariance (also in step_result.json)
+    <step_id>/<step_id>_params_for_id.csv  a reduction's params_for_id
     _target/model/                    the target generated with every calibrated value
     <workflow_name>_cuflynx_study.json  the study manifest CUFLynx opens (below)
 ```
 
-The manifest records the workflow as run, its result, the target and every step (its model,
-obs_data, params_for_id, the steps it took values from, its status and run directory). It is
+The manifest records the workflow as run, its result, the target and every step (its kind,
+model, obs_data, params_for_id, the steps it took something from, its status, run directory and
+outputs). It is
 updated as each step finishes, so CUFLynx can follow a running workflow. Each step's own
 manifest, in `<step_id>/param_id/`, links back to it. `"write_cuflynx_study": false` in the
 settings turns both off.

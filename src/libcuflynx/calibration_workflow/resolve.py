@@ -209,7 +209,7 @@ def library_inputs(workflow, settings=None):
 
 def resolve_workflow(workflow):
     '''The workflow's models and files, checked, and each step's vessel map into the target.'''
-    library = [s.model for s in workflow.steps] + [workflow.target]
+    library = [s.model for s in workflow.steps if s.model is not None] + [workflow.target]
     if any(m.kind == 'library' for m in library) and not workflow.module_library_dirs:
         raise WorkflowError(
             f'workflow "{workflow.name}" uses a library module but names no module library. '
@@ -231,20 +231,31 @@ def resolve_workflow(workflow):
     claimed = {}
     for step in workflow.steps:
         where = f'step "{step.id}"'
+        if step.kind == 'reduction':
+            # reads a sensitivity step's results; it has no model and calibrates nothing
+            resolved[step.id] = ResolvedStep(step=step, model=None, vessel_map=None,
+                                             parameters=[], target=target)
+            continue
         model = _resolve_model(step.model, components, supermodules, where)
-        for path, what in ((step.obs_data, 'obs_data'), (step.params_for_id, 'params_for_id')):
+        # a calibration fitting a reduction's choice is checked against every candidate: the
+        # params_for_id of the sensitivity step the reduction reads
+        params_for_id = step.params_for_id or workflow.step(
+            workflow.step(step.params_for_id_from).sensitivity_from).params_for_id
+        for path, what in ((step.obs_data, 'obs_data'), (params_for_id, 'params_for_id')):
             if not os.path.isfile(path):
                 raise WorkflowError(f'{where}: its {what} file {path} does not exist.')
         vessel_map = _vessel_map(step, model, workflow.target, target, supermodules)
-        parameters = read_calibrated_parameters(step.params_for_id, where)
+        parameters = read_calibrated_parameters(params_for_id, where)
         resolved_step = ResolvedStep(step=step, model=model, vessel_map=vessel_map,
                                      parameters=parameters, target=target)
         for parameter in parameters:
             if parameter.vessel not in model.vessels and not naming.is_global(parameter.vessel):
                 raise WorkflowError(
-                    f'{where}: {step.params_for_id} names vessel "{parameter.vessel}", which '
+                    f'{where}: {params_for_id} names vessel "{parameter.vessel}", which '
                     f'its model {step.model.label()} does not have (its vessels: '
                     f'{sorted(model.vessels)}).')
+            if step.kind != 'calibration':
+                continue     # only a calibration's values are merged into the target
             try:
                 name = resolved_step.target_model_name(parameter)
             except ValueError as exc:
@@ -264,7 +275,9 @@ def resolve_workflow(workflow):
                               config_files=sources.config_files, library_inputs=inputs,
                               components=components, supermodules=supermodules)
     for step in workflow.steps:
-        for source in step.fixed_from + [p.step for p in step.priors_from]:
+        flows = step.fixed_from + [p.step for p in step.priors_from] + \
+            ([step.result_from] if step.result_from else [])
+        for source in flows:
             mapped = result.map_between(source, step.id)
             if not any(mapped(p.vessel) for p in resolved[source].parameters):
                 raise WorkflowError(

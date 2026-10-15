@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/physiomelinks/circulatory_autogen/schemas/calibration_workflow.schema.json",
   "title": "libcuflynx calibration workflow (calibration_workflow.json)",
-  "description": "Ordered calibrations whose results are merged into one model, the target. Each step names the three inputs of an ordinary calibration: a model (a CA module array, or a module of a module library), an obs_data file and a params_for_id file; paths are relative to this file. Run with cuflynx-calibration-workflow or libcuflynx.calibration_workflow.run_calibration_workflow. The checks that need the files and the module library (they exist, each step's model sits in the target) are in libcuflynx/calibration_workflow/resolve.py; the rest are in spec.py as well as here.",
+  "description": "Ordered calibrations, and the analyses around them, whose calibrated values are merged into one model, the target. A step's kind is calibration (the default), sensitivity, reduction, emulation or identifiability; every kind but reduction names the three inputs of an ordinary run: a model (a CA module array, or a module of a module library), an obs_data file and a params_for_id file; paths are relative to this file. Run with cuflynx-calibration-workflow or libcuflynx.calibration_workflow.run_calibration_workflow. The checks that need the files and the module library (they exist, each step's model sits in the target) are in libcuflynx/calibration_workflow/resolve.py; the rest are in spec.py as well as here.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -122,7 +122,7 @@
     "settings": {
       "type": "object",
       "additionalProperties": false,
-      "description": "user_inputs settings for the calibrations (a step's are merged over the workflow's, one dict level deep). The model, obs_data, params_for_id and output directories are chosen by the workflow and cannot be set.",
+      "description": "user_inputs settings for the steps (a step's are merged over the workflow's, one dict level deep). The model, obs_data, params_for_id and output directories are chosen by the workflow and cannot be set.",
       "properties": {
         "param_id_method": {},
         "optimiser_options": {},
@@ -142,7 +142,10 @@
         "operation_funcs_external_path": {},
         "cost_funcs_external_path": {},
         "modifier_funcs_external_path": {},
-        "write_cuflynx_study": {}
+        "write_cuflynx_study": {},
+        "sa_options": {},
+        "ia_options": {},
+        "emulator_settings": {}
       }
     },
     "prior": {
@@ -192,16 +195,24 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "id",
-        "model",
-        "obs_data",
-        "params_for_id"
+        "id"
       ],
       "properties": {
         "id": {
           "type": "string",
           "pattern": "^[^/\\\\]+$",
           "description": "a label for the step, unique in the file: other steps refer to it, and it names the step's output directory"
+        },
+        "kind": {
+          "enum": [
+            "calibration",
+            "sensitivity",
+            "reduction",
+            "emulation",
+            "identifiability"
+          ],
+          "default": "calibration",
+          "description": "calibration: a param_id run (MCMC with store_distribution). sensitivity: sensitivity analysis (settings.sa_options). reduction: keeps the parameters a Sobol sensitivity step found most influential (sensitivity_from, reduction), for a calibration's params_for_id_from. emulation: trains an emulator (settings.emulator_settings) for steps with emulator_from. identifiability: identifiability analysis (settings.ia_options) at the result of result_from. Every kind but reduction needs model, obs_data and params_for_id (a calibration may give params_for_id_from instead)."
         },
         "description": {
           "type": "string"
@@ -211,17 +222,17 @@
         },
         "model": {
           "$ref": "#/$defs/model",
-          "description": "the model this step calibrates"
+          "description": "the model this step runs on"
         },
         "obs_data": {
           "type": "string",
           "minLength": 1,
-          "description": "the obs_data file it is calibrated against"
+          "description": "the obs_data file it is run against"
         },
         "params_for_id": {
           "type": "string",
           "minLength": 1,
-          "description": "the params_for_id file: what it calibrates"
+          "description": "the params_for_id file: what it calibrates or analyses"
         },
         "submodule": {
           "type": "string",
@@ -246,7 +257,7 @@
             "type": "string"
           },
           "uniqueItems": true,
-          "description": "steps whose calibrated values, and the values they were given as fixed, are fixed in this step's model; this step runs after them"
+          "description": "calibration steps whose calibrated values, and the values they were given as fixed, are fixed in this step's model; this step runs after them"
         },
         "priors_from": {
           "type": "array",
@@ -262,8 +273,90 @@
         },
         "settings": {
           "$ref": "#/$defs/settings"
+        },
+        "emulator_from": {
+          "type": "string",
+          "minLength": 1,
+          "description": "an emulation step whose emulator this step runs on (calibration or sensitivity), with that step's model; give the same model, obs_data and params_for_id as it"
+        },
+        "result_from": {
+          "type": "string",
+          "minLength": 1,
+          "description": "a calibration step whose values, including those of the parameters this step analyses, this step's model is generated with (sensitivity or identifiability: the analysis is at that result)"
+        },
+        "sensitivity_from": {
+          "type": "string",
+          "minLength": 1,
+          "description": "a reduction step: the Sobol sensitivity step whose indices it ranks"
+        },
+        "params_for_id_from": {
+          "type": "string",
+          "minLength": 1,
+          "description": "a calibration step: the reduction step whose params_for_id it calibrates, instead of its own params_for_id"
+        },
+        "reduction": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "top_n"
+          ],
+          "properties": {
+            "top_n": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "how many parameters to keep, highest score first"
+            },
+            "index_type": {
+              "enum": [
+                "ST",
+                "S1"
+              ],
+              "default": "ST",
+              "description": "total or first-order Sobol indices"
+            },
+            "criterion": {
+              "enum": [
+                "max",
+                "mean"
+              ],
+              "default": "max",
+              "description": "a parameter's score: the max or mean of its index over the outputs"
+            },
+            "threshold": {
+              "type": "number",
+              "minimum": 0,
+              "description": "drop parameters scoring below this"
+            }
+          },
+          "description": "a reduction step: which parameters to keep"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "reduction"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "sensitivity_from",
+              "reduction"
+            ]
+          },
+          "else": {
+            "required": [
+              "model",
+              "obs_data"
+            ]
+          }
+        }
+      ]
     }
   }
 }

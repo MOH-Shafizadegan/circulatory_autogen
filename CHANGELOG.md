@@ -5,6 +5,26 @@ next release; add to that section as you land a change.
 
 ## Unreleased
 
+### Added — analysis steps in calibration workflows
+
+A workflow step has a `kind`: `calibration` (the default, so existing files are unchanged),
+`sensitivity`, `reduction`, `emulation` or `identifiability`, so one `calibration_workflow.json`
+records the whole order of a study.
+
+- `sensitivity` runs Sobol or local sensitivity analysis (`settings.sa_options`).
+- `reduction` ranks a Sobol step's parameters (`sensitivity_from`) and keeps the `top_n`
+  (`reduction`: `index_type`, `criterion`, `threshold`), writing those rows of its
+  params_for_id; a calibration fits them with `params_for_id_from`.
+- `emulation` trains an emulator (`settings.emulator_settings`); a calibration or sensitivity
+  step with `emulator_from` runs on it, with a copy of the emulation step's model.
+- `identifiability` runs a Laplace analysis (`settings.ia_options`) at the values of the
+  calibration in its `result_from`.
+
+Only calibrations are merged into the target. The study manifest, `--dry-run` plan, status and
+methods LaTeX (text and flow chart) show each step's kind, what it takes from where and its
+outputs. `run_identifiability_analysis` takes `best_param_vals`, and Sobol indices are ranked by
+`libcuflynx.sensitivity_analysis.sobol_ranking`.
+
 ### Removed — `cuflynx-sequential-param-id`
 
 The command and `user_run_files/run_sequential_param_id.sh` are gone, with the script and the

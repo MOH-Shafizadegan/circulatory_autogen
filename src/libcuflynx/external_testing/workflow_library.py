@@ -21,6 +21,11 @@ Parameterisations:
 * ``twin/split`` -- ``calibration_workflow.json``: fit_a and fit_b, independent.
 * ``chain/rest`` -- z = Z_C with p_A fixed from fit_a: q = sqrt(Z_C - Y_A) (3 by default);
   ``calibration_workflow.json``: fit_a, then rest with fixed_from fit_a.
+* ``chain/screened`` -- ``calibration_workflow.json`` (``chain_analysed``): fit_a; ``screen``, a
+  Sobol analysis of z over p_A in [1.9, 2.1] and q_C in [0.1, 10], where q_C dominates;
+  ``reduce``, which keeps the one most influential parameter; ``fit``, which calibrates what
+  ``reduce`` kept with p_A fixed from fit_a (q = 3, as chain/rest); and ``ia``, a Laplace
+  identifiability analysis at ``fit``'s result: std(q) = STD_C / (2 q) = STD_C / 6.
 
 Module arrays (``arrays/``), the same chain without the module library's layout: ``a_only``
 (one record ``A``, lin_a) and ``chain`` (``A`` feeding ``C``), with their parameters files and
@@ -43,6 +48,10 @@ OPTIMISER_SETTINGS = {
                           'max_patience': 60, 'seed': 1, 'cost_type': 'gaussian_MLE'},
     'dt': 0.1,
 }
+
+#: A Sobol analysis small enough for a test: (2 D + 2) N = 384 runs for D = 2 parameters.
+SA_OPTIONS = {'method': 'sobol', 'sample_type': 'saltelli', 'num_samples': 64}
+IA_OPTIONS = {'method': 'Laplace', 'gradient_source': 'FD'}
 
 _CELLML_HEADER = ("<?xml version='1.0' encoding='UTF-8'?>\n"
                   '<model name="{name}" xmlns="http://www.cellml.org/cellml/1.1#" '
@@ -168,8 +177,8 @@ def _library_step(step_id, module_type, directory, workflow_dir, **extra):
 
 def build_workflow_library(root, settings=None):
     """Write the library under ``root``. Returns a dict of paths: ``modules`` (the module
-    library dir), ``twin_split``, ``chain_rest`` and ``chain_array`` (the workflow files), and the
-    parameterisation directories by ``<type>/<parameterisation>``.
+    library dir), ``twin_split``, ``chain_rest``, ``chain_analysed`` and ``chain_array`` (the
+    workflow files), and the parameterisation directories by ``<type>/<parameterisation>``.
 
     ``settings`` replaces the workflows' settings (default ``OPTIMISER_SETTINGS``).
     """
@@ -242,6 +251,36 @@ def build_workflow_library(root, settings=None):
         'steps': [_library_step('fit_a', 'lin_a', paths['lin_a/fit_a'], paths['chain/rest']),
                   _library_step('rest', 'chain', paths['chain/rest'], paths['chain/rest'],
                                 fixed_from=['fit_a'])]})
+
+    paths['chain/screened'] = _parameterisation(
+        modules, 'chain', 'screened', chain_rows, obs=[('z_c', 'mod_C/z', Z_C, STD_C)],
+        params_for_id=[('mod_A', 'p', 1.9, 2.1), ('mod_C', 'q', 0.1, 10.0)])
+    paths['chain_analysed'] = os.path.join(paths['chain/screened'], 'calibration_workflow.json')
+    screened = paths['chain/screened']
+
+    def screened_step(step_id, **extra):
+        return _library_step(step_id, 'chain', screened, screened, **extra)
+
+    fit = screened_step('fit', fixed_from=['fit_a'], params_for_id_from='reduce')
+    del fit['params_for_id']
+    _write_json(paths['chain_analysed'], {
+        'schema_version': 1, 'workflow_name': 'chain_analysed',
+        'description': 'C is found to matter by Sobol analysis, calibrated with A fixed, and '
+                       'its identifiability analysed at the fit',
+        'module_library_dirs': [os.path.relpath(modules, screened)],
+        'settings': settings,
+        'target': _target('chain', 'screened'),
+        'steps': [
+            _library_step('fit_a', 'lin_a', paths['lin_a/fit_a'], screened),
+            screened_step('screen', kind='sensitivity', settings={'sa_options': SA_OPTIONS}),
+            {'id': 'reduce', 'kind': 'reduction', 'sensitivity_from': 'screen',
+             'reduction': {'top_n': 1}},
+            fit,
+            dict(screened_step('ia', kind='identifiability', result_from='fit',
+                               settings={'ia_options': IA_OPTIONS}),
+                 params_for_id=os.path.relpath(
+                     os.path.join(paths['chain/rest'], 'rest_params_for_id.csv'), screened)),
+        ]})
 
     arrays = os.path.join(os.path.abspath(root), 'arrays')
     paths['arrays'] = arrays

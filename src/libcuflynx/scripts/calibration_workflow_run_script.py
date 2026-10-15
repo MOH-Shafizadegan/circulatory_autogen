@@ -32,10 +32,11 @@ EPILOG = (
 def build_parser():
     # not _cli.build_parser: its --user-inputs option means nothing here
     parser = argparse.ArgumentParser(
-        description='Run the calibrations of a calibration_workflow.json in order -- each '
-                    'step a model, an obs_data and a params_for_id, later steps taking '
-                    'earlier steps\' values as fixed values or priors -- and merge them into '
-                    'the target model.',
+        description='Run the steps of a calibration_workflow.json in order -- each '
+                    'a calibration, sensitivity analysis, reduction, emulator training or '
+                    'identifiability analysis of a model, an obs_data and a params_for_id, '
+                    'later steps taking earlier steps\' values, emulators or chosen '
+                    'parameters -- and merge the calibrations into the target model.',
         epilog=EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('workflow', help='the calibration_workflow.json to run')
     parser.add_argument('--module-library-dir', dest='module_library_dirs', action='append',
