@@ -616,19 +616,19 @@ def target_module_info(resolved):
     def walk(container, prefix):
         for sub in container.get('submodules', []):
             path = prefix + sub['name']
-            info[path] = {'module_type': sub['vessel_type'], 'version': sub['BC_type'],
+            info[path] = {'module_type': sub['module_type'], 'version': sub['BC_type'],
                           'parameterisation': sub.get('parameterisation')}
-            nested = supermodules.get((sub['vessel_type'], sub['BC_type']))
+            nested = supermodules.get((sub['module_type'], sub['BC_type']))
             if nested is not None:
                 walk(nested, path + '_')
 
     target = resolved.target
     if target.kind == 'array':
         for record in target.records:
-            info[record['name']] = {'module_type': record['vessel_type'],
+            info[record['name']] = {'module_type': record['module_type'],
                                     'version': record['BC_type'],
                                     'parameterisation': record.get('parameterisation')}
-            nested = supermodules.get((record['vessel_type'], record['BC_type']))
+            nested = supermodules.get((record['module_type'], record['BC_type']))
             if nested is not None:
                 walk(nested, record['name'] + '_')
     elif target.entry.get('submodules'):

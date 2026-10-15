@@ -81,7 +81,7 @@ def generate1DPythonModelFiles(df_vess, df_params, vess_file, nodes_file, names_
         nameV = vess[i]['name']
 
         #XXX TODO improve this code below to differentiate between arterial and venous vessels, 
-        # assuming that we do not have a 'vessel_type' in the CA module array file that can tell us this information
+        # assuming that we do not have a 'module_type' in the CA module array file that can tell us this information
         if nameV.startswith(("A_","a_")) or any(sub in nameV for sub in ("art", "Art", "aort", "Aort")):
             vess[i]['type'] = 1 # artery
         elif nameV.startswith(("V_","v_")) or any(sub in nameV for sub in ("ven", "Ven", "vein", "Vein")):

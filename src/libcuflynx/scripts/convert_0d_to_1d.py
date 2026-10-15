@@ -72,7 +72,7 @@ def convert_0d_to_1d(model, folder_0d, param_file_0d, folder_hyb=None, vess_1d_l
 
         idxV = idxs[0]
         df_vess.at[idxV, 'BC_type'] = 'nn'
-        df_vess.at[idxV, 'vessel_type'] = 'FV1D_vessel'
+        df_vess.at[idxV, 'module_type'] = 'FV1D_vessel'
 
         out_vess = df_vess.at[idxV, 'out_vessels'].split()
         if 'K_tube_'+vess in out_vess:
@@ -89,7 +89,7 @@ def convert_0d_to_1d(model, folder_0d, param_file_0d, folder_hyb=None, vess_1d_l
 
     nV = df_vess.shape[0]
     for j in range(nV):
-        if df_vess.at[j, 'vessel_type']=='FV1D_vessel':
+        if df_vess.at[j, 'module_type']=='FV1D_vessel':
             vess1d = df_vess.at[j, 'name']
             inp_vess = df_vess.at[j, 'inp_vessels'].split()
             out_vess = df_vess.at[j, 'out_vessels'].split()
@@ -100,7 +100,7 @@ def convert_0d_to_1d(model, folder_0d, param_file_0d, folder_hyb=None, vess_1d_l
                     sys.exit(f"Error :: Input vessel {vess} not found for 1D vessel {vess1d}.")
 
                 idxV = idxs[0]
-                if df_vess.at[idxV, 'vessel_type'] != 'FV1D_vessel':
+                if df_vess.at[idxV, 'module_type'] != 'FV1D_vessel':
                     if df_vess.at[idxV, 'BC_type'].startswith(('vp', 'pp')):
                         if vess=='heart':
                             if vess1d=='par':
@@ -118,7 +118,7 @@ def convert_0d_to_1d(model, folder_0d, param_file_0d, folder_hyb=None, vess_1d_l
                     sys.exit(f"Error :: Output vessel {vess} not found for 1D vessel {vess1d}.")
 
                 idxV = idxs[0]
-                if df_vess.at[idxV, 'vessel_type'] != 'FV1D_vessel':
+                if df_vess.at[idxV, 'module_type'] != 'FV1D_vessel':
                     if df_vess.at[idxV, 'BC_type'].startswith(('pv', 'pp')):
                         df_params.loc[df_params.shape[0]] = ['u_in_'+vess, 'J_per_m3', 0.0, 'WONT_BE_USED']
                     elif df_vess.at[idxV, 'BC_type'].startswith(('vp', 'vv')):

@@ -97,7 +97,7 @@ def create_unit_conversion_test_files(temp_model_dir):
     with open(modules_config, 'w') as f:  
         json.dump([  
                     {  
-                        "vessel_type": "test_type1",  
+                        "module_type": "test_type1",  
                         "BC_type": "test",  
                         "module_format": "cellml",  
                         "component_file": "test_modules.cellml",  
@@ -116,7 +116,7 @@ def create_unit_conversion_test_files(temp_model_dir):
                         ]  
                     },  
                     {  
-                        "vessel_type": "test_type2",  
+                        "module_type": "test_type2",  
                         "BC_type": "test",  
                         "module_format": "cellml",  
                         "component_file": "test_modules.cellml",  
@@ -145,7 +145,7 @@ def create_unit_conversion_test_files(temp_model_dir):
     # Create module_array.csv  
     module_array_file = os.path.join(resources_dir, 'unit_test_module_array.csv')  
     with open(module_array_file, 'w') as f:  
-        f.write("""name,BC_type,vessel_type,inp_vessels,out_vessels  
+        f.write("""name,BC_type,module_type,inp_vessels,out_vessels  
 vessel1,test,test_type1,,vessel2  
 vessel2,test,test_type2,vessel1,  
 """)  

@@ -3347,9 +3347,9 @@ class JSONFileParser(object):
         """The component entries of one module config JSON file, in either the libcuflynx or
         the PhLynx schema, as a dataframe with libcuflynx column names (see
         utilities/config_schemas.py). Supermodule entries are left out, and so are the
-        ``(file, (vessel_type, BC_type))`` pairs in ``exclude``."""
+        ``(file, (module_type, BC_type))`` pairs in ``exclude``."""
         return pd.DataFrame([e for e in load_module_config(json_path)
-                             if (str(json_path), (e['vessel_type'], e['BC_type'])) not in exclude])
+                             if (str(json_path), (e['module_type'], e['BC_type'])) not in exclude])
 
     def json_files_to_dataframe(self, json_files, exclude=()):
         """All module config entries from ``json_files``, in order, as one dataframe, without
@@ -3408,15 +3408,15 @@ class JSONFileParser(object):
 
         add_on_lists = {column:[] for column in module_df.columns[2:]}
         for vessel_tup in vessel_df.itertuples():
-            vessel_type = vessel_tup.vessel_type
+            module_type = vessel_tup.module_type
             BC_type = vessel_tup.BC_type
-            if len(BC_type) <1 or len(vessel_type) <1:
+            if len(BC_type) <1 or len(module_type) <1:
                 print('You have an empty entry in your module array, exiting')
                 exit()
-            this_vessel_module_df = module_df.loc[((module_df["vessel_type"] == vessel_type)
+            this_vessel_module_df = module_df.loc[((module_df["module_type"] == module_type)
                                                    & (module_df["BC_type"] == BC_type))].squeeze()
             if this_vessel_module_df.empty:
-                print(f'combination of vessel_type = {vessel_type} and BC_type = {BC_type} doesn\'t exist, check module_config.json',
+                print(f'combination of module_type = {module_type} and BC_type = {BC_type} doesn\'t exist, check module_config.json',
                         'for this combination')
                 exit()
             for column in add_on_lists:

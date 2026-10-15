@@ -1,4 +1,4 @@
-"""A (vessel_type, BC_type) that several module sources define comes from the most specific one
+"""A (module_type, BC_type) that several module sources define comes from the most specific one
 (utilities/module_library.py): external_modules_dir, then module_library_dirs in order, then
 module_config_user, then the built-in modules. The others' config entries and CellML are left
 out, a ModuleShadowWarning lists the competition, and a type defined twice within one source is

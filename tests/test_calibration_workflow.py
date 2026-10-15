@@ -668,10 +668,10 @@ def test_calibrated_values_replace_rows_written_in_either_name_form(tmp_path):
 def test_a_nested_submodule_is_named_as_a_path():
     from types import SimpleNamespace
     from libcuflynx.calibration_workflow.resolve import _submodule_path
-    target = {'submodules': [{'name': 'soma', 'vessel_type': 'S', 'BC_type': 'v'},
-                             {'name': 'x', 'vessel_type': 'M', 'BC_type': 'v'}],
+    target = {'submodules': [{'name': 'soma', 'module_type': 'S', 'BC_type': 'v'},
+                             {'name': 'x', 'module_type': 'M', 'BC_type': 'v'}],
               'module_format': 'supermodule'}
-    supermodules = {('S', 'v'): {'submodules': [{'name': 'i_M', 'vessel_type': 'M',
+    supermodules = {('S', 'v'): {'submodules': [{'name': 'i_M', 'module_type': 'M',
                                                  'BC_type': 'v'}]}}
 
     def step(submodule):

@@ -82,7 +82,7 @@ class ResolvedArray:
         names = set()
         for record in self.records:
             names.add(record['name'])
-            nested = self.supermodules.get((record['vessel_type'], record['BC_type']))
+            nested = self.supermodules.get((record['module_type'], record['BC_type']))
             if nested is not None:
                 names |= {f'{record["name"]}_{"_".join(p)}'
                           for p in submodule_path_parts(nested, self.supermodules)}
@@ -93,7 +93,7 @@ class ResolvedArray:
         type, or a submodule of a supermodule record (``<record>_<path>``).'''
         found = []
         for record in self.records:
-            record_key = (record['vessel_type'], record['BC_type'])
+            record_key = (record['module_type'], record['BC_type'])
             if record_key == key:
                 found.append(record['name'])
             nested = self.supermodules.get(record_key)
@@ -105,7 +105,7 @@ class ResolvedArray:
     def config_paths(self, components, supermodules):
         paths = []
         for record in self.records:
-            key = (record['vessel_type'], record['BC_type'])
+            key = (record['module_type'], record['BC_type'])
             entry = components.get(key) or supermodules.get(key) or {}
             paths.append(entry.get('config_path'))
             paths += _submodule_configs(entry, components, supermodules)
@@ -115,7 +115,7 @@ class ResolvedArray:
 def _submodule_configs(entry, components, supermodules):
     paths = []
     for sub in entry.get('submodules', []):
-        key = (sub['vessel_type'], sub['BC_type'])
+        key = (sub['module_type'], sub['BC_type'])
         nested = components.get(key) or supermodules.get(key) or {}
         paths.append(nested.get('config_path'))
         paths += _submodule_configs(nested, components, supermodules)
@@ -401,7 +401,7 @@ def submodule_paths(container_entry, key, supermodules, prefix=()):
     sits in the supermodule ``container_entry``, nested supermodules included.'''
     found = []
     for sub in container_entry.get('submodules', []):
-        sub_key = (sub['vessel_type'], sub['BC_type'])
+        sub_key = (sub['module_type'], sub['BC_type'])
         path = prefix + (sub['name'],)
         if sub_key == key:
             found.append(path)

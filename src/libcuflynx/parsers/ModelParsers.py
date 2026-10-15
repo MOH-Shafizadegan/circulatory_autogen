@@ -6,7 +6,7 @@ Created on 29/10/2021
 
 
 from libcuflynx.parsers.PrimitiveParsers import CSVFileParser, JSONFileParser
-from libcuflynx.utilities.config_schemas import (is_heart_vessel_type,
+from libcuflynx.utilities.config_schemas import (is_heart_module_type,
                                                  load_expanded_vessel_records, load_module_array,
                                                  vessel_records_to_string_frame)
 from libcuflynx.models.LumpedModels import CVS0DModel
@@ -82,12 +82,12 @@ def merge_default_parameters(parameters_array, extra_param_rows):
 
 
 
-def _append_vessel_row(df, name, BC_type, vessel_type, inp_vessels, out_vessels, blank=''):
+def _append_vessel_row(df, name, BC_type, module_type, inp_vessels, out_vessels, blank=''):
     """Append a vessel row by column name. Any other column (a module array's extra keys, e.g.
     ``parameterisation``) gets ``blank``: ``''`` in a string frame, ``[]`` in the list-form one. Appending
     a fixed 5-element list failed with "cannot set a row with mismatched columns" as soon as the
     array had one."""
-    values = {'name': name, 'BC_type': BC_type, 'vessel_type': vessel_type,
+    values = {'name': name, 'BC_type': BC_type, 'module_type': module_type,
               'inp_vessels': inp_vessels, 'out_vessels': out_vessels}
     row = [values.get(column, blank) for column in df.columns]
     df.loc[df.index.max() + 1 if len(df) else 0] = row
@@ -137,7 +137,7 @@ class CSV0DModelParser(object):
         vessels_rows_0d = []
         vessels_rows_1d = []
         for _, row in vessels_df.iterrows():
-            if row["vessel_type"]=="FV1D_vessel":
+            if row["module_type"]=="FV1D_vessel":
                 vessels_rows_1d.append(row)
             else:
                 vessels_rows_0d.append(row)
@@ -160,8 +160,8 @@ class CSV0DModelParser(object):
         
         
         #XXX Deal with volume_sum module (if present)
-        # idxBVsum_list = vessels_df_0d.index[vessels_df_0d["vessel_type"]=='volume_sum']
-        idxBVsum_list = vessels_df_0d.index[vessels_df_0d["vessel_type"].str.startswith(('volume_sum','sum_blood_vol'))]
+        # idxBVsum_list = vessels_df_0d.index[vessels_df_0d["module_type"]=='volume_sum']
+        idxBVsum_list = vessels_df_0d.index[vessels_df_0d["module_type"].str.startswith(('volume_sum','sum_blood_vol'))]
         if len(idxBVsum_list)==0:
             print("NO volume_sum module found.")
             pass
@@ -303,12 +303,12 @@ class CSV0DModelParser(object):
                         idx0d = vessels_df_0d.index[vessels_df_0d["name"]==inp_vess]
                         if len(idx0d)==1:
                             idx0d_int = idx0d[0]
-                            if (vessels_df_0d.at[idx0d_int,"vessel_type"].startswith(("inlet_flow","inlet_pressure"))
+                            if (vessels_df_0d.at[idx0d_int,"module_type"].startswith(("inlet_flow","inlet_pressure"))
                                     and not is_vessel_bc(vessels_df_0d.at[idx0d_int,"BC_type"])):
 
-                                    if vessels_df_0d.at[idx0d_int,"vessel_type"].startswith("inlet_flow"):
+                                    if vessels_df_0d.at[idx0d_int,"module_type"].startswith("inlet_flow"):
                                         vessels_df_1d.at[i,"inp_vessels"] = 'input_flow_BC'
-                                    elif vessels_df_0d.at[idx0d_int,"vessel_type"].startswith("inlet_pressure"):
+                                    elif vessels_df_0d.at[idx0d_int,"module_type"].startswith("inlet_pressure"):
                                         vessels_df_1d.at[i,"inp_vessels"] = 'input_pressure_BC'
 
                                     vessels_df_0d.drop(index=idx0d_int, inplace=True)
@@ -351,7 +351,7 @@ class CSV0DModelParser(object):
                                             break
                                     if found_idx1d == -1:
                                         _append_vessel_row(vessels_df_0d, vess1d, BC_type_1d,
-                                                           vessels_df_1d.at[i,"vessel_type"],
+                                                           vessels_df_1d.at[i,"module_type"],
                                                            vessels_df_1d.at[i,"inp_vessels"], '')
                                     else:
                                         if vessels_df_0d.at[found_idx1d,"inp_vessels"]=='':
@@ -380,12 +380,12 @@ class CSV0DModelParser(object):
                         idx0d = vessels_df_0d.index[vessels_df_0d["name"]==out_vess]
                         if len(idx0d)==1:
                             idx0d_int = idx0d[0]
-                            if (vessels_df_0d.at[idx0d_int,"vessel_type"].startswith(("outlet_flow","outlet_pressure"))
+                            if (vessels_df_0d.at[idx0d_int,"module_type"].startswith(("outlet_flow","outlet_pressure"))
                                     and not is_vessel_bc(vessels_df_0d.at[idx0d_int,"BC_type"])):
 
-                                    if vessels_df_0d.at[idx0d_int,"vessel_type"].startswith("outlet_flow"):
+                                    if vessels_df_0d.at[idx0d_int,"module_type"].startswith("outlet_flow"):
                                         vessels_df_1d.at[i,"out_vessels"] = 'output_flow_BC'
-                                    elif vessels_df_0d.at[idx0d_int,"vessel_type"].startswith("outlet_pressure"):
+                                    elif vessels_df_0d.at[idx0d_int,"module_type"].startswith("outlet_pressure"):
                                         vessels_df_1d.at[i,"out_vessels"] = 'output_pressure_BC'
 
                                     vessels_df_0d.drop(index=idx0d_int, inplace=True)
@@ -428,7 +428,7 @@ class CSV0DModelParser(object):
                                             break
                                     if found_idx1d == -1:
                                         _append_vessel_row(vessels_df_0d, vessels_df_1d.at[i,"name"], BC_type_1d,
-                                                           vessels_df_1d.at[i,"vessel_type"], '',
+                                                           vessels_df_1d.at[i,"module_type"], '',
                                                            vessels_df_1d.at[i,"out_vessels"])
                                     else:
                                         if vessels_df_0d.at[found_idx1d,"out_vessels"]=='':
@@ -454,7 +454,7 @@ class CSV0DModelParser(object):
         # here we could add other 'special' global connections
         # we are assuming that all these special connections are stored at the of the self.conn_1d_0d_info structure and corresponding file
         for i in range(vessels_df_0d.shape[0]):
-            if vessels_df_0d.at[i,"vessel_type"]=='FV1D_volume_sum':
+            if vessels_df_0d.at[i,"module_type"]=='FV1D_volume_sum':
                 # sumBV0d = vessels_df_0d.at[i,"out_vessels"].split()[0]
                 # idx0d = vessels_df_0d.index[vessels_df_0d["name"]==sumBV0d]
                 self.conn_1d_0d_info[str(N1d0d+1)] = {"vess1d_idx": -1,
@@ -521,9 +521,9 @@ class CSV0DModelParser(object):
         #  Temporarily we add a pulmonary system if there isnt one defined, this should be defined by
         #   the user but we include this to improve backwards compatitibility.
 
-        # the heart is found by its vessel_type, so it can have any name (a heart inside a
+        # the heart is found by its module_type, so it can have any name (a heart inside a
         # supermodule is <instance>_<submodule>)
-        hearts = [n for n, vt in zip(vessels_df["name"], vessels_df["vessel_type"]) if is_heart_vessel_type(vt)]
+        hearts = [n for n, vt in zip(vessels_df["name"], vessels_df["module_type"]) if is_heart_module_type(vt)]
         if len(hearts) == 1:
             heart = hearts[0]
             heart_row = vessels_df.loc[vessels_df["name"] == heart]
@@ -541,18 +541,18 @@ class CSV0DModelParser(object):
 
 
         # a type several module sources define comes from the most specific one
-        # (utilities/module_library.py), so each (vessel_type, BC_type) is here once
+        # (utilities/module_library.py), so each (module_type, BC_type) is here once
         module_df = self.json_parser.json_files_to_dataframe(
             self.module_sources.config_files, exclude=self.module_sources.excluded_entries)
-        duplicates = module_df[module_df.duplicated(subset=["vessel_type", "BC_type"], keep=False)]
+        duplicates = module_df[module_df.duplicated(subset=["module_type", "BC_type"], keep=False)]
         if not duplicates.empty:
-            raise ValueError('Repeated (vessel_type, BC_type) entries in the module configs:\n'
-                             + duplicates[['vessel_type', 'BC_type']].to_string())
-        component_keys = set(zip(module_df["vessel_type"], module_df["BC_type"]))
+            raise ValueError('Repeated (module_type, BC_type) entries in the module configs:\n'
+                             + duplicates[['module_type', 'BC_type']].to_string())
+        component_keys = set(zip(module_df["module_type"], module_df["BC_type"]))
         shadowed = sorted(key for key in supermodule_registry if key in component_keys)
         if shadowed:
             raise ValueError(f'{shadowed} are defined both as supermodules and as component '
-                             f'modules in the module configs; a (vessel_type, BC_type) can be '
+                             f'modules in the module configs; a (module_type, BC_type) can be '
                              f'only one of them.')
          
         # add module info to each row of module array
@@ -595,7 +595,7 @@ class CSV0DModelParser(object):
         model_0D.all_parameters_array = parameters_array_orig
 
         # get the allowable types from the modules_config.json file
-        model_0D.possible_vessel_BC_types = list(set(list(zip(module_df["vessel_type"].to_list(), module_df["BC_type"].to_list()))))
+        model_0D.possible_vessel_BC_types = list(set(list(zip(module_df["module_type"].to_list(), module_df["BC_type"].to_list()))))
         
         if self.parameter_id_dir:
             check_list = [LumpedBCVesselCheck(), LumpedPortVariableCheck(), LumpedIDParamsCheck()]
@@ -616,7 +616,7 @@ class CSV0DModelParser(object):
         # TODO include units and model_environment in the appended item so they can be included
         for vessel_tup in vessels_df.itertuples():
             # TODO check that removing this doesn't break anything
-            # elif vessel_tup.vessel_type == 'terminal' or vessel_tup.vessel_type == 'terminal2':
+            # elif vessel_tup.module_type == 'terminal' or vessel_tup.module_type == 'terminal2':
             #     str_addon = re.sub('_T$', '', f'_{vessel_tup.name}')
             #     module = 'systemic'
             str_addon = f'_{vessel_tup.name}'

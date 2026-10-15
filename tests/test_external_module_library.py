@@ -36,7 +36,7 @@ DECAY_CELLML = """\
 DECAY_CONFIG = """\
 [
   {{
-    "vessel_type": "{vessel_type}",
+    "module_type": "{module_type}",
     "BC_type": "nn",
     "module_format": "cellml",
     "component_file": "{name}_modules.cellml",
@@ -63,13 +63,13 @@ UNITS_CELLML = """\
 """
 
 
-def _write_module(library_dir, name, vessel_type, component_type, units_exponent='-1'):
+def _write_module(library_dir, name, module_type, component_type, units_exponent='-1'):
     module_dir = os.path.join(library_dir, name)
     os.makedirs(module_dir, exist_ok=True)
     with open(os.path.join(module_dir, f'{name}_modules.cellml'), 'w') as f:
         f.write(DECAY_CELLML.format(component_type=component_type))
     with open(os.path.join(module_dir, f'{name}_modules_config.json'), 'w') as f:
-        f.write(DECAY_CONFIG.format(vessel_type=vessel_type, name=name, component_type=component_type))
+        f.write(DECAY_CONFIG.format(module_type=module_type, name=name, component_type=component_type))
     with open(os.path.join(module_dir, f'{name}_units.cellml'), 'w') as f:
         f.write(UNITS_CELLML.format(exponent=units_exponent))
     # Non-config JSON next to a module must not be read as a module config.
@@ -78,12 +78,12 @@ def _write_module(library_dir, name, vessel_type, component_type, units_exponent
     return module_dir
 
 
-def _write_resources(resources_dir, prefix, vessel_type, k=0.5, x_init=2.0):
+def _write_resources(resources_dir, prefix, module_type, k=0.5, x_init=2.0):
     os.makedirs(resources_dir, exist_ok=True)
     with open(os.path.join(resources_dir, f'{prefix}_module_array.csv'), 'w') as f:
         f.write(textwrap.dedent(f"""\
-            name,BC_type,vessel_type,inp_vessels,out_vessels
-            decay,nn,{vessel_type},,
+            name,BC_type,module_type,inp_vessels,out_vessels
+            decay,nn,{module_type},,
             """))
     with open(os.path.join(resources_dir, f'{prefix}_parameters.csv'), 'w') as f:
         f.write(textwrap.dedent(f"""\
@@ -141,7 +141,7 @@ def test_module_library_dir_only(tmp_path):
 
 @pytest.mark.integration
 def test_module_library_redefines_builtin_when_builtins_off(tmp_path):
-    """A library may redefine a built-in (vessel_type, BC_type) once built-ins are off."""
+    """A library may redefine a built-in (module_type, BC_type) once built-ins are off."""
     library_dir = str(tmp_path / 'library')
     _write_module(library_dir, 'Lotka_Volterra', 'Lotka_Volterra', 'Lotka_Volterra_lib')
     _write_resources(str(tmp_path / 'resources'), 'lib_lv', 'Lotka_Volterra')
