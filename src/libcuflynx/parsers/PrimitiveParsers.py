@@ -3519,8 +3519,7 @@ def check_removed_obs_data_values(json_obj):
     """Raise, with what to write instead, for a value obs_data no longer accepts. Run before
     the schema, whose error would only say the value is not allowed."""
     items = json_obj if isinstance(json_obj, list) else (
-        (json_obj.get('data_items') or json_obj.get('data_item') or [])
-        if isinstance(json_obj, dict) else [])
+        json_obj.get('data_items') or [] if isinstance(json_obj, dict) else [])
     for item in items if isinstance(items, list) else []:
         if isinstance(item, dict) and item.get('data_type') in REMOVED_DATA_TYPES:
             raise ValueError(REMOVED_DATA_TYPES[item['data_type']])

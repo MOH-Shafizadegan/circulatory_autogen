@@ -230,7 +230,7 @@ def _observed(item):
 
 
 def observables_text(obs, symbols, default_cost):
-    items = obs.get('data_items') or obs.get('data_item') or (obs if isinstance(obs, list) else [])
+    items = obs if isinstance(obs, list) else (obs.get('data_items') or [])
     if not items:
         return 'No data items.'
     lines = [r'\begin{center}', r'\small', r'\begin{tabular}{lllll}', r'\toprule',
