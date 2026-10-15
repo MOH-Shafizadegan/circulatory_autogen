@@ -192,3 +192,36 @@ def test_the_directory_satisfies_the_contract_cuflynx_reads(full_run):
         saved = json.load(handle)
     assert saved["used_emulator"] is False
     assert saved["num_samples"] == pipeline.POSTERIOR_DRAWS
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_every_stage_is_recorded_in_the_study_manifest(full_run):
+    """One file CUFLynx can reopen the whole study from (``utilities/cuflynx_study.py``).
+
+    Sensitivity, the emulator, the calibration and the chain each record themselves in
+    it as they finish, so a stage that stops doing so leaves a study that opens without
+    its results.
+    """
+    from libcuflynx.utilities.cuflynx_study import read_study
+
+    path = full_run["manifest"]
+    assert os.path.basename(path) == f"{pipeline.FILE_PREFIX}_cuflynx_study.json"
+    study = read_study(path)
+    config = full_run["config"]
+
+    assert study["schema"] == 1
+    assert study["file_prefix"] == pipeline.FILE_PREFIX
+    assert os.path.isfile(study["model"])
+    assert study["obs_data"] == os.path.abspath(config["param_id_obs_path"])
+    assert study["params_for_id"] == os.path.abspath(config["params_for_id_path"])
+    assert study["solver_info"]["MaximumStep"] == config["solver_info"]["MaximumStep"]
+    assert study["solver_info"]["dt"] == config["dt"]
+
+    run = study["runs"][0]
+    assert run["dir"] == os.path.abspath(full_run["run_dir"])
+    assert run["analyses"][:2] == ["genetic_algorithm", "mcmc"]
+
+    sobol = [entry for entry in study["sensitivity"] if entry["method"] == "sobol"]
+    assert sobol and os.path.isdir(sobol[0]["dir"])
+    assert os.path.isfile(os.path.join(study["emulator"], "emulator_metadata.json"))

@@ -756,3 +756,43 @@ def test_a_workflow_of_module_arrays_runs_and_writes_beside_the_target(library, 
     assert float(written['A/p']['value']) == pytest.approx(np.sqrt(Y_A / 2), rel=1e-6)
     assert float(written['C/q']['value']) == pytest.approx(np.sqrt(Z_C - Y_A), rel=1e-6)
     assert written['C/k']['value'] == '1.0' and 'doe2020gain' in written['C/k']['data_reference']
+
+
+@pytest.mark.integration
+def test_a_workflow_records_itself_in_one_study_manifest(library, tmp_path):
+    from libcuflynx.utilities.cuflynx_study import read_study
+    out = str(tmp_path / 'run')
+    run_calibration_workflow(library['chain_array'], output_dir=out, write_calibrated=True)
+    study = read_study(os.path.join(out, 'chain_array_cuflynx_study.json'))
+    workflow = study['workflow']
+    assert workflow['name'] == 'chain_array' and workflow['complete']
+    assert workflow['file'] == os.path.join(out, 'calibration_workflow.json')
+    assert workflow['source'] == library['chain_array']
+    assert workflow['result'] == os.path.join(out, 'workflow_result.json')
+    # the target, as the workflow names it and as it was generated with the merged values
+    assert workflow['target']['model']['module_array'] == os.path.join(
+        library['arrays'], 'chain_module_array.json')
+    assert workflow['target']['generated_model'] == study['model']
+    assert os.path.isfile(study['model'])
+    assert workflow['target']['calibrated_parameters'] == os.path.join(
+        library['arrays'], 'chain_calibrated_parameters.csv')
+    steps = {s['id']: s for s in workflow['steps']}
+    assert [s['id'] for s in workflow['steps']] == ['a-alone', 'chain']
+    assert steps['chain']['fixed_from'] == ['a-alone'] and steps['chain']['status'] == 'done'
+    assert steps['a-alone']['obs_data'] == os.path.join(library['arrays'], 'data', 'a_obs.json')
+    # each step's own manifest, a single calibration, links back to the workflow's
+    for step_id, step in steps.items():
+        own = read_study(step['manifest'])
+        assert own['workflow'] == {'manifest': os.path.join(out, 'chain_array_cuflynx_study.json'),
+                                   'step': step_id}
+        assert own['runs'][0]['dir'] == step['run']
+
+    # write_cuflynx_study: false writes no manifest, for the workflow or its steps
+    raw = _read_json(library['chain_array'])
+    raw['settings']['write_cuflynx_study'] = False
+    quiet = os.path.join(library['arrays'], 'quiet.json')
+    _write_json(quiet, raw)
+    run_calibration_workflow(quiet, output_dir=str(tmp_path / 'quiet'))
+    found = [f for _, _, files in os.walk(str(tmp_path / 'quiet')) for f in files
+             if f.endswith('_cuflynx_study.json')]
+    assert found == []

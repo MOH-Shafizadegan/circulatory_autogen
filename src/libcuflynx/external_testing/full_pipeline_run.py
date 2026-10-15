@@ -133,7 +133,7 @@ def build_full_pipeline_run(output_dir, resources_dir, generated_models_dir,
                             config=None, with_series=True):
     """Run every stage into ``output_dir`` and report what was produced.
 
-    Returns ``{'config', 'run_dir', 'artefacts', 'coverage'}``. ``run_dir`` is
+    Returns ``{'config', 'run_dir', 'artefacts', 'coverage', 'manifest'}``. ``run_dir`` is
     where CA actually wrote, which is not ``output_dir`` -- it names the
     directory after the method, prefix and obs file, and every reader has to find
     it the same way.
@@ -175,12 +175,17 @@ def build_full_pipeline_run(output_dir, resources_dir, generated_models_dir,
 
     from libcuflynx.utilities.paths import default_param_id_output_dir  # noqa: F401
 
+    from libcuflynx.utilities.cuflynx_study import manifest_path
+
     run_dir = _find_run_dir(output_dir)
     return {
         'config': config,
         'run_dir': run_dir,
         'artefacts': present_artefacts(run_dir),
         'coverage': result.coverage if result is not None else None,
+        # The study manifest every stage above recorded itself in; CUFLynx opens the study
+        # from this one file.
+        'manifest': manifest_path(config),
     }
 
 

@@ -141,7 +141,8 @@
         "external_modules_dir": {},
         "operation_funcs_external_path": {},
         "cost_funcs_external_path": {},
-        "modifier_funcs_external_path": {}
+        "modifier_funcs_external_path": {},
+        "write_cuflynx_study": {}
       }
     },
     "prior": {

@@ -623,7 +623,8 @@ def test_the_json_schemas_accept_parameterisations_and_obs_data_names(real_libra
 
     obs.validate({'obs_data_name': 'other', 'data_items': [], 'protocol_info': {}})
     obs.validate({'data_items': []})
-    obs.validate([{'data_item_name': 'x'}])
+    obs.validate([{'data_item_name': 'x', 'data_type': 'constant', 'unit': 'm',
+                   'operands': ['a/x'], 'value': 1.0, 'std': 0.1}])
     assert not obs.is_valid({'obs_data_name': 3, 'data_items': []})
     assert not obs.is_valid({'obs_data_name': '', 'data_items': []})
 

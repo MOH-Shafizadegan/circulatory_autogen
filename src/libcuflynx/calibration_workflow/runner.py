@@ -33,6 +33,7 @@ import warnings
 import numpy as np
 
 from libcuflynx.calibration_workflow import naming
+from libcuflynx.utilities import cuflynx_study
 from libcuflynx.calibration_workflow.distributions import (DISTRIBUTION_DIR,
                                                            StoredDistribution,
                                                            parameters_from_info)
@@ -375,6 +376,64 @@ class _Run:
 
     # -- the merged result -----------------------------------------------------------------
 
+    # -- the study manifest ------------------------------------------------------------------
+
+    def _writes_study(self):
+        return self.workflow.settings.get('write_cuflynx_study', True) is not False
+
+    def _study_inp(self, directory, name):
+        return {'param_id_output_dir': directory, 'study_name': name,
+                'write_cuflynx_study': self._writes_study()}
+
+    def study_manifest(self):
+        '''The workflow's own manifest: ``<output_dir>/<workflow_name>_cuflynx_study.json``.'''
+        return cuflynx_study.manifest_path(self._study_inp(self.output_dir, self.workflow.name))
+
+    def step_manifest(self, step_id):
+        '''The manifest a step's calibration writes, in its param_id output directory.'''
+        return cuflynx_study.manifest_path(
+            self._study_inp(os.path.join(self.step_dir(step_id), 'param_id'), step_id))
+
+    def record_study(self, order, failed=None, workflow_result=None):
+        '''Write the workflow's manifest, with every step's state so far, and link each step
+        that has run back to it. Rank 0; a failure is a warning, as for any manifest.'''
+        if self.rank != 0 or not self._writes_study():
+            return
+        result_path = os.path.join(self.output_dir, WORKFLOW_RESULT)
+        steps = []
+        for step in order:
+            rs = self.resolved.steps[step.id]
+            result = self.step_result(step.id)
+            done = bool(result) and result.get('status') == 'done'
+            steps.append({
+                'id': step.id, 'model': _model_files(step.model),
+                'obs_data': rs.obs_data_path, 'params_for_id': rs.params_for_id_path,
+                'place': rs.place, 'fixed_from': list(step.fixed_from),
+                'priors_from': [p.step for p in step.priors_from],
+                'status': 'failed' if step.id == failed else ('done' if done else 'not_run'),
+                'run': (result or {}).get('param_id_output_dir') if done else None,
+                'manifest': self.step_manifest(step.id) if done else None})
+        target = (workflow_result or {}).get('target_model') or {}
+        block = {'name': self.workflow.name,
+                 'file': os.path.join(self.output_dir, WORKFLOW_FILE_NAME),
+                 'source': self.workflow.path,
+                 'result': result_path if os.path.isfile(result_path) else None,
+                 'complete': all(s['status'] == 'done' for s in steps),
+                 'target': {'model': _model_files(self.workflow.target),
+                            'generated_model': target.get('model_path'),
+                            'calibrated_parameters':
+                                (workflow_result or {}).get('calibrated_parameters_file')},
+                 'steps': steps}
+        inp = self._study_inp(self.output_dir, self.workflow.name)
+        if target.get('model_path'):
+            inp['model_path'] = target['model_path']
+        manifest = cuflynx_study.update_study(inp, workflow=block)
+        for entry in steps:
+            if manifest and entry['manifest'] and os.path.isfile(entry['manifest']):
+                cuflynx_study.update_study(
+                    self._study_inp(os.path.dirname(entry['manifest']), entry['id']),
+                    workflow={'manifest': manifest, 'step': entry['id']})
+
     def merge(self, order, generate_target=True, write_calibrated=False):
         results = {s.id: self.step_result(s.id) for s in self.workflow.steps}
         merged = {}
@@ -444,6 +503,12 @@ class _Run:
                 target, workflow_result['merged_parameters'], self.workflow.name)
         _write_json(os.path.join(self.output_dir, WORKFLOW_RESULT), workflow_result)
         return workflow_result
+
+
+def _model_files(model):
+    '''A step's or target's model as the manifest records it: a module array's files, or a
+    library module's ``{module_type, version, parameterisation}``.'''
+    return model.as_dict()
 
 
 def write_calibrated_parameters(target, merged_parameters, workflow_name):
@@ -620,6 +685,7 @@ def run_calibration_workflow(source, *, output_dir=None, module_library_dirs=Non
         else:
             _write_json(snapshot, workflow.raw)
     run.on_root(start)
+    run.record_study(order)
     run.emit('workflow_started', order=[s.id for s in order], running=[s.id for s in to_run],
              output_dir=output_dir)
     for step in order:
@@ -631,8 +697,11 @@ def run_calibration_workflow(source, *, output_dir=None, module_library_dirs=Non
         except Exception as exc:
             run.emit('step_failed', step=step.id, index=index, total=len(to_run),
                      error=str(exc))
+            run.record_study(order, failed=step.id)
             raise
+        run.record_study(order)
     result = run.on_root(lambda: run.merge(order, write_calibrated=write_calibrated))
+    run.record_study(order, workflow_result=result)
     run.emit('workflow_finished', complete=result['complete'], output_dir=output_dir)
     return result
 
