@@ -290,6 +290,14 @@ def parse_workflow(raw, path=None, module_library_dirs=None):
                         module_library_dirs=library_dirs,
                         description=raw.get('description', '') or '', path=path, raw=raw)
     check_workflow(workflow)
+    # The schema refuses what the checks above do not look for; they come first for their
+    # more specific messages.
+    from libcuflynx.schemas import CALIBRATION_WORKFLOW_SCHEMA
+    from libcuflynx.schemas.validation import SchemaValidationError, validate
+    try:
+        validate(CALIBRATION_WORKFLOW_SCHEMA, raw, source=where, what='calibration workflow')
+    except SchemaValidationError as exc:
+        raise WorkflowError(str(exc)) from exc
     return workflow
 
 
