@@ -201,6 +201,19 @@ def stability_hint(solver_info, effective_tolerances):
             f"decreasing these (solver_info MaximumStep / atol / rtol) may help stability.")
 
 
+def _trace_label_candidates():
+    """Binding labels for traced inputs, in the order they are handed out."""
+    yield "pace"
+    n = 1
+    while True:
+        yield f"pace_{n}"
+        n += 1
+
+
+def _is_trace_label(label):
+    return label is not None and re.fullmatch(r"pace(_\d+)?", label) is not None
+
+
 class SimulationHelper(ExperimentTimeMixin):
     """
     Myokit-based solver wrapper matching the OpenCOR SimulationHelper interface.
@@ -218,7 +231,10 @@ class SimulationHelper(ExperimentTimeMixin):
         self.sim_time = sim_time
         self.pre_time = pre_time
         self.protocol_info = None
-        self.paced_parameter_qname = None
+        # Each traced input's Myokit binding label, {qname: label}, and the protocol last set
+        # on each label (re-applied when the Simulation is rebuilt).
+        self.trace_labels = {}
+        self._trace_protocols = {}
         self.solver_info = solver_info or {}
 
         # Forward sensitivity analysis (FSA / CVODES) config. Populated by enable_fsa();
@@ -253,7 +269,7 @@ class SimulationHelper(ExperimentTimeMixin):
 
     def set_protocol_info(self, protocol_info):
         """
-        Store protocol metadata and (if needed) recreate Simulation with pace binding.
+        Store protocol metadata and bind every traced input to its own label.
         """
         # Any protocol_shapes become protocol_traces here, so the trace lookup
         # further down sees one representation regardless of which the user
@@ -263,42 +279,35 @@ class SimulationHelper(ExperimentTimeMixin):
         materialise_shapes(protocol_info)
         validate_trace_references(protocol_info)
         self.protocol_info = protocol_info
-        paced_param_name = self._find_paced_parameter_name(protocol_info)
-        if paced_param_name is None:
+        qnames = []
+        for param_name in self._traced_parameter_names(protocol_info):
+            kind, qname = self._resolve_name(param_name)
+            if kind == "state":
+                raise ValueError(
+                    f"Pacing parameter {param_name} must resolve to a non-state variable"
+                )
+            elif kind in [None, "None"]:
+                raise ValueError(
+                    f"Pacing parameter {param_name} must resolve to a valid variable",
+                    f"valid variables are: {self.all_qnames}"
+                )
+            elif kind != "var":
+                raise ValueError(
+                    f"Pacing parameter {param_name} must resolve to a valid kind, but got {kind}",
+                    f"valid kinds are: var, constant"
+                )
+            if qname not in qnames:
+                qnames.append(qname)
+        if not qnames:
             return
 
-        kind, qname = self._resolve_name(paced_param_name)
-        if kind == "state":
-            raise ValueError(
-                f"Pacing parameter {paced_param_name} must resolve to a non-state variable"
-            )
-        elif kind in [None, "None"]:
-            raise ValueError(
-                f"Pacing parameter {paced_param_name} must resolve to a valid variable",
-                f"valid variables are: {self.all_qnames}"
-            )
-        elif kind == "var" or kind == "constant":
-            pass
-        else:
-            raise ValueError(
-                f"Pacing parameter {paced_param_name} must resolve to a valid kind, but got {kind}",
-                f"valid kinds are: var, constant"
-            )
-
-        pace_var = self.model.binding("pace")
-        if pace_var is not None and pace_var.qname() != qname:
-            pace_var.set_binding(None)
-
-        target_var = self.qname_to_var[qname]
-        # Myokit forbids set_binding("pace") when this variable already has the pace
-        # binding (common for CellML imports that map a driving variable to pace).
-        if target_var.binding() != "pace":
-            target_var.set_binding("pace")
-        self.paced_parameter_qname = qname
-
-        # Myokit Simulation clones the model at construction time, so recreate
-        # to ensure the new binding is present in the simulation model.
-        self._recreate_simulation()
+        # Labels left on variables this protocol does not trace would pin them to 0.
+        for var in self.all_vars:
+            if var.qname() not in qnames and _is_trace_label(var.binding()):
+                self._trace_protocols.pop(var.binding(), None)
+                var.set_binding(None)
+                self.trace_labels.pop(var.qname(), None)
+        self._bind_trace_inputs(qnames)
 
     def _load_model(self, path):
         """
@@ -458,6 +467,14 @@ class SimulationHelper(ExperimentTimeMixin):
         self.tSim = np.linspace(start_time + pre_time, self.stop_time, self.n_steps + 1)
 
     def _recreate_simulation(self):
+        # A Simulation accepts protocols only for the labels it was built with: 'pace', plus
+        # one per traced input, each with the protocol last set on it.
+        protocols = {"pace": None}
+        for label in self.trace_labels.values():
+            protocols[label] = None
+        for label, protocol in self._trace_protocols.items():
+            if label in protocols:
+                protocols[label] = protocol
         if self._fsa_enabled:
             # CVODES forward sensitivity: sensitivities=(dependents, independents) makes
             # run() return (log, sensitivities), where sensitivities[time][dep][indep] is
@@ -465,11 +482,11 @@ class SimulationHelper(ExperimentTimeMixin):
             # that appear in a state's initial-value expression raise NotImplementedError in
             # Myokit and are handled by finite differences instead (see enable_fsa).
             self.simulation = myokit.Simulation(
-                self.model,
+                self.model, protocols,
                 sensitivities=(self._fsa_dependent_specs, self._fsa_independent_specs),
             )
         else:
-            self.simulation = myokit.Simulation(self.model)
+            self.simulation = myokit.Simulation(self.model, protocols)
         # Store baseline initial state used before any pre-simulation.
         self.original_state = self._get_simulation_model().initial_values(as_floats=True)
 
@@ -492,23 +509,23 @@ class SimulationHelper(ExperimentTimeMixin):
             return self.simulation.model()
         return self.simulation._model
 
-    def _find_paced_parameter_name(self, protocol_info):
+    @staticmethod
+    def _traced_parameter_names(protocol_info):
+        """The params_to_change keys given a trace name in any sub-experiment, in key order."""
         if not isinstance(protocol_info, dict):
-            return None
+            return []
         params_to_change = protocol_info.get("params_to_change", {})
         if not isinstance(params_to_change, dict):
-            return None
-
+            return []
+        names = []
         for param_name, exp_values in params_to_change.items():
             if not isinstance(exp_values, list):
                 continue
-            for sub_values in exp_values:
-                if not isinstance(sub_values, list):
-                    continue
-                for val in sub_values:
-                    if isinstance(val, str):
-                        return param_name
-        return None
+            if any(isinstance(val, str)
+                   for sub_values in exp_values if isinstance(sub_values, list)
+                   for val in sub_values):
+                names.append(param_name)
+        return names
 
     def _build_variable_maps(self):
         # Qualified names for variables
@@ -1059,12 +1076,12 @@ class SimulationHelper(ExperimentTimeMixin):
                     "destroy sub-experiment continuity. Either call with change_states=True (the "
                     "default) or remove the state from this call.")
 
-        # Phase 1: Pre-scan for any string trace value and rebind pace if the target
-        # variable differs from the currently bound one.  This ensures set_constant
-        # calls made later in the same invocation are not lost to a mid-loop recreate.
-        new_paced_qname = self._find_required_paced_qname(param_names, param_vals)
-        if new_paced_qname is not None and new_paced_qname != self.paced_parameter_qname:
-            self._rebind_pace_to(new_paced_qname)
+        # Phase 1: bind every traced input that has no label yet, in one Simulation rebuild,
+        # so set_constant calls made later in the same invocation are not lost to it.
+        new_traced = [q for q in self._find_required_traced_qnames(param_names, param_vals)
+                      if q not in self.trace_labels]
+        if new_traced:
+            self._bind_trace_inputs(new_traced)
 
         # Phase 2: Apply all parameter values, recording which constants changed so only the
         # states they initialise are refreshed afterwards.
@@ -1108,14 +1125,8 @@ class SimulationHelper(ExperimentTimeMixin):
                             raise ValueError(
                                 f"Protocol trace '{trace_name}' is missing 'values' key."
                             )
-                        # After Phase 1 rebind, paced_parameter_qname must match.
-                        if qname != self.paced_parameter_qname:
-                            raise RuntimeError(
-                                f"Internal error: pace rebind should have set paced_parameter_qname "
-                                f"to {qname}, but it is {self.paced_parameter_qname}."
-                            )
                         protocol = myokit.TimeSeriesProtocol(trace['t'], trace['values'])
-                        self.simulation.set_protocol(protocol, label='pace')
+                        self._set_trace_protocol(qname, protocol)
 
                     elif not isinstance(val, (float, np.float64, int)):
                         raise ValueError(
@@ -1123,21 +1134,22 @@ class SimulationHelper(ExperimentTimeMixin):
                             "must be float, np.float64, or int."
                         )
                     else:
-                        if self.paced_parameter_qname is not None and qname == self.paced_parameter_qname:
-                            # Variable is bound to "pace": use a flat TimeSeriesProtocol so the
-                            # value is applied correctly rather than calling set_constant.
+                        if qname in self.trace_labels:
+                            # A traced input is bound to its label: use a flat
+                            # TimeSeriesProtocol so the value is applied rather than
+                            # calling set_constant.
                             pace_val = float(val)
                             duration = float(max(self.sim_time if self.sim_time is not None else 1.0, self.dt))
                             protocol = myokit.TimeSeriesProtocol(
                                 [0.0, duration],
                                 [pace_val, pace_val],
                             )
-                            self.simulation.set_protocol(protocol, label='pace')
+                            self._set_trace_protocol(qname, protocol)
                         else:
                             self.simulation.set_constant(qname, float(val))
                             changed_var_qnames.add(qname)
                             # Keep self.model in sync with every set_constant call.
-                            # _rebind_pace_to calls _recreate_simulation(), which clones
+                            # _bind_trace_inputs calls _recreate_simulation(), which clones
                             # self.model fresh (Myokit docs: "changes to the original model
                             # object will not affect the simulation"). Without this, any
                             # set_constant calls made *before* the rebind (e.g. ID params
@@ -1160,18 +1172,12 @@ class SimulationHelper(ExperimentTimeMixin):
         self.default_states = list(
             self._get_simulation_model().initial_values(as_floats=True))
 
-    def _find_required_paced_qname(self, param_names, param_vals):
-        """
-        Scan param_names/param_vals for the first string (trace-key) value and return
-        the resolved Myokit qname of that parameter, or None if none found.
-
-        Only one paced variable per set_param_vals call is supported; if multiple
-        string values are present for *different* variables, a ValueError is raised.
-        """
-        found_qname = None
+    def _find_required_traced_qnames(self, param_names, param_vals):
+        """The resolved qnames of the parameters given a trace name in this call, in order."""
+        found = []
         for idx, name_or_list in enumerate(param_names):
             for name, val in pair_names_with_values(name_or_list, param_vals[idx],
-                                                   'paced-variable scan'):
+                                                   'traced-input scan'):
                 if isinstance(val, str):
                     kind, qname = self._resolve_name(name)
                     if kind != "var":
@@ -1179,50 +1185,45 @@ class SimulationHelper(ExperimentTimeMixin):
                             f"Trace name '{val}' was given for '{name}', but it does not "
                             "resolve to a non-state variable."
                         )
-                    if found_qname is not None and qname != found_qname:
-                        raise ValueError(
-                            f"Multiple different parameters have string trace values in the "
-                            f"same set_param_vals call ({found_qname} and {qname}).  Myokit "
-                            "supports only one paced variable per simulation segment."
-                        )
-                    found_qname = qname
-        return found_qname
+                    if qname not in found:
+                        found.append(qname)
+        return found
 
-    def _rebind_pace_to(self, qname):
-        """
-        Dynamically rebind Myokit's 'pace' label to *qname*, preserving the current
-        simulation state and time so that multi-experiment protocols with different
-        paced variables work correctly.
+    def _bind_trace_inputs(self, qnames):
+        """Bind each of *qnames* to its own Myokit label, in one Simulation rebuild.
 
-        Steps:
-          1. Save current simulation state and time.
-          2. Unbind the previous 'pace' variable (if any) in the template model.
-          3. Bind the new variable to 'pace' in the template model.
-          4. Recreate the Myokit Simulation (which clones the model with the new binding).
-          5. Restore the saved state and time.
+        A variable that already carries a binding keeps it, so an imported ``bind pace``
+        stays ``pace``; the others take the first free label of ``pace``, ``pace_1``, ....
+        The simulation's state and time are kept across the rebuild.
         """
+        for qname in qnames:
+            if qname not in self.qname_to_var:
+                raise ValueError(
+                    f"Cannot bind a trace to '{qname}': variable not found in model."
+                )
+        used = {v.binding() for v in self.all_vars if v.binding() is not None}
+        for qname in qnames:
+            var = self.qname_to_var[qname]
+            label = var.binding()
+            if label is None:
+                label = next(lbl for lbl in _trace_label_candidates() if lbl not in used)
+                var.set_binding(label)
+                used.add(label)
+            self.trace_labels[qname] = label
+
         current_state = self.simulation.state()
         current_time = self.simulation.time()
-
-        # Unbind old pace variable from the template model.
-        old_pace_var = self.model.binding("pace")
-        if old_pace_var is not None:
-            old_pace_var.set_binding(None)
-
-        # Bind new variable.
-        if qname not in self.qname_to_var:
-            raise ValueError(
-                f"Cannot bind pace to '{qname}': variable not found in model."
-            )
-        self.qname_to_var[qname].set_binding("pace")
-        self.paced_parameter_qname = qname
-
-        # Recreate Simulation with updated binding (clones the modified model).
+        # Myokit Simulation clones the model at construction time, so recreate it to
+        # pick up the new bindings.
         self._recreate_simulation()
-
-        # Restore pre-rebind state and time.
         self.simulation.set_state(current_state)
         self.simulation.set_time(current_time)
+
+    def _set_trace_protocol(self, qname, protocol):
+        """Drive traced input *qname* with *protocol*, through its own label."""
+        label = self.trace_labels[qname]
+        self._trace_protocols[label] = protocol
+        self.simulation.set_protocol(protocol, label=label)
 
     def modify_params_and_run_and_get_results(self, param_names, mod_factors, obs_names, absolute=False):
         if absolute:

@@ -7,6 +7,7 @@ produce the same waveform Myokit would, or the two representations agree only by
 coincidence.
 """
 
+import numpy as np
 import pytest
 from bisect import bisect_right as _bisect
 
@@ -525,9 +526,8 @@ def test_a_trace_and_a_shape_can_drive_different_variables():
 def test_a_shape_and_a_trace_may_drive_the_same_variable_in_different_subexperiments():
     """Switching which waveform drives one variable between sub-experiments is allowed.
 
-    Only *concurrent* pacing of two different variables is limited (see the Myokit test
-    below); driving one variable from a shape in one sub-experiment and a hand-written trace
-    in the next is a single paced variable at any moment.
+    Driving one variable from a shape in one sub-experiment and a hand-written trace in the
+    next is allowed, as is driving several variables at once (see the Myokit tests below).
     """
     info = {
         "pre_times": [0.0],
@@ -541,30 +541,73 @@ def test_a_shape_and_a_trace_may_drive_the_same_variable_in_different_subexperim
     validate_trace_references(out)
 
 
+# dx/dt = a, dy/dt = b (issue #559)
+_TWO_INPUTS_CELLML = """<?xml version="1.0" encoding="UTF-8"?>
+<model xmlns="http://www.cellml.org/cellml/2.0#" xmlns:cellml="http://www.cellml.org/cellml/2.0#" name="two_inputs">
+  <component name="main">
+    <variable name="t" units="second"/>
+    <variable name="a" units="dimensionless" initial_value="0"/>
+    <variable name="b" units="dimensionless" initial_value="0"/>
+    <variable name="x" units="dimensionless" initial_value="0"/>
+    <variable name="y" units="dimensionless" initial_value="0"/>
+    <math xmlns="http://www.w3.org/1998/Math/MathML">
+      <apply><eq/><apply><diff/><bvar><ci>t</ci></bvar><ci>x</ci></apply>
+        <apply><divide/><ci>a</ci><cn cellml:units="second">1</cn></apply></apply>
+      <apply><eq/><apply><diff/><bvar><ci>t</ci></bvar><ci>y</ci></apply>
+        <apply><divide/><ci>b</ci><cn cellml:units="second">1</cn></apply></apply>
+    </math>
+  </component>
+</model>"""
+
+_TWO_TRACES = {"ta": {"t": [0, 0.5, 1.0], "values": [1, 1, 2]},
+               "tb": {"t": [0, 0.5, 1.0], "values": [3, 3, 4]}}
+
+
+def _two_input_helper(tmp_path):
+    from libcuflynx.solver_wrappers.myokit_helper import SimulationHelper
+
+    path = tmp_path / "two_inputs.cellml"
+    path.write_text(_TWO_INPUTS_CELLML)
+    return SimulationHelper(str(path), dt=0.1, sim_time=1.0,
+                            solver_info={"MaximumStep": 0.01}, pre_time=0.0)
+
+
+def _run_two_traced_inputs(helper):
+    from libcuflynx.protocol_runners.protocol_executor import ProtocolExecutor
+
+    protocol_info = {"pre_times": [0.0], "sim_times": [[1.0]],
+                     "params_to_change": {"main/a": [["ta"]], "main/b": [["tb"]]},
+                     "protocol_traces": _TWO_TRACES}
+    helper.set_protocol_info(protocol_info)
+    ok, by_sub, _, _ = ProtocolExecutor(helper).run_protocol(
+        protocol_info, result_variables=["main/x", "main/y"])
+    assert ok
+    x, y = (np.ravel(np.asarray(r, dtype=float)) for r in by_sub[(0, 0)])
+    return x, y
+
+
 @pytest.mark.integration
 @pytest.mark.solver
-def test_myokit_refuses_two_paced_variables_in_one_subexperiment(
-        generated_cellml_model_factory):
-    """Myokit binds a single 'pace' label per simulation segment, so two variables cannot be
-    driven from time series at the same instant. Driving different variables in *different*
-    sub-experiments is fine; this is only about one sub-experiment."""
-    from libcuflynx.solver_wrappers import get_simulation_helper
+def test_myokit_drives_two_traced_inputs_in_one_subexperiment(tmp_path):
+    """Each traced input follows its own trace, through its own binding label (#559)."""
+    helper = _two_input_helper(tmp_path)
+    x, y = _run_two_traced_inputs(helper)
+    assert x[-1] == pytest.approx(1.25, abs=1e-3)
+    assert y[-1] == pytest.approx(3.25, abs=1e-3)
+    assert helper.trace_labels == {"main.a": "pace", "main.b": "pace_1"}
 
-    model_path = generated_cellml_model_factory(
-        "Lotka_Volterra", "Lotka_Volterra_parameters.csv", solver="CVODE_myokit")
-    h = get_simulation_helper(
-        model_path=model_path, model_type="cellml", solver="CVODE_myokit",
-        dt=0.01, sim_time=1.0, pre_time=0.0,
-        solver_info={"MaximumStep": 0.01, "MaximumNumberOfSteps": 5000})
-    h.set_protocol_info({
-        "pre_times": [0.0], "sim_times": [[1.0]],
-        "params_to_change": {"Lotka_Volterra/alpha": [["a"]],
-                             "Lotka_Volterra/beta": [["b"]]},
-        "protocol_traces": {"a": {"t": [0.0, 1.0], "values": [1.0, 1.0]},
-                            "b": {"t": [0.0, 1.0], "values": [1.0, 1.0]}},
-    })
-    with pytest.raises(ValueError, match="only one paced variable"):
-        h.set_param_vals([["Lotka_Volterra/alpha"], ["Lotka_Volterra/beta"]], [["a"], ["b"]])
+
+@pytest.mark.integration
+@pytest.mark.solver
+def test_imported_pace_binding_keeps_its_label(tmp_path):
+    """A variable that arrives bound to ``pace`` (as a .mmt import's stimulus does) keeps
+    that label; the other traced input takes the next free one."""
+    helper = _two_input_helper(tmp_path)
+    helper.qname_to_var["main.b"].set_binding("pace")
+    x, y = _run_two_traced_inputs(helper)
+    assert helper.trace_labels == {"main.a": "pace_1", "main.b": "pace"}
+    assert x[-1] == pytest.approx(1.25, abs=1e-3)
+    assert y[-1] == pytest.approx(3.25, abs=1e-3)
 
 
 @pytest.mark.unit
