@@ -97,3 +97,18 @@ def test_a_module_config_the_schema_refuses_is_refused_on_load(entry, message):
     with pytest.raises(SchemaValidationError, match=message):
         normalise_module_config([entry], source='vessel_modules_config.json')
 
+
+
+@pytest.mark.unit
+def test_a_document_that_passed_is_not_checked_again_but_an_edited_one_is(monkeypatch):
+    from libcuflynx.schemas import validation
+    doc = {'data_items': [_item(data_item_name='cached')]}
+    validate(OBS_DATA_SCHEMA, doc)
+    calls = []
+    monkeypatch.setattr(validation, 'problems',
+                        lambda *args: calls.append(args) or [])
+    validate(OBS_DATA_SCHEMA, doc)              # the same contents: remembered
+    assert calls == []
+    doc['data_items'][0]['value'] = 2.0         # edited: checked again
+    validate(OBS_DATA_SCHEMA, doc)
+    assert len(calls) == 1

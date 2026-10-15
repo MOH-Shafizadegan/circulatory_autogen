@@ -146,8 +146,10 @@ def test_a_remainder_entry_parses_and_records_inputs():
 
 @pytest.mark.unit
 def test_missing_declared_inputs_are_refused():
+    doc = _doc()
+    del doc['params'][0]['inputs']
     with pytest.raises(ValueError, match="requires input"):
-        _info(_doc(inputs=None))
+        _info(doc)
 
 
 @pytest.mark.unit
@@ -174,7 +176,7 @@ def test_inputs_without_modifies_are_refused():
     doc = {'version': 1, 'params': [
         {'name': 'p', 'targets': ['a/x'], 'inputs': {'ref': 'b/y'},
          'min': 0.0, 'max': 1.0}]}
-    with pytest.raises(ValueError, match='sets "inputs" but has no "modifies"'):
+    with pytest.raises(ValueError, match=r'(?s)not allowed.*modifier entries only'):
         _info(doc)
 
 
@@ -324,7 +326,7 @@ def test_the_operation_key_is_accepted_as_a_deprecated_alias():
 def test_setting_both_modifier_and_operation_is_refused():
     doc = _doc()
     doc['params'][0]['operation'] = 'scale'
-    with pytest.raises(ValueError, match='sets both "modifier" and "operation"'):
+    with pytest.raises(ValueError, match=r'(?s)not allowed.*deprecated name of modifier'):
         _info(doc)
 
 

@@ -5,6 +5,30 @@ next release; add to that section as you land a change.
 
 ## Unreleased
 
+### Changed — input files are checked against their JSON Schemas on read
+
+obs_data, params_for_id, module config, module array and calibration workflow files are
+validated against the schemas shipped in `libcuflynx/schemas/` whenever libcuflynx reads them,
+so what an editor, PhLynx or CUFLynx validates is what libcuflynx accepts. `jsonschema` is a
+core dependency.
+
+- An error lists every problem, each with where it is (an item by its name) and what the field
+  is for: `at data_items[2] ('systolic').value: [1.0, 2.0] is not of type 'number' (A
+  constant's value and std are single numbers.)`.
+- obs_data and params_for_id: the schema replaces the readers' own key and type checks, which
+  are gone. Errors about unknown keys, types and missing settings read differently. Unknown
+  `prior_params` keys, which were ignored, are refused, and prior names are still read in any
+  case.
+- Module configs, module arrays and workflows: their readers' checks run first, then the schema.
+  The schema refuses what the readers did not check, for example `variables_and_units` access
+  other than `access`/`no_access`, a variable kind other than `constant`, `global_constant`,
+  `boundary_condition` or `variable`, and a port with no `variables`.
+- Enums are generated from libcuflynx's registries: `python -m libcuflynx.schemas.registries
+  --write`. The variable kind is now an enum, and `module_config_user/BVC_Kidney_module_config.json`
+  had two `"variable "` (trailing space) fixed.
+- PhLynx main's CA-format files and value lists are tested against the readers and schemas
+  (`tests/test_phlynx_consistency.py`, `PHLYNX_DIR`; CI checks PhLynx out).
+
 ### Added — packing a calibration workflow
 
 `pack_workflow(workflow, dest_dir)` and `cuflynx-calibration-workflow <workflow> --pack DIR`

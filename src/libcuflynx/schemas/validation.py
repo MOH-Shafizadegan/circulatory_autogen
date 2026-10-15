@@ -13,11 +13,26 @@ what the field is for::
 """
 
 import functools
+import hashlib
+import json
+from collections import OrderedDict
 
 from libcuflynx.schemas import load_schema
 
 #: The most problems a message lists; the rest are counted.
 MAX_LISTED = 10
+#: How many documents that passed are remembered, so a file read again (a module library is
+#: read once per generated model) is not checked again.
+VALID_CACHE_SIZE = 4096
+_valid = OrderedDict()
+
+
+def _digest(schema_name, document):
+    try:
+        text = json.dumps(document, sort_keys=True, default=repr)
+    except (TypeError, ValueError):
+        return None
+    return schema_name, hashlib.sha1(text.encode('utf-8')).hexdigest()
 
 
 class SchemaValidationError(ValueError):
@@ -204,8 +219,16 @@ def validate(schema_name, document, source='', what='file'):
     """Raise :class:`SchemaValidationError` if schema ``schema_name`` (e.g.
     ``OBS_DATA_SCHEMA``) refuses ``document``. ``source`` names the file in the message and
     ``what`` the kind of file."""
+    key = _digest(schema_name, document)
+    if key is not None and key in _valid:
+        _valid.move_to_end(key)
+        return
     found = problems(schema_name, document)
     if not found:
+        if key is not None:
+            _valid[key] = True
+            if len(_valid) > VALID_CACHE_SIZE:
+                _valid.popitem(last=False)
         return
     head = f'{source}: ' if source else ''
     lines = [f'{head}{len(found)} problem{"s" if len(found) != 1 else ""} with the {what}']

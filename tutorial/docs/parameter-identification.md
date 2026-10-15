@@ -61,8 +61,10 @@ row becoming one entry of `"params"` with `vessel_name "a b"` and `param_name "C
 takes a `"defaults"` block and modifier entries (`"modifies"`, `"modifier"`, `"inputs"`). Every
 input file has a JSON Schema shipped in `libcuflynx/schemas/` (`params_for_id.schema.json`,
 `obs_data.schema.json`, `module_config.schema.json`, `module_array.schema.json`; load one with
-`libcuflynx.schemas.load_schema`), describing each key and its default, for editors and other
-tools. libcuflynx checks the same rules itself when it reads the files.
+`libcuflynx.schemas.load_schema`), describing each key and its default. libcuflynx checks every
+file against its schema when it reads it, so editors and other tools validating against the
+schema agree with libcuflynx. An error lists every problem, each with where it is (an item by
+its name, e.g. `data_items[2] ('systolic').value`) and what the field is for.
 
 ## Creating param id observables file
 
