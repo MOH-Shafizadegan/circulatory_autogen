@@ -23,7 +23,7 @@ import tempfile
 from libcuflynx.reporting import flowchart
 from libcuflynx.reporting.bibliography import cite, cited_keys, module_bib_files, read_bib, write_bib
 from libcuflynx.reporting.latex_names import escape
-from libcuflynx.utilities.parameter_names import PARAMETER_COMPONENTS
+from libcuflynx.utilities.parameter_names import LEVEL_SEPARATOR, PARAMETER_COMPONENTS
 from libcuflynx.reporting.model_latex import (format_number, format_units, module_sections,
                                               parameter_sources_section)
 from libcuflynx.reporting.variable_mapping import (default_mapping_path, load_model,
@@ -620,7 +620,7 @@ def target_module_info(resolved):
                           'parameterisation': sub.get('parameterisation')}
             nested = supermodules.get((sub['module_type'], sub['module_subtype']))
             if nested is not None:
-                walk(nested, path + '_')
+                walk(nested, path + LEVEL_SEPARATOR)
 
     target = resolved.target
     if target.kind == 'array':
@@ -630,9 +630,9 @@ def target_module_info(resolved):
                                     'parameterisation': record.get('parameterisation')}
             nested = supermodules.get((record['module_type'], record['module_subtype']))
             if nested is not None:
-                walk(nested, record['name'] + '_')
+                walk(nested, record['name'] + LEVEL_SEPARATOR)
     elif target.entry.get('submodules'):
-        walk(target.entry, STEP_VESSEL + '_')
+        walk(target.entry, STEP_VESSEL + LEVEL_SEPARATOR)
     else:
         t = resolved.workflow.target
         info[STEP_VESSEL] = {'module_type': t.module_type, 'version': t.version,

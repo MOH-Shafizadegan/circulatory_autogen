@@ -30,7 +30,7 @@ from libcuflynx.utilities.config_schemas import (is_supermodule_entry, load_comp
 from libcuflynx.utilities.parameterisations import (available_parameterisations,
                                                     parameterisation_parameters_path)
 from libcuflynx.utilities.module_library import ModuleSources
-from libcuflynx.utilities.parameter_names import SEPARATOR
+from libcuflynx.utilities.parameter_names import SEPARATOR, flat_name
 from libcuflynx.utilities.supermodules import submodule_path_parts
 
 EPILOG = (
@@ -113,8 +113,9 @@ def host_places(module_array, config_files):
             written[record['name']] = record['name']
             continue
         for parts in submodule_path_parts(entry, supermodules):
-            written['_'.join((record['name'],) + parts)] = SEPARATOR.join(
-                (record['name'],) + parts)
+            for joined in (flat_name((record['name'],) + parts),
+                           '_'.join((record['name'],) + parts)):  # current and older joins
+                written.setdefault(joined, SEPARATOR.join((record['name'],) + parts))
     records, _ = load_expanded_vessel_records(module_array, supermodules, components)
     variables = {}
     for record in records:
@@ -136,9 +137,9 @@ def supermodule_places(entry, config_files):
             leaf = next(s for s in container['submodules'] if s['name'] == part)
             container = supermodules.get((leaf['module_type'], leaf['module_subtype']), {})
         component = components.get((leaf['module_type'], leaf['module_subtype']))
-        joined = '_'.join(parts)
-        variables[joined] = _variables(component) if component else {}
-        places[joined] = SEPARATOR.join(parts)
+        for joined in (flat_name(parts), '_'.join(parts)):  # current and older joins
+            variables.setdefault(joined, _variables(component) if component else {})
+            places.setdefault(joined, SEPARATOR.join(parts))
     return places, (lambda name: variables.get(name, {}))
 
 

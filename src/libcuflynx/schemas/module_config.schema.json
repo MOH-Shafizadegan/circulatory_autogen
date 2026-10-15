@@ -153,6 +153,11 @@
             ]
           }
         ]
+      },
+      "patternProperties": {
+        "^phlynx_": {
+          "description": "PhLynx's own metadata (layout, interface labels); read and ignored"
+        }
       }
     },
     "phlynxComponent": {
@@ -261,6 +266,11 @@
             ]
           }
         ]
+      },
+      "patternProperties": {
+        "^phlynx_": {
+          "description": "PhLynx's own metadata (layout, interface labels); read and ignored"
+        }
       }
     },
     "supermodule": {
@@ -309,6 +319,34 @@
             ]
           },
           "description": "the older name of \"default_parameterisation\" (still read; give one of the two, or both with the same value)"
+        },
+        "interface": {
+          "type": "array",
+          "description": "optional, ordered: a host that lists the instance with no per_submodule_* entry for it is linked to the first entry whose port_type is one of its own ports facing the instance (libcuflynx/utilities/supermodules.py)",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "submodule",
+              "port_type"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "unique within the interface"
+              },
+              "submodule": {
+                "type": "string",
+                "description": "a submodule, or a path to a nested one (soma/membrane)"
+              },
+              "port_type": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            }
+          }
         }
       },
       "oneOf": [
@@ -371,6 +409,11 @@
             ]
           }
         ]
+      },
+      "patternProperties": {
+        "^phlynx_": {
+          "description": "PhLynx's own metadata (layout, interface labels); read and ignored"
+        }
       }
     },
     "entry": {
@@ -392,16 +435,18 @@
       "description": "an instance name"
     },
     "nameList": {
-      "description": "instance names: a list, or one space-separated string (null: none)",
+      "description": "sibling submodule names: a list, or one space-separated string (null: none); no paths",
       "oneOf": [
         {
           "type": "array",
           "items": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^[^/]+$"
           }
         },
         {
-          "type": "string"
+          "type": "string",
+          "pattern": "^[^/]*$"
         },
         {
           "type": "null"
@@ -409,7 +454,7 @@
       ]
     },
     "perSubmodule": {
-      "description": "{submodule: [host, ...]}, or a list of one-key objects A submodule may appear once (the loader checks this; JSON Schema cannot).",
+      "description": "{submodule: [host, ...]}, or a list of one-key objects. A submodule may appear once (the loader checks this; JSON Schema cannot). A key may be a path into a nested supermodule instance (\"soma/membrane\").",
       "oneOf": [
         {
           "type": "object",
@@ -440,7 +485,7 @@
       ],
       "properties": {
         "name": {
-          "$ref": "#/$defs/name"
+          "$ref": "#/$defs/instanceName"
         },
         "module_type": {
           "$ref": "#/$defs/name",
@@ -507,7 +552,12 @@
           },
           "description": "\"instance\" is not a record key: a record names its parameter set with \"parameterisation\"."
         }
-      ]
+      ],
+      "patternProperties": {
+        "^phlynx_": {
+          "description": "PhLynx's own metadata (layout, interface labels); read and ignored"
+        }
+      }
     },
     "libcuflynxRecord": {
       "title": "instance record, older libcuflynx keys",
@@ -519,7 +569,7 @@
       ],
       "properties": {
         "name": {
-          "$ref": "#/$defs/name"
+          "$ref": "#/$defs/instanceName"
         },
         "vessel_type": {
           "$ref": "#/$defs/name"
@@ -584,7 +634,12 @@
           },
           "description": "\"instance\" is not a record key: a record names its parameter set with \"parameterisation\"."
         }
-      ]
+      ],
+      "patternProperties": {
+        "^phlynx_": {
+          "description": "PhLynx's own metadata (layout, interface labels); read and ignored"
+        }
+      }
     },
     "record": {
       "oneOf": [
@@ -595,6 +650,11 @@
           "$ref": "#/$defs/libcuflynxRecord"
         }
       ]
+    },
+    "instanceName": {
+      "type": "string",
+      "pattern": "^(?!_)(?!.*__)(?!.*_$)[^\\s/]+$",
+      "description": "an instance name: no whitespace or \"/\", no \"__\", and no \"_\" at either end (nested levels are joined with \"__\": heart/lv is heart__lv)"
     }
   }
 }

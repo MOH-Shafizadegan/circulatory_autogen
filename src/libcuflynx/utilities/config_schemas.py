@@ -113,6 +113,7 @@ import sys
 import pandas as pd
 
 from libcuflynx.generators.multi_port import normalise_port_multi_port
+from libcuflynx.utilities.parameter_names import check_instance_name
 from libcuflynx.utilities.parameterisations import (
     PARAMETER_COLUMNS, check_parameterisation_name, merge_renamed_key, reject_instance_key,
     PARAMETERISATION_KEY, DEFAULT_PARAMETERISATION_KEY, DEFAULT_INSTANCE_KEY)
@@ -150,6 +151,12 @@ MODULE_ARRAY_COLUMN_ORDER = ('name', 'module_type', 'module_subtype', 'inp_insta
 # a record's keys whose values are lists of instance names
 _LIST_COLUMNS = ('inp_instances', 'out_instances')
 PER_SUBMODULE_KEYS = ('per_submodule_inputs', 'per_submodule_outputs')
+# keys PhLynx writes for itself (layout, interface metadata): read and dropped
+PHLYNX_ONLY_KEY_PREFIX = 'phlynx_'
+
+
+def _without_phlynx_keys(obj):
+    return {k: v for k, v in obj.items() if not str(k).startswith(PHLYNX_ONLY_KEY_PREFIX)}
 
 # PARAMETER_COLUMNS (imported above) are the columns a parameters CSV -- a module
 # parameterisation's, or a supermodule's default_parameters -- must have
@@ -182,6 +189,7 @@ def normalise_supermodule_entry(entry, source=None):
     missing type/subtype, an empty or malformed ``submodules`` list, repeated submodule
     names, or a submodule connection to something that is not a sibling submodule.
     '''
+    entry = _without_phlynx_keys(entry)
     description = 'supermodule ' + _describe(entry, source)[len('module config '):]
     has_current = [k for k in ('module_type', 'module_subtype') if k in entry]
     has_legacy = [k for k in ('vessel_type', 'BC_type') if k in entry]
@@ -266,6 +274,7 @@ def normalise_module_config_entry(entry, source=None):
     if not isinstance(entry, dict):
         raise ValueError(f'module config entry{" in " + source if source else ""} is a '
                          f'{type(entry).__name__}, not a JSON object: {entry!r}')
+    entry = _without_phlynx_keys(entry)
     if is_supermodule_entry(entry):
         return normalise_supermodule_entry(entry, source)
     current_keys = [k for k in _CURRENT_ONLY_KEYS if k in entry]
@@ -529,11 +538,14 @@ def normalise_vessel_record(record, source=None, index=None, what='module array'
     dicts and ``parameterisation`` stripped. ``record`` itself is not modified.
 
     Raises ValueError naming ``source``, ``index`` and the key for a record that is not an
-    object, mixes the two key styles, lacks name/type/subtype, or has a malformed list.
+    object, mixes the two key styles, lacks name/type/subtype, has a name that cannot be a level
+    of a nested name (``parameter_names.check_instance_name``), or has a malformed list. Keys
+    starting ``phlynx_`` are PhLynx's own and are dropped.
     '''
     where = _record_where(source, index, record, what=what)
     if not isinstance(record, dict):
         raise ValueError(f'{where} is a {type(record).__name__}, not a JSON object: {record!r}')
+    record = _without_phlynx_keys(record)
     legacy_keys = [k for k in LEGACY_MODULE_ARRAY_COLUMNS if k in record]
     current_keys = [k for k in _CURRENT_ONLY_COLUMNS if k in record]
     if legacy_keys and current_keys:
@@ -557,7 +569,7 @@ def normalise_vessel_record(record, source=None, index=None, what='module array'
             # keeps a cell's first word only: "a b" was silently truncated to "a"
             raise ValueError(f'{where}: "{key}" {value!r} contains whitespace. Names, module '
                              f'types and versions cannot contain spaces; use underscores.')
-    out = {'name': record['name'].strip(),
+    out = {'name': check_instance_name(record['name'].strip(), where),
            'module_type': record[type_key].strip(),
            'module_subtype': record[subtype_key].strip()}
     reject_instance_key(record, where)
@@ -692,7 +704,8 @@ def load_expanded_vessel_records(path, supermodule_registry=None, component_regi
     settings = []
     records, extra_param_rows = expand_supermodules(read_module_array_records(path),
                                                     supermodule_registry or {}, source=str(path),
-                                                    settings=settings)
+                                                    settings=settings,
+                                                    components=component_registry)
     if component_registry is not None:
         extra_param_rows = first_rows_win(extra_param_rows + component_parameterisation_rows(
             records, component_registry, str(path), settings=settings))

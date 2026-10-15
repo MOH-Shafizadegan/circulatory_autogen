@@ -122,7 +122,7 @@ Write a module's parameter as `[vessel_name]/[variable_name]`, with a `/` betwee
 | Written | Meaning | Name in the generated model |
 |---|---|---|
 | `aortic_root/C` | `C` of the vessel `aortic_root` | `C_aortic_root` |
-| `heart/lv/E` | `E` of the submodule `lv` of the supermodule instance `heart` | `E_heart_lv` |
+| `heart/lv/E` | `E` of the submodule `lv` of the supermodule instance `heart` | `E_heart__lv` |
 | `R` or `global/R` | the global constant `R` | `R` |
 
 The generated model still uses `[variable_name]_[vessel_name]`, because a CellML name cannot contain `/`. That older form is still read in a parameters file: `C_aortic_root` sets the same parameter as `aortic_root/C`, and setting it both ways is an error. The `/` form is never ambiguous and it is checked: a row naming a vessel that is not in the module array, a variable its module does not have, or a global constant through a vessel, is an error that lists every such row.
@@ -257,15 +257,32 @@ An instance in a module array names the supermodule's type and links its hosts, 
 
 Before anything else reads the module array, each instance is replaced, at its position, by one record per submodule:
 
-- submodule `ra` becomes `heart_ra`, and its links to other submodules are prefixed the same way;
-- the hosts in `per_submodule_inputs["ra"]` come first in `heart_ra`'s inputs, and the hosts in `per_submodule_outputs["ra"]` last in its outputs;
-- in a host, the instance name is replaced, in place, by every `heart_[submodule]` that the instance links it to.
+- submodule `ra` becomes `heart__ra` (the levels of a path are joined with `__`), and its links to other submodules are prefixed the same way;
+- the hosts in `per_submodule_inputs["ra"]` come first in `heart__ra`'s inputs, and the hosts in `per_submodule_outputs["ra"]` last in its outputs;
+- in a host, the instance name is replaced, in place, by every `heart__[submodule]` that the instance links it to.
 
-So parameters and outputs are named after the expanded modules, e.g. `E_heart_lv`, `heart_lv/q`. The supermodule's parameterisation and default parameters are renamed in the same way: `lv/E` becomes `E_heart_lv` for the instance `heart`. A path that is not a submodule is an error. Rows in the older `[variable]_[submodule]` form are still read, but such a name has to be split by guessing (at the longest submodule name it ends with), so `g_leak_Na` reads as `g` of a submodule `leak_Na` when one exists. They are warned about; `cuflynx-migrate-parameter-names --supermodule-config [config] --module-library-dir [library]` rewrites them, checking each against the submodules' variables. They are used for every name that `[file_prefix]_parameters.csv` does not set, so values in your parameters file always win. A global used by several parameterisations is added once. The supermodule's values win over those of its submodules' own parameterisations.
+So parameters and outputs are named after the expanded modules, e.g. `E_heart__lv`, `heart__lv/q`. The supermodule's parameterisation and default parameters are renamed in the same way: `lv/E` becomes `E_heart__lv` for the instance `heart`. A path that is not a submodule is an error. Rows in the older `[variable]_[submodule]` form are still read, but such a name has to be split by guessing (at the longest submodule name it ends with), so `g_leak_Na` reads as `g` of a submodule `leak_Na` when one exists. They are warned about; `cuflynx-migrate-parameter-names --supermodule-config [config] --module-library-dir [library]` rewrites them, checking each against the submodules' variables. They are used for every name that `[file_prefix]_parameters.csv` does not set, so values in your parameters file always win. A global used by several parameterisations is added once. The supermodule's values win over those of its submodules' own parameterisations.
 
 A submodule can itself be a supermodule instance, with its own `per_submodule_inputs`/`per_submodule_outputs` naming its siblings; it is expanded in turn. A supermodule that contains itself, directly or through others, is an error.
 
-Expansion stops with an error that names the file, the instance and the key when a `per_submodule_*` names a submodule that does not exist, or a host that does not exist or does not list the instance back; when a module lists the instance but no `per_submodule_*` entry links them; when an expanded name is already in the array; or when no supermodule of the instance's type was found. An instance named `heart` is not treated as the legacy `heart` module: after expansion there is no module called `heart`.
+#### Naming a submodule by its path
+
+A host can also name a submodule directly, by its path, in its own `inp_instances`/`out_instances`: `"out_instances": ["heart/ra"]`, or `"neuron/soma/membrane"` two levels down. The reference becomes `heart__ra` where it stands, so each host keeps its own order (with `per_submodule_*`, every host gets the submodules in that object's order), and the submodule takes the host as it would from `per_submodule_*`. A `per_submodule_*` key may be a path too, `{"soma/membrane": ["axon"]}`: it is passed down to the nested instance `soma`. Paths are allowed only in a host's lists and in `per_submodule_*` keys, not in the instance's own lists or in a supermodule's submodule records, and a path that names nothing once everything is expanded is an error.
+
+Because the levels are joined with `__`, a module-array or submodule name may not contain `__` nor begin or end with `_`: then `heart__ra` splits back into `heart/ra` one way only (with a single `_`, `a` + `b_c` and `a_b` + `c` were both `a_b_c`). Names written with a single `_` before this change (`heart_ra/q` in an obs_data operand or a params_for_id row, `E_heart_ra` in a parameters file) are still read, with a FutureWarning, when they can only mean one vessel; when they could mean several they are an error.
+
+#### Interface
+
+A supermodule entry may declare an ordered `interface`:
+
+```json
+"interface": [{"name": "venous_return", "submodule": "ra", "port_type": "vessel_port", "label": "RA inflow"},
+              {"name": "aortic_outflow", "submodule": "aov", "port_type": "vessel_port", "label": "aorta"}]
+```
+
+Each entry names a submodule (a path for a nested one) and a port type; names are unique and every path must exist. A host that lists the instance with no `per_submodule_*` entry for it is linked to the first entry whose `port_type` is one of its own ports facing the instance (its exit and general ports when it feeds the instance, its entrance and general ports when the instance feeds it). Keys starting `phlynx_` (PhLynx's layout and interface metadata) are read and ignored, on records and on config entries.
+
+Expansion stops with an error that names the file, the instance and the key when a `per_submodule_*` names a submodule that does not exist, or a host that does not exist or does not list the instance back; when a module lists the instance but no `per_submodule_*` entry (or interface entry) links them; or when no supermodule of the instance's type was found. An instance named `heart` is not treated as the legacy `heart` module: after expansion there is no module called `heart`.
 
 ### Module versions and parameterisations
 

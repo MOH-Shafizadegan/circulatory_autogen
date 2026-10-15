@@ -97,14 +97,15 @@ def _module_names(model):
 
 def module_display_names(model):
     '''``{module name: name to show}``. A model whose modules were all generated as the
-    standalone vessel ``mod`` (``mod``, ``mod_A`` ...) shows them without that prefix.'''
+    standalone vessel ``mod`` (``mod``, ``mod__A`` ...; ``mod_A`` before #582) shows them without
+    that prefix.'''
     names = _module_names(model)
     standalone = names and all(n == STANDALONE_VESSEL or n.startswith(STANDALONE_VESSEL + '_')
                                for n in names)
     shown = {}
     for name in names:
         if standalone:
-            shown[name] = '' if name == STANDALONE_VESSEL else name[len(STANDALONE_VESSEL) + 1:]
+            shown[name] = name[len(STANDALONE_VESSEL):].lstrip('_')
         else:
             shown[name] = name
     return shown

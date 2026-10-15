@@ -44,7 +44,9 @@ For key mode with separator='.', every '/'-candidate is also tried with '/' → 
 (so Myokit qnames like 'Lotka_Volterra_module.x' are matched automatically).
 """
 
-from libcuflynx.utilities.parameter_names import hoisted_names
+import warnings
+
+from libcuflynx.utilities.parameter_names import LEVEL_SEPARATOR, hoisted_names
 
 
 class VariableNameResolver:
@@ -108,7 +110,8 @@ class VariableNameResolver:
                 if canon:
                     return self._map[canon]
 
-        return (None, None)
+        legacy = self._legacy_match(name, [name] + self._aliases(name, "/"), [self._map])
+        return self._map[legacy] if legacy else (None, None)
 
     def all_state_names(self) -> list:
         return [self.canonical(info) for info in self._state_info]
@@ -165,7 +168,28 @@ class VariableNameResolver:
             if kind:
                 return (kind, key)
 
-        return (None, None)
+        candidates = [name] + [a.replace("/", separator) for a in cls._aliases(name, "/")]
+        legacy = cls._legacy_match(name, candidates, [d for _, d in keyed_dicts])
+        return _check(legacy) if legacy else (None, None)
+
+    @staticmethod
+    def _legacy_match(name, candidates, keyed):
+        """The one key whose nested levels, joined with "__", the candidates write with a single
+        "_" as before #582 (``heart_lv/E`` for ``heart__lv``), with a FutureWarning; None when
+        there is none. ValueError when there are several."""
+        wanted = set(candidates)
+        matches = sorted({key for d in keyed for key in d
+                          if LEVEL_SEPARATOR in str(key)
+                          and str(key).replace(LEVEL_SEPARATOR, "_") in wanted})
+        if len(matches) > 1:
+            raise ValueError(f'"{name}" could be any of {matches}; nested levels are joined '
+                             f'with "{LEVEL_SEPARATOR}" now, so name one of those.')
+        if matches:
+            warnings.warn(f'"{name}" joins nested levels with "_"; it is read as '
+                          f'"{matches[0]}" (levels are joined with "{LEVEL_SEPARATOR}").',
+                          FutureWarning, stacklevel=3)
+            return matches[0]
+        return None
 
     # ------------------------------------------------------------------
     # Shared alias generation

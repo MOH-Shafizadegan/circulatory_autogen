@@ -214,8 +214,8 @@ def build_workflow_library(root, settings=None):
     _parameterisation(modules, 'twin', 'default', twin_rows)
     paths['twin/joint'] = _parameterisation(
         modules, 'twin', 'joint', twin_rows,
-        obs=[('y_a', 'mod_A/y', Y_A, STD_A), ('y_b', 'mod_B/y', Y_B, STD_B)],
-        params_for_id=[('mod_A', 'p', 0.1, 5.0), ('mod_B', 'p', 0.1, 5.0)])
+        obs=[('y_a', 'mod__A/y', Y_A, STD_A), ('y_b', 'mod__B/y', Y_B, STD_B)],
+        params_for_id=[('mod__A', 'p', 0.1, 5.0), ('mod__B', 'p', 0.1, 5.0)])
     paths['twin/split'] = _parameterisation(modules, 'twin', 'split', twin_rows)
     paths['twin_split'] = os.path.join(paths['twin/split'], 'calibration_workflow.json')
     _write_json(paths['twin_split'], {
@@ -230,8 +230,8 @@ def build_workflow_library(root, settings=None):
     chain_rows = [('A/p', 1.0), ('C/q', 1.0), ('C/k', 1.0, K_SOURCE)]
     _parameterisation(modules, 'chain', 'default', chain_rows)
     paths['chain/rest'] = _parameterisation(modules, 'chain', 'rest', chain_rows,
-                                            obs=[('z_c', 'mod_C/z', Z_C, STD_C)],
-                                            params_for_id=[('mod_C', 'q', 0.1, 10.0)])
+                                            obs=[('z_c', 'mod__C/z', Z_C, STD_C)],
+                                            params_for_id=[('mod__C', 'q', 0.1, 10.0)])
     paths['chain_rest'] = os.path.join(paths['chain/rest'], 'calibration_workflow.json')
     _write_json(paths['chain_rest'], {
         'schema_version': 1, 'workflow_name': 'chain_rest',
