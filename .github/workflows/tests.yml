@@ -7,6 +7,12 @@ on:
     branches: [ master, main, devel ]
   workflow_dispatch:
 
+env:
+  # MPI (UCX) must not open the runner's InfiniBand device: on some runner VMs (Azure MANA,
+  # mana_0) it fails and MPI_Init aborts before any test runs. Every job runs on one machine:
+  # shared memory and TCP.
+  UCX_TLS: self,sm,tcp
+
 jobs:
   # Jobs are listed fastest first (measured on CI), so with few runners free the quick checks
   # start, and report a failure, before the long ones.
