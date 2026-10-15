@@ -15,6 +15,7 @@ what the field is for::
 import functools
 import hashlib
 import json
+import warnings
 from collections import OrderedDict
 
 from libcuflynx.schemas import load_schema
@@ -25,6 +26,23 @@ MAX_LISTED = 10
 #: read once per generated model) is not checked again.
 VALID_CACHE_SIZE = 4096
 _valid = OrderedDict()
+
+
+NO_JSONSCHEMA = (
+    'jsonschema is not installed, so input files are not checked against their schemas (only '
+    'by the readers\' own checks). Install it: pip install jsonschema. This happens in a '
+    'CUFLynx app released before libcuflynx required it.')
+
+
+@functools.lru_cache(maxsize=None)
+def jsonschema_available():
+    """Whether jsonschema imports; warns once when it does not."""
+    try:
+        import jsonschema  # noqa: F401
+    except ImportError:
+        warnings.warn(NO_JSONSCHEMA, UserWarning, stacklevel=3)
+        return False
+    return True
 
 
 def _digest(schema_name, document):
@@ -218,7 +236,10 @@ def problems(schema_name, document):
 def validate(schema_name, document, source='', what='file'):
     """Raise :class:`SchemaValidationError` if schema ``schema_name`` (e.g.
     ``OBS_DATA_SCHEMA``) refuses ``document``. ``source`` names the file in the message and
-    ``what`` the kind of file."""
+    ``what`` the kind of file. Without jsonschema (an app bundled before it was required) this
+    warns once and checks nothing."""
+    if not jsonschema_available():
+        return
     key = _digest(schema_name, document)
     if key is not None and key in _valid:
         _valid.move_to_end(key)

@@ -112,3 +112,25 @@ def test_a_document_that_passed_is_not_checked_again_but_an_edited_one_is(monkey
     doc['data_items'][0]['value'] = 2.0         # edited: checked again
     validate(OBS_DATA_SCHEMA, doc)
     assert len(calls) == 1
+
+
+@pytest.mark.unit
+def test_without_jsonschema_files_still_load_with_a_warning(monkeypatch):
+    """A CUFLynx app released before libcuflynx required jsonschema runs newer CA source with
+    its own bundle: reading must still work there."""
+    import builtins
+    from libcuflynx.schemas import validation
+    real_import = builtins.__import__
+
+    def no_jsonschema(name, *args, **kwargs):
+        if name == 'jsonschema' or name.startswith('jsonschema.'):
+            raise ImportError('no jsonschema')
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, '__import__', no_jsonschema)
+    validation.jsonschema_available.cache_clear()
+    try:
+        with pytest.warns(UserWarning, match='jsonschema is not installed'):
+            validate(OBS_DATA_SCHEMA, {'data_items': [_item(colour='red')]})
+    finally:
+        validation.jsonschema_available.cache_clear()
