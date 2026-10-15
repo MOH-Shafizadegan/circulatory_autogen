@@ -314,27 +314,9 @@ def test_the_entry_key_is_modifier():
 
 
 @pytest.mark.unit
-def test_the_operation_key_is_accepted_as_a_deprecated_alias():
+def test_operation_is_not_a_params_for_id_key():
+    """A modifier names its function with "modifier" only ("operation" was its first name)."""
     doc = _doc()
     doc['params'][0]['operation'] = doc['params'][0].pop('modifier')
-    with pytest.warns(UserWarning, match='"operation" is deprecated'):
-        info = _info(doc)
-    assert info['modifiers'][0]['modifier'] == 'remainder'
-
-
-@pytest.mark.unit
-def test_setting_both_modifier_and_operation_is_refused():
-    doc = _doc()
-    doc['params'][0]['operation'] = 'scale'
-    with pytest.raises(ValueError, match=r'(?s)not allowed.*deprecated name of modifier'):
+    with pytest.raises(ValueError, match="'operation' was unexpected"):
         _info(doc)
-
-
-@pytest.mark.unit
-def test_a_legacy_modifiers_record_still_resolves():
-    """A param_modifiers.json written by a #378-era run names the function under 'operation'."""
-    info = _info(_doc())
-    (mod,) = info['modifiers']
-    mod['operation'] = mod.pop('modifier')
-    resolve_modifier_baselines(info, _FakeHelper(_DEFAULTS))
-    assert expand_modifier_param_vals(info, [5e-3]) == [[pytest.approx(3.5e-3)]]

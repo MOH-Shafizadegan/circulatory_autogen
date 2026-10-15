@@ -115,7 +115,6 @@ cuflynx-identifiability = "libcuflynx.scripts.identifiability_run_script:main"
 # A console command rather than a note in the changelog because the rename is not purely
 # mechanical: data_item_name has to be made unique, and the tool derives a name from
 # whatever actually distinguishes the colliding items.
-cuflynx-migrate-obs-data = "libcuflynx.scripts.migrate_obs_data:main"
 # Rewrites parameter names written {variable}_{vessel} as <vessel>/<variable>, checking each
 # against the modules rather than guessing where the variable ends.
 cuflynx-migrate-parameter-names = "libcuflynx.scripts.migrate_parameter_names:main"

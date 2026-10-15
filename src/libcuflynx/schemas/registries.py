@@ -27,9 +27,8 @@ def _registries():
     from libcuflynx.utilities.obs_data_helpers import VALID_DATA_TYPES
     from libcuflynx.utilities.protocol_shapes import SHAPE_TYPES
     return {
-        # (schema, JSON Pointer to the enum) -> values; 'timeseries' is the older "series"
-        (OBS_DATA_SCHEMA, '/$defs/dataItem/properties/data_type/enum'):
-            list(VALID_DATA_TYPES) + ['timeseries'],
+        # (schema, JSON Pointer to the enum) -> values
+        (OBS_DATA_SCHEMA, '/$defs/dataItem/properties/data_type/enum'): list(VALID_DATA_TYPES),
         (OBS_DATA_SCHEMA, '/$defs/shape/oneOf/1/properties/type/enum'): list(SHAPE_TYPES),
         (PARAMS_FOR_ID_SCHEMA, '/$defs/entryKeys/properties/prior/anyOf/0/enum'):
             list(PARAM_PRIOR_TYPES),

@@ -169,8 +169,6 @@ The entries in the data_item list in the `obs_data.json` file are:
   they share it. Defaults to the first operand.
 - **item_name_for_plotting**: The label for the *item* — the scalar feature itself — used in
   sensitivity tables and error reports. Defaults to `"<trace_name_for_plotting> (<operation>)"`.
-  Together these replace the old **name_for_plotting**, which named both and so could name
-  neither precisely.
 - **weight**: The weighting to put on this observables entry in the cost function. Default should be 1.0
 - **std**: The standard deviation which is used in the cost function. The cost function is the relative absolute error (AE) or mean squared error (MRE), each normalised by the std.
 - **value**: The value of the ground truth, either a scalar for constant data_type, or a list of values for series or frequency data_types.
@@ -255,9 +253,6 @@ Not to be confused with the dt for the model simulation outputs.
   the place the model variable is named. ("operation" may take several.) An item built purely
   from other items' values, rather than from a trace, states `[""]`.
 - **experiment_idx** and **subexperiment_idx**: Optional indices to link a data item to a specific experiment/subexperiment in `protocol_info`.
-
-!!! warning
-    **obs_type**: Deprecated in favor of **operation**.
 
 ### operation_kwargs
 
@@ -422,13 +417,6 @@ Three things to get right:
     reference inside one sub-experiment.
 - **`operands` is empty**, written `[""]`. The item takes its inputs from `operation_kwargs`
   rather than from a model variable, so there is no trace to reduce.
-!!! tip "Upgrading a study written before this change"
-    `cuflynx-migrate-obs-data path/to/your/resources` rewrites obs_data files into the current
-    vocabulary and makes `data_item_name` unique for you. `--dry-run` shows what it would do
-    first. The old keys still load with a deprecation warning, but a file where one variable
-    carried several features has colliding names and will be refused until they are made
-    distinct — which is what the command does.
-
 - **`data_item_name` is what the reference resolves against, and it must be unique.** This is now
   enforced: a repeated `data_item_name` is rejected when the obs_data is loaded, naming the
   offenders. Note the two source items above deliberately *share* a
@@ -487,9 +475,6 @@ You can include a `prediction_items` list in `obs_data.json` to request addition
   `operation_kwargs` checks as a `data_item`. On a scalar item the operation reduces the
   operands to one number. On a series item it returns a series, exactly as for a data_item. See
   [Prediction items as scalar features](#prediction-items-as-scalar-features).
-
-Together the two plotting names replace the old **name_for_plotting**. A file still using `variable` or
-`name_for_plotting` loads with a deprecation warning; `cuflynx-migrate-obs-data` rewrites it.
 
 #### Validation data in prediction items
 

@@ -25,7 +25,7 @@ from libcuflynx.schemas import (MODULE_ARRAY_SCHEMA, MODULE_CONFIG_SCHEMA, OBS_D
                                 PARAMS_FOR_ID_SCHEMA, load_schema)
 from libcuflynx.utilities.config_schemas import (PHLYNX_MODULE_ARRAY_COLUMNS, PHLYNX_MODULE_KEYS,
                                                  normalise_module_config_entry)
-from libcuflynx.utilities.obs_data_helpers import LEGACY_OBS_ITEM_KEYS, VALID_DATA_TYPES
+from libcuflynx.utilities.obs_data_helpers import VALID_DATA_TYPES
 from libcuflynx.utilities.protocol_shapes import EVENT_KEYS, SHAPE_KEYS, SHAPE_TYPES
 
 jsonschema = pytest.importorskip('jsonschema')
@@ -139,16 +139,11 @@ def _parse_obs_data_rules(variable):
 
 def test_obs_data_keys_match_the_parser():
     defs = load_schema(OBS_DATA_SCHEMA)['$defs']
-    legacy = set(LEGACY_OBS_ITEM_KEYS)
-    # data items: the parser's keys, the renamed ones, and the series paths it reads and drops
-    assert set(defs['dataItem']['properties']) == \
-        _parse_obs_data_rules('item_defaults') | legacy | {'vm_path', 'im_path'}
+    assert set(defs['dataItem']['properties']) == _parse_obs_data_rules('item_defaults')
     assert set(defs['predictionItem']['properties']) == \
-        _parse_obs_data_rules('prediction_entry_defaults') | legacy
+        _parse_obs_data_rules('prediction_entry_defaults')
     assert set(defs['protocolInfo']['properties']) == _parse_obs_data_rules('protocol_defaults')
-    # data_type: the valid ones and the older spelling of series
-    assert set(defs['dataItem']['properties']['data_type']['enum']) == \
-        set(VALID_DATA_TYPES) | {'timeseries'}
+    assert set(defs['dataItem']['properties']['data_type']['enum']) == set(VALID_DATA_TYPES)
 
     shape = defs['shape']['oneOf'][1]
     assert set(shape['properties']) == SHAPE_KEYS
@@ -280,7 +275,7 @@ def test_a_valid_params_for_id_document_is_accepted_by_both():
     (_params(dict(GOOD_ENTRY, modifies=['b/R'])), r"(?s)not allowed.*targets\) or a modifier"),
     (_params(dict(GOOD_ENTRY, modifier='scale')), r'(?s)not allowed.*modifier entries only'),
     (_params({'modifies': ['b/R'], 'modifier': 'scale', 'operation': 'scale', 'min': 0.5,
-              'max': 2}), r'(?s)not allowed.*deprecated name of modifier'),
+              'max': 2}), r"'operation' was unexpected"),
     (_params(dict(GOOD_ENTRY, targets=['C'])), r"(?s)targets\[0\]: 'C' is not in the form.*"
                                                r"component/param"),
     (_params(dict(GOOD_ENTRY, prior='beta')), r"prior: 'beta' is not one of"),

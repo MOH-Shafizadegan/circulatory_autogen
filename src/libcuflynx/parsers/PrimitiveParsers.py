@@ -26,8 +26,7 @@ from datetime import date
 from libcuflynx.utilities.protocol_shapes import materialise_shapes, validate_trace_references
 from libcuflynx.schemas import OBS_DATA_SCHEMA, PARAMS_FOR_ID_SCHEMA
 from libcuflynx.schemas.validation import validate as validate_schema
-from libcuflynx.utilities.obs_data_helpers import (LEGACY_OBS_ITEM_KEYS, LEGACY_OBS_KEY_ADVICE,
-                                        migrate_legacy_obs_item_keys, check_obs_data_name,
+from libcuflynx.utilities.obs_data_helpers import (check_obs_data_name,
                                         DEFAULT_COST_TYPE, PREVIOUS_DEFAULT_COST_TYPE,
                                         VALID_DATA_TYPES)
 from libcuflynx.param_id.modifier_funcs import (BUILTIN_MODIFIER_FUNCS, get_modifier_funcs,
@@ -801,28 +800,6 @@ def check_prediction_operation_references(gt_df, prediction_info):
                         f"as 'max' or 'mean'): only those have a value in every analysis.")
 
 
-def migrate_legacy_obs_columns(gt_df):
-    """Rename an obs dataframe's superseded columns, warning once per column.
-
-    The dataframe twin of ``migrate_legacy_obs_item_keys``: that one runs on the entries parsed
-    out of a JSON file, this one on a frame a caller assembled itself. Both entry points then
-    see the same vocabulary. Returns the frame (renamed to a copy when anything changed).
-    """
-    if gt_df is None or not hasattr(gt_df, 'columns'):
-        return gt_df
-    for legacy, current in LEGACY_OBS_ITEM_KEYS.items():
-        if legacy not in gt_df.columns:
-            continue
-        if current in gt_df.columns:
-            raise ValueError(
-                f"data_items set both '{legacy}' and its replacement '{current}'. "
-                f"Remove '{legacy}'. {LEGACY_OBS_KEY_ADVICE[legacy]}")
-        warnings.warn(f"data_items: {LEGACY_OBS_KEY_ADVICE[legacy]}",
-                      DeprecationWarning, stacklevel=3)
-        gt_df = gt_df.rename(columns={legacy: current})
-    return gt_df
-
-
 def _series_is_scored(gt_df, II):
     """Whether series row ``II`` can contribute to the cost at all.
 
@@ -938,12 +915,8 @@ def default_item_name_for_plotting(trace_name, operation):
 
 
 def _modifier_name(mod):
-    """The modifier function's name from a modifiers record.
-
-    Reads the legacy 'operation' field too, so a param_modifiers.json saved by a #378-era run
-    still resolves.
-    """
-    return mod.get("modifier") or mod.get("operation") or DEFAULT_PARAM_MODIFIER
+    """The modifier function's name from a modifiers record."""
+    return mod.get("modifier") or DEFAULT_PARAM_MODIFIER
 
 
 def resolve_modifier_baselines(param_id_info, sim_helper):
@@ -1269,8 +1242,8 @@ PARAMS_FOR_ID_ENTRY_KEYS = frozenset({
     # qname(s) for each input the function declares; their *default* values are what the
     # function receives. min/max/prior belong to the modifier's own calibrated value, not to
     # the parameters it modifies. ("Operations" act on *outputs*, in obs_data; what acts on
-    # parameters is a modifier -- 'operation' is accepted as a deprecated alias of 'modifier'.)
-    'modifies', 'modifier', 'operation', 'inputs',
+    # parameters is a modifier.)
+    'modifies', 'modifier', 'inputs',
 })
 
 
@@ -3609,14 +3582,7 @@ class ObsAndParamDataParser(object):
 
         def _hydrate_series_data_items(data_items):
             """
-            Normalise series entries before schema validation.
-
-            Handles three legacy/current formats:
-            1. ``data_type: "timeseries"`` → renamed to ``"series"``.
-            2. Top-level ``t_path`` + ``vm_path`` / ``im_path`` (old format,
-               variable name used to pick which signal is the observable).
-            3. Top-level ``t_path`` + ``value_path`` (current format, no
-               ambiguity — ``value_path`` is always the observable).
+            Load series values given as ``t_path`` + ``value_path`` (.npy files).
 
             When ``value`` is missing it is loaded from ``value_path`` (and
             ``obs_dt`` from ``t_path`` if omitted). ``std`` must always be set
@@ -3706,11 +3672,6 @@ class ObsAndParamDataParser(object):
             for raw in data_items:
                 item = copy.deepcopy(raw)
                 dtype = item.get("data_type")
-                if dtype == "timeseries":
-                    item["data_type"] = "series"
-                    dtype = "series"
-                if item.get("plot_type") == "timeseries":
-                    item["plot_type"] = "series"
                 if dtype != "series":
                     hydrated.append(item)
                     continue
@@ -3722,46 +3683,6 @@ class ObsAndParamDataParser(object):
 
                 t_path = item.get("t_path")
                 value_path = item.get("value_path")
-
-                # Legacy: top-level vm_path / im_path; pick observable by variable name.
-                if value_path is None:
-                    vm_path = item.pop("vm_path", None)
-                    im_path = item.pop("im_path", None)
-                    if vm_path or im_path:
-                        var = str(item.get("data_item_name", ""))
-                        if "I_tot" in var or var.endswith("/I_tot_pA"):
-                            value_path = im_path or vm_path
-                        else:
-                            value_path = vm_path or im_path
-                        if value_path:
-                            item["value_path"] = value_path
-
-                # Also handle legacy paths buried in source dict.
-                src = item.get("source")
-                if isinstance(src, dict):
-                    if t_path is None:
-                        t_path = src.pop("t_path", None)
-                        if t_path:
-                            item["t_path"] = t_path
-                    if value_path is None:
-                        vp = src.pop("value_path", None)
-                        if vp is None:
-                            vm_p = src.pop("vm_path", None)
-                            im_p = src.pop("im_path", None)
-                            var = str(item.get("data_item_name", ""))
-                            if "I_tot" in var or var.endswith("/I_tot_pA"):
-                                vp = im_p or vm_p
-                            else:
-                                vp = vm_p or im_p
-                        if vp:
-                            value_path = vp
-                            item["value_path"] = value_path
-                    # Flatten description string back to source if dict is now empty
-                    desc = src.get("description")
-                    if desc and len(src) == 1:
-                        item["source"] = desc
-                    elif not src:
-                        item.pop("source", None)
 
                 if _has_embedded_series_value(item) and (t_path or value_path):
                     var = item.get("data_item_name", "<unknown>")
@@ -3795,7 +3716,7 @@ class ObsAndParamDataParser(object):
 
         # --- Case 1: Simple list of data items ---
         if type(json_obj) == list:
-            gt_df = pd.DataFrame(migrate_legacy_obs_item_keys(json_obj, 'data_items'))
+            gt_df = pd.DataFrame(json_obj)
             protocol_info = {"pre_times": [pre_time], 
                              "sim_times": [[sim_time]],
                              "params_to_change": {}}
@@ -3805,10 +3726,8 @@ class ObsAndParamDataParser(object):
         # --- Case 2: Dictionary structure ---
         elif type(json_obj) == dict:
             # Load Data Items (gt_df)
-            if 'data_items' in json_obj.keys() or 'data_item' in json_obj.keys():
-                data_items = json_obj.get('data_items', json_obj.get('data_item', []))
-                data_items = migrate_legacy_obs_item_keys(data_items, 'data_items')
-                data_items = _hydrate_series_data_items(data_items)
+            if 'data_items' in json_obj:
+                data_items = _hydrate_series_data_items(json_obj['data_items'])
                 gt_df = pd.DataFrame(data_items)
             else:
                 print("data_items not found in json object. ",
@@ -3864,9 +3783,6 @@ class ObsAndParamDataParser(object):
             # Load Prediction Info
             if 'prediction_items' in json_obj.keys():
                 prediction_items = json_obj['prediction_items']
-
-                prediction_items = migrate_legacy_obs_item_keys(
-                    prediction_items, 'prediction_items', variable_was_the_operand=True)
 
                 # A prediction_item is a data_item without a ground truth, so it carries the
                 # same names. Its `operands` is the single model variable to record; the
@@ -4012,7 +3928,6 @@ class ObsAndParamDataParser(object):
                 "plot_color": None,
                 "comment": None,
                 "cost_type": DEFAULT_COST_TYPE,
-                "obs_type": None,
                 "frequencies": None,
                 # If omitted, phase weighting should follow the same weighting as amplitude.
                 "phase_weight": lambda df: df["weight"],
@@ -4028,9 +3943,6 @@ class ObsAndParamDataParser(object):
                 "value_path": None,
             }
 
-            # A gt_df handed in directly has not been through migrate_legacy_obs_item_keys,
-            # and building one in python is a supported way to drive a run (#466).
-            gt_df = migrate_legacy_obs_columns(gt_df)
 
             # keys and types are the schema's; here each missing column gets its default
             missing_required_cols = []
@@ -4078,8 +3990,6 @@ class ObsAndParamDataParser(object):
 
             if len(missing_required_cols) > 0:
                 hint = ""
-                if "data_item_name" in missing_required_cols:
-                    hint += " " + LEGACY_OBS_KEY_ADVICE["variable"]
                 if "operands" in missing_required_cols:
                     hint += (" Every data_item states the model variable(s) it reduces in "
                              "'operands', as a list.")
@@ -4141,12 +4051,6 @@ class ObsAndParamDataParser(object):
         """
         obs_info = {}
 
-        # `process_obs_info` is a public entry point -- a caller can hand it a gt_df it built
-        # itself, without going through parse_obs_data_json. Accept the superseded column names
-        # here as well, so the two ways in take the same vocabulary (#466). A no-op once the
-        # parse path has already renamed them.
-        gt_df = migrate_legacy_obs_columns(gt_df)
-
         # --- Simple Array Generation ---
         N = gt_df.shape[0]
         
@@ -4187,7 +4091,7 @@ class ObsAndParamDataParser(object):
                 if obs_info["plot_type"][II] in ["None", "null", "Null", "none", "NONE"]:
                     obs_info["plot_type"][II] = None
 
-        # --- Operations (Mapping obs_type to operation) ---
+        # --- Operations ---
         obs_info["operations"] = []
         obs_info["operands"] = []
         obs_info["operation_kwargs"] = [gt_df.iloc[II].get("operation_kwargs", {}) for II in range(N)]
@@ -4203,33 +4107,14 @@ class ObsAndParamDataParser(object):
 
         for II in range(N):
             op = gt_df.iloc[II].get("operation")
-            obs_type = gt_df.iloc[II].get("obs_type")
             operands = gt_df.iloc[II].get("operands")
             # Filter out empty operands, should tolerate empty operands exists
             if isinstance(operands, (list, tuple, np.ndarray)):
                 operands = [op for op in list(operands) if op]
-                
             if op in ["Null", "None", "null", "none", "", "nan", np.nan, None]:
-                if obs_type in ["series", "frequency"]:
-                    obs_info["operations"].append(None)
-                    obs_info["operands"].append(operands)
-                elif obs_type in ["min", "max", "mean"]:
-                    # `obs_type` used to imply the operation *and* take its operand from
-                    # `variable`. The operation half still works; the operand half does not,
-                    # because `variable` no longer names a model variable (#466).
-                    if not operands:
-                        raise ValueError(
-                            f"data_item {gt_df.iloc[II]['data_item_name']!r} sets "
-                            f"obs_type {obs_type!r} with no 'operands'. "
-                            + LEGACY_OBS_KEY_ADVICE["variable"])
-                    obs_info["operations"].append(obs_type)
-                    obs_info["operands"].append(operands)
-                else:
-                    obs_info["operations"].append(None)
-                    obs_info["operands"].append(operands)
-            else:
-                obs_info["operations"].append(op)
-                obs_info["operands"].append(operands)
+                op = None
+            obs_info["operations"].append(op)
+            obs_info["operands"].append(operands)
 
         # --- Weights and Cost Types ---
         weights = gt_df["weight"].to_numpy()
@@ -4650,19 +4535,6 @@ class ObsAndParamDataParser(object):
             merged_prior.update(raw.get('prior_params') or {})
             if merged_prior:
                 entry['prior_params'] = merged_prior
-
-            # 'operation' is the #378 spelling; operations act on outputs (obs_data), so the
-            # key acting on parameters is now 'modifier'. Normalise before any other check.
-            if entry.get('operation') is not None:
-                if entry.get('modifier') is not None:
-                    raise ValueError(
-                        f'params_for_id entry {idx} sets both "modifier" and "operation" '
-                        f'(the deprecated alias). Set only "modifier".')
-                warnings.warn(
-                    f'params_for_id entry {idx}: "operation" is deprecated for modifier '
-                    f'entries; use "modifier" (operations act on outputs, modifiers act on '
-                    f'parameters).')
-                entry['modifier'] = entry.pop('operation')
 
             has_targets = entry.get('targets') is not None
             has_modifies = entry.get('modifies') is not None
