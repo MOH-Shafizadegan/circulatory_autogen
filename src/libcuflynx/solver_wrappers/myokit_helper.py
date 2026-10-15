@@ -775,21 +775,12 @@ class SimulationHelper(ExperimentTimeMixin):
     def run_offline_pre_and_set_default_state(self, offline_pre_time):
         """Run unlogged warmup once; use end state as default for reset_states().
 
-        Currently UNUSED: the param-id path folds offline_pre_time into each experiment's
-        first-sub warm-up instead, so it is re-integrated at the current parameter values on
-        every evaluation. Freezing one state here made every evaluation start from the steady
-        state of the *initial* parameter guess, and made the gradient drop the
-        d(steady state)/d(p) term -- invisibly, since AD-vs-FD both perturb the same frozen
-        state.
-
-        Two things must be handled if a (correct) offline optimisation is reinstated on top of
-        this method (tracked in issue #269):
-          1. pre() resets initial-value sensitivity rows of _s_state to the identity. That is
-             the RIGHT semantics here -- an offline warm-up really does establish a new initial
-             condition -- but it also mutates _s_default_state, so the pristine save/restore
-             deleted from reset_states() must be reinstated alongside it.
-          2. The frozen state must be invalidated whenever the parameters move, or the same
-             silent gradient bias returns.
+        param_id calls this once, after set_protocol_info, when the protocol sets
+        offline_pre_time; every evaluation then starts its pre_time + sim_time from this state.
+        param_id refuses it when a calibration parameter sets a state's initial value
+        (OFFLINE_PRE_TIME_INIT_STATE_ERROR), since this frozen state would not move with it.
+        Uses pre(), which resets the initial-value sensitivity rows: right here, as the warm-up
+        establishes a new initial condition. Traced inputs hold experiment 0's first value.
         """
         offline_pre_time = float(offline_pre_time)
         if offline_pre_time <= 0:
