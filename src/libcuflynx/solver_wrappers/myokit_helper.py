@@ -47,6 +47,7 @@ myokit = _import_myokit_tolerating_first_run_race()
 from myokit.formats import cellml as cellml_format
 import libcuflynx.utilities.libcellml_helper_funcs as cellml
 from libcuflynx.solver_wrappers.name_resolver import VariableNameResolver
+from libcuflynx.solver_wrappers.experiment_time import ExperimentTimeMixin
 from libcuflynx.utilities.protocol_shapes import materialise_shapes, validate_trace_references
 import xml.etree.ElementTree as ET
 import tempfile
@@ -200,7 +201,7 @@ def stability_hint(solver_info, effective_tolerances):
             f"decreasing these (solver_info MaximumStep / atol / rtol) may help stability.")
 
 
-class SimulationHelper:
+class SimulationHelper(ExperimentTimeMixin):
     """
     Myokit-based solver wrapper matching the OpenCOR SimulationHelper interface.
 
@@ -249,16 +250,6 @@ class SimulationHelper:
 
         self.last_log = None
         self._last_results_dict = None
-
-    def get_time(self, include_pre_time=False):
-        # Canonical cumulative time axis (see _extract("time")). tSim is built in
-        # _setup_time as linspace(start_time + pre_time, stop_time); subtracting
-        # pre_time gives the logged (post-pre) cumulative protocol time, matching
-        # the OpenCOR backend.
-        if include_pre_time:
-            return self.tSim
-        else:
-            return self.tSim - self.pre_time
 
     def set_protocol_info(self, protocol_info):
         """
@@ -460,6 +451,7 @@ class SimulationHelper:
         self.sim_time = sim_time
         self.pre_time = pre_time
         self.start_time = start_time
+        self._track_experiment_start(start_time, pre_time)
         self.stop_time = start_time + pre_time + sim_time
         self.pre_steps = int(pre_time / dt)
         self.n_steps = int(sim_time / dt)
@@ -1294,15 +1286,10 @@ class SimulationHelper:
         if name == "time":
             if self.last_log is None:
                 raise RuntimeError("No log available")
-            # Return the canonical cumulative time axis (tSim), not Myokit's logged
-            # clock. Myokit's clock restarts at each sub-experiment's run_t0
-            # (update_times -> reset), so the raw log is a per-segment local time and
-            # corrupts time-based observables (e.g. first_peak_time) in multi-sub-
-            # experiment protocols. tSim is built from start_time/pre_time in
-            # _setup_time and is the same length as the logged state/var series, so it
-            # stays aligned with the values get_results returns. This is identical to
-            # get_time() and to the OpenCOR backend's time axis.
-            return self.tSim - self.pre_time
+            # The cumulative time axis (get_time()), not Myokit's logged clock, which
+            # restarts at each sub-experiment's run_t0 (update_times -> reset). tSim is the
+            # same length as the logged series, so it stays aligned with get_results.
+            return self.get_time()
         kind, qname = self._resolve_name(name)
         # `qname in self.last_log` is not redundant: _make_log deliberately leaves constants
         # out ("Myokit cannot log constants"), while _resolve_name classifies them as "var"
