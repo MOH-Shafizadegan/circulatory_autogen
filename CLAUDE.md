@@ -37,6 +37,7 @@ Runs are launched via shell scripts in `user_run_files/`. Each one invokes a **c
 | `run_emulator_training.sh` (arg: `num_processors`, uses `mpiexec`) | `cuflynx-train-emulator` → `train_emulator_run_script` | Train a surrogate of the obs features |
 | `plot_param_id.sh` | `cuflynx-plot` → `plot_param_id_script` | Plot calibration results |
 | _(no run script)_ | `cuflynx-generate-pipeline` → `generate_pipeline_script` | Write a self-contained bundle — model, resources, a `user_inputs_*.yaml` with every path relative, and a `run_pipeline.py` — that reruns the study elsewhere. Not driven by a `user_run_files/*.sh`: it takes `--user-inputs` and `--output-dir` directly. |
+| _(no run script)_ | `cuflynx-run-predictions <model> <obs_data> --dt ...` → `run_predictions_script` | An obs_data's prediction items on a model, with no calibration: `traces.npz`, `features.csv`, `validation_results.json`. The command form of `libcuflynx.protocol_runners.run_prediction_items` (`predict_on` over an existing executor; `save_prediction_data` uses it after a calibration). Takes paths, not the yaml. |
 
 One command has no launcher and is not a pipeline stage: **`cuflynx-migrate-obs-data`** (`libcuflynx.scripts.migrate_obs_data`) rewrites obs_data files into the #466 vocabulary (`variable` → `data_item_name` + `operands`, `name_for_plotting` → `trace_name_for_plotting` + `item_name_for_plotting`) and makes `data_item_name` unique. It takes paths, not the yaml, and is the documented upgrade path in `CHANGELOG.md`.
 

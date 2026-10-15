@@ -44,6 +44,7 @@ EXPECTED_ENTRY_POINTS = {
     "cuflynx-generate-pipeline",
     "cuflynx-migrate-obs-data",
     "cuflynx-migrate-parameter-names",
+    "cuflynx-run-predictions",
 }
 
 
@@ -365,6 +366,7 @@ NON_STAGE_COMMANDS = {
     "cuflynx-variable-mapping",
     "cuflynx-methods-latex",
     "cuflynx-migrate-parameter-names",
+    "cuflynx-run-predictions",
 }
 
 
