@@ -190,7 +190,13 @@
               },
               {
                 "type": "string",
-                "description": "\"constant\" (a parameter named <variable>_<instance> in the parameters file), \"global_constant\" (a parameter shared by every instance, named <variable>), \"boundary_condition\" (a parameter named <variable>_<instance> that a connection can replace), or \"variable\" (computed by the model, not a parameter)"
+                "description": "\"constant\" (a parameter named <variable>_<instance> in the parameters file), \"global_constant\" (a parameter shared by every instance, named <variable>), \"boundary_condition\" (a parameter named <variable>_<instance> that a connection can replace), or \"variable\" (computed by the model, not a parameter)",
+                "enum": [
+                  "constant",
+                  "global_constant",
+                  "boundary_condition",
+                  "variable"
+                ]
               }
             ],
             "minItems": 4,
@@ -361,7 +367,13 @@
               },
               {
                 "type": "string",
-                "description": "\"constant\" (a parameter named <variable>_<instance> in the parameters file), \"global_constant\" (a parameter shared by every instance, named <variable>), \"boundary_condition\" (a parameter named <variable>_<instance> that a connection can replace), or \"variable\" (computed by the model, not a parameter)"
+                "description": "\"constant\" (a parameter named <variable>_<instance> in the parameters file), \"global_constant\" (a parameter shared by every instance, named <variable>), \"boundary_condition\" (a parameter named <variable>_<instance> that a connection can replace), or \"variable\" (computed by the model, not a parameter)",
+                "enum": [
+                  "constant",
+                  "global_constant",
+                  "boundary_condition",
+                  "variable"
+                ]
               }
             ],
             "minItems": 4,

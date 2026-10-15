@@ -136,6 +136,10 @@ _LIBCUFLYNX_ONLY_KEYS = ('vessel_type', 'BC_type', 'module_file')
 _PORT_KEYS = ('entrance_ports', 'exit_ports', 'general_ports')
 
 SUPERMODULE_FORMAT = 'supermodule'
+#: variables_and_units rows are [name, units, access, kind]: whether the variable is exposed
+#: (public) in the generated model, and which parameters the parameters file must set for it
+VARIABLE_ACCESS = ('access', 'no_access')
+VARIABLE_KINDS = ('constant', 'global_constant', 'boundary_condition', 'variable')
 
 # module arrays used to be called vessel arrays: <prefix>_vessel_array.json/.csv are still read
 LEGACY_ARRAY_SUFFIXES = ('_vessel_array.json', '_vessel_array.csv')
