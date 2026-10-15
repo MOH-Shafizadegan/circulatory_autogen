@@ -2081,6 +2081,11 @@ class ParamID():
         else:
             self.n_steps = None
 
+        # Before the offline warm-up: it binds the traced inputs, which the warm-up holds at
+        # their first value, and the rebuild it does would discard the warm-up's state.
+        if self.protocol_info is not None:
+            self.sim_helper.set_protocol_info(self.protocol_info)
+
         offline_pre_time = None
         if self.protocol_info is not None:
             offline_pre_time = self.protocol_info.get('offline_pre_time')
@@ -2107,9 +2112,6 @@ class ParamID():
             # what issue #328 is about.
             offline_pre_time = float(offline_pre_time)
             self.sim_helper.run_offline_pre_and_set_default_state(offline_pre_time)
-
-        if self.protocol_info is not None:
-            self.sim_helper.set_protocol_info(self.protocol_info)
 
         # initialise
         self.param_init = None

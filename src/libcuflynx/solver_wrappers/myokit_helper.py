@@ -302,12 +302,14 @@ class SimulationHelper(ExperimentTimeMixin):
             return
 
         # Labels left on variables this protocol does not trace would pin them to 0.
+        unbound = False
         for var in self.all_vars:
             if var.qname() not in qnames and _is_trace_label(var.binding()):
                 self._trace_protocols.pop(var.binding(), None)
                 var.set_binding(None)
                 self.trace_labels.pop(var.qname(), None)
-        self._bind_trace_inputs(qnames)
+                unbound = True
+        self._bind_trace_inputs(qnames, rebuild=unbound)
 
     def _load_model(self, path):
         """
@@ -792,6 +794,10 @@ class SimulationHelper(ExperimentTimeMixin):
         offline_pre_time = float(offline_pre_time)
         if offline_pre_time <= 0:
             return
+        # Traced inputs hold experiment 0's first value; set_protocol_info binds them.
+        for qname, value in self._first_input_values().items():
+            self._set_trace_protocol(qname, myokit.TimeSeriesProtocol(
+                [0.0, offline_pre_time], [value, value]))
         self.simulation.reset()
         self.simulation.pre(offline_pre_time)
         new_state = list(self.simulation.state())
@@ -1125,7 +1131,14 @@ class SimulationHelper(ExperimentTimeMixin):
                             raise ValueError(
                                 f"Protocol trace '{trace_name}' is missing 'values' key."
                             )
-                        protocol = myokit.TimeSeriesProtocol(trace['t'], trace['values'])
+                        times, values = list(trace['t']), list(trace['values'])
+                        pre_time = float(self.pre_time or 0.0)
+                        if pre_time > 0:
+                            # The clock starts at the warm-up, the trace at the
+                            # sub-experiment: hold the first value through the warm-up.
+                            times = [0.0] + [float(t) + pre_time for t in times]
+                            values = [values[0]] + values
+                        protocol = myokit.TimeSeriesProtocol(times, values)
                         self._set_trace_protocol(qname, protocol)
 
                     elif not isinstance(val, (float, np.float64, int)):
@@ -1140,6 +1153,7 @@ class SimulationHelper(ExperimentTimeMixin):
                             # calling set_constant.
                             pace_val = float(val)
                             duration = float(max(self.sim_time if self.sim_time is not None else 1.0, self.dt))
+                            duration += float(self.pre_time or 0.0)
                             protocol = myokit.TimeSeriesProtocol(
                                 [0.0, duration],
                                 [pace_val, pace_val],
@@ -1189,12 +1203,13 @@ class SimulationHelper(ExperimentTimeMixin):
                         found.append(qname)
         return found
 
-    def _bind_trace_inputs(self, qnames):
+    def _bind_trace_inputs(self, qnames, rebuild=False):
         """Bind each of *qnames* to its own Myokit label, in one Simulation rebuild.
 
         A variable that already carries a binding keeps it, so an imported ``bind pace``
         stays ``pace``; the others take the first free label of ``pace``, ``pace_1``, ....
-        The simulation's state and time are kept across the rebuild.
+        The Simulation is rebuilt only when a binding changed (or *rebuild* is set), keeping
+        its state and time; with nothing to change, the state an offline warm-up left stays.
         """
         for qname in qnames:
             if qname not in self.qname_to_var:
@@ -1209,7 +1224,10 @@ class SimulationHelper(ExperimentTimeMixin):
                 label = next(lbl for lbl in _trace_label_candidates() if lbl not in used)
                 var.set_binding(label)
                 used.add(label)
+                rebuild = True
             self.trace_labels[qname] = label
+        if not rebuild:
+            return
 
         current_state = self.simulation.state()
         current_time = self.simulation.time()
@@ -1218,6 +1236,19 @@ class SimulationHelper(ExperimentTimeMixin):
         self._recreate_simulation()
         self.simulation.set_state(current_state)
         self.simulation.set_time(current_time)
+
+    def _first_input_values(self):
+        """{qname: value} of each traced input at the start of experiment 0."""
+        params_to_change = (self.protocol_info or {}).get("params_to_change") or {}
+        traces = (self.protocol_info or {}).get("protocol_traces") or {}
+        first = {}
+        for name, exp_values in params_to_change.items():
+            _, qname = self._resolve_name(name)
+            if qname not in self.trace_labels:
+                continue
+            val = exp_values[0][0]
+            first[qname] = float(traces[val]["values"][0] if isinstance(val, str) else val)
+        return first
 
     def _set_trace_protocol(self, qname, protocol):
         """Drive traced input *qname* with *protocol*, through its own label."""

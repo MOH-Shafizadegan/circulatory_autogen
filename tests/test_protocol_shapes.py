@@ -631,3 +631,82 @@ def test_non_myokit_backends_refuse_protocol_traces_explicitly(module_name, back
     assert "NotImplementedError" in src
     assert "CVODE_myokit" in src, (
         f"{backend_label} error should point at the solver that does support traces")
+
+
+# dx/dt = u, y = u (issue #556)
+_PROBE_CELLML = """<?xml version="1.0" encoding="UTF-8"?>
+<model xmlns="http://www.cellml.org/cellml/2.0#" xmlns:cellml="http://www.cellml.org/cellml/2.0#" name="probe">
+  <units name="per_second"><unit units="second" exponent="-1"/></units>
+  <component name="comp">
+    <variable name="t" units="second"/>
+    <variable name="u" units="dimensionless" initial_value="0"/>
+    <variable name="y" units="dimensionless"/>
+    <variable name="x" units="dimensionless" initial_value="0"/>
+    <math xmlns="http://www.w3.org/1998/Math/MathML">
+      <apply><eq/><ci>y</ci><ci>u</ci></apply>
+      <apply><eq/><apply><diff/><bvar><ci>t</ci></bvar><ci>x</ci></apply>
+        <apply><times/><ci>u</ci><cn cellml:units="per_second">1</cn></apply></apply>
+    </math>
+  </component>
+</model>"""
+
+_PULSE_SHAPE = {"events": [{"level": 1, "start": 1, "length": 1}]}  # u = 1 on [1, 2]
+_PULSE_TRACE = {"t": [0.0, 0.999, 1.0, 2.0, 2.001, 4.0], "values": [0, 0, 1, 1, 0, 0]}
+_RAMP_SHAPE = {"type": "ramp", "from": 0, "to": 4}  # u = t over the 4 s sub-experiment
+
+
+def _probe_helper(tmp_path):
+    from libcuflynx.solver_wrappers.myokit_helper import SimulationHelper
+
+    path = tmp_path / "probe.cellml"
+    path.write_text(_PROBE_CELLML)
+    return SimulationHelper(str(path), dt=0.25, sim_time=4.0,
+                            solver_info={"MaximumStep": 0.01}, pre_time=0.0)
+
+
+def _run_probe(helper, protocol_info):
+    from libcuflynx.protocol_runners.protocol_executor import ProtocolExecutor
+
+    helper.set_protocol_info(protocol_info)
+    ok, by_sub, _, t_by_exp = ProtocolExecutor(helper).run_protocol(
+        protocol_info, result_variables=["comp/y", "comp/x"])
+    assert ok
+    u, x = (np.ravel(np.asarray(r, dtype=float)) for r in by_sub[(0, 0)])
+    return np.asarray(t_by_exp[0], dtype=float), u, x
+
+
+@pytest.mark.integration
+@pytest.mark.solver
+@pytest.mark.parametrize("kind", ["shape", "trace", "ramp"])
+def test_first_subexperiment_input_is_timed_from_its_own_start(kind, tmp_path):
+    """With a warm-up, an input's t = 0 is still the start of its sub-experiment (#556)."""
+    info = {"pre_times": [2.0], "sim_times": [[4.0]], "params_to_change": {"comp/u": [["in"]]}}
+    if kind == "trace":
+        info["protocol_traces"] = {"in": _PULSE_TRACE}
+    else:
+        info["protocol_shapes"] = {"in": _RAMP_SHAPE if kind == "ramp" else _PULSE_SHAPE}
+    t, u, x = _run_probe(_probe_helper(tmp_path), info)
+
+    at = {float(v): i for i, v in enumerate(np.round(t, 6))}
+    assert x[0] == pytest.approx(0.0, abs=1e-6)  # the warm-up held u at its first value, 0
+    if kind == "ramp":
+        assert u[at[1.5]] == pytest.approx(1.5, abs=1e-6)
+        assert x[-1] == pytest.approx(8.0, abs=1e-3)
+    else:
+        assert u[at[0.5]] == pytest.approx(0.0, abs=1e-6)
+        assert u[at[1.5]] == pytest.approx(1.0, abs=1e-6)
+        assert x[-1] == pytest.approx(1.0, abs=1e-2)
+
+
+@pytest.mark.integration
+@pytest.mark.solver
+def test_offline_pre_time_holds_traced_input_at_first_value(tmp_path):
+    """The offline warm-up drives a traced input at experiment 0's first value, not at 0."""
+    info = {"pre_times": [0.0], "sim_times": [[1.0]], "params_to_change": {"comp/u": [["in"]]},
+            "protocol_traces": {"in": {"t": [0.0, 1.0], "values": [1.0, 1.0]}}}
+    helper = _probe_helper(tmp_path)
+    helper.set_protocol_info(info)
+    helper.run_offline_pre_and_set_default_state(3.0)
+    _, _, x = _run_probe(helper, info)
+    assert x[0] == pytest.approx(3.0, abs=1e-3)
+    assert x[-1] == pytest.approx(4.0, abs=1e-3)
