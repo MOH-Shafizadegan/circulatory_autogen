@@ -24,6 +24,7 @@ import re
 from datetime import date
 
 from libcuflynx.utilities.protocol_shapes import materialise_shapes, validate_trace_references
+from libcuflynx.schemas import OBS_DATA_SCHEMA, PARAMS_FOR_ID_SCHEMA
 from libcuflynx.utilities.obs_data_helpers import (LEGACY_OBS_ITEM_KEYS, LEGACY_OBS_KEY_ADVICE,
                                         migrate_legacy_obs_item_keys, check_obs_data_name,
                                         DEFAULT_COST_TYPE, PREVIOUS_DEFAULT_COST_TYPE,
@@ -3528,6 +3529,35 @@ def _held_out_std(entry, entry_idx):
     return float(stds[0]) if entry['data_type'] == 'constant' else stds.tolist()
 
 
+def validate_schema(schema_name, document, source='', what='file'):
+    """Check ``document`` against the shipped schema ``schema_name`` (libcuflynx.schemas)."""
+    from libcuflynx.schemas.validation import validate
+    validate(schema_name, document, source=source, what=what)
+
+
+#: data_type values that were removed, and what to write instead
+REMOVED_DATA_TYPES = {
+    'prob_dist': (
+        'data_type "prob_dist" has been removed (issue #421). It described the ground truth '
+        'rather than the data: the feature is an ordinary scalar, and comparing it against a '
+        'distribution is the cost function\'s job. Write "data_type": "constant" with a '
+        'cost_type that scores against a distribution (kernel_density_estimation, '
+        'multimodal_gaussian, poisson_MLE), keep the item\'s "prob_dist_params", and drop its '
+        'now-unread "value" and "std".'),
+}
+
+
+def check_removed_obs_data_values(json_obj):
+    """Raise, with what to write instead, for a value obs_data no longer accepts. Run before
+    the schema, whose error would only say the value is not allowed."""
+    items = json_obj if isinstance(json_obj, list) else (
+        (json_obj.get('data_items') or json_obj.get('data_item') or [])
+        if isinstance(json_obj, dict) else [])
+    for item in items if isinstance(items, list) else []:
+        if isinstance(item, dict) and item.get('data_type') in REMOVED_DATA_TYPES:
+            raise ValueError(REMOVED_DATA_TYPES[item['data_type']])
+
+
 class ObsAndParamDataParser(object):
     def __init__(self, modifier_funcs_external_path=None):
         # Optional external file of user modifier functions (issue #383), threaded from the
@@ -3558,6 +3588,12 @@ class ObsAndParamDataParser(object):
         else:
             print("No obs data path or obs data dict provided, exiting")
             return None
+
+        # The schema owns the file's structure (keys, types, enums); what follows reads it,
+        # migrates legacy spellings and fills defaults, and checks what needs the protocol.
+        check_removed_obs_data_values(json_obj)
+        validate_schema(OBS_DATA_SCHEMA, json_obj, source=param_id_obs_path or 'obs_data',
+                        what='obs_data file')
 
         # Optional top-level "obs_data_name" (the parameterisation/data set the file belongs
         # to); warns when a file filed under parameterisations/<name>/ (or the older
@@ -3794,52 +3830,33 @@ class ObsAndParamDataParser(object):
                     exit()
                 protocol_info = {"pre_times": [pre_time], "sim_times": [[sim_time]], "params_to_change": {}}
 
-            protocol_schema = {
-                "pre_times": {"types": (list, tuple, np.ndarray), "default": [pre_time] if pre_time is not None else REQUIRED},
-                "sim_times": {"types": (list, tuple, np.ndarray), "default": [[sim_time]] if sim_time is not None else REQUIRED},
-                "params_to_change": {"types": (dict,), "default": {}},
-                "offline_pre_time": {"types": (float, int), "default": None},
-                "experiment_labels": {"types": (list, tuple, np.ndarray), "default": None},
-                "experiment_ids": {"types": (list, tuple, np.ndarray), "default": None},
-                "experiment_colors": {"types": (list, tuple, np.ndarray), "default": None},
-                "comment": {"types": (str,), "default": None},
-                "protocol_traces": {"types": (dict,), "default": {}},
+            protocol_defaults = {
+                "pre_times": [pre_time] if pre_time is not None else REQUIRED,
+                "sim_times": [[sim_time]] if sim_time is not None else REQUIRED,
+                "params_to_change": {},
+                "offline_pre_time": None,
+                "experiment_labels": None,
+                "experiment_ids": None,
+                "experiment_colors": None,
+                "comment": None,
+                "protocol_traces": {},
                 # The same waveforms written as Myokit-style events rather than
                 # point tables; expanded into protocol_traces below.
-                "protocol_shapes": {"types": (dict,), "default": {}},
+                "protocol_shapes": {},
             }
 
-            unknown_protocol_keys = sorted(set(protocol_info.keys()) - set(protocol_schema.keys()))
-            if len(unknown_protocol_keys) > 0:
-                raise ValueError(
-                    f"Unknown protocol_info keys not in schema: {unknown_protocol_keys}"
-                )
-
+            # keys and types are the schema's; here each missing key gets its default
             missing_protocol_required = []
-            protocol_type_errors = []
-            for key, rules in protocol_schema.items():
-                allowed = rules["types"]
-                default = rules["default"]
-
+            for key, default in protocol_defaults.items():
                 if key not in protocol_info or _is_missing_scalar(protocol_info[key]):
                     if default == REQUIRED:
                         missing_protocol_required.append(key)
                     else:
                         protocol_info[key] = copy.deepcopy(default)
-                        continue
-
-                if protocol_info[key] is not None and not isinstance(protocol_info[key], allowed):
-                    protocol_type_errors.append(
-                        f"protocol_info['{key}']: expected {allowed}, got {type(protocol_info[key])}"
-                    )
 
             if len(missing_protocol_required) > 0:
                 raise ValueError(
                     f"Missing required protocol_info keys: {sorted(missing_protocol_required)}"
-                )
-            if len(protocol_type_errors) > 0:
-                raise ValueError(
-                    "Invalid protocol_info value types:\n" + "\n".join(protocol_type_errors)
                 )
 
             validate_params_to_change(protocol_info)
@@ -3852,10 +3869,6 @@ class ObsAndParamDataParser(object):
             # Load Prediction Info
             if 'prediction_items' in json_obj.keys():
                 prediction_items = json_obj['prediction_items']
-                if not isinstance(prediction_items, (list, tuple)):
-                    raise ValueError(
-                        f"prediction_items must be a list of dict entries, got {type(prediction_items)}"
-                    )
 
                 prediction_items = migrate_legacy_obs_item_keys(
                     prediction_items, 'prediction_items', variable_was_the_operand=True)
@@ -3863,35 +3876,29 @@ class ObsAndParamDataParser(object):
                 # A prediction_item is a data_item without a ground truth, so it carries the
                 # same names. Its `operands` is the single model variable to record; the
                 # legacy spelling was `variable`, which also named the item (#466).
-                prediction_entry_schema = {
-                    "data_item_name": {"types": (str,), "default": REQUIRED},
-                    "operands": {"types": (list, tuple, np.ndarray), "default": REQUIRED},
-                    "unit": {"types": (str,), "default": REQUIRED},
-                    "trace_name_for_plotting": {
-                        "types": (str,),
-                        "default": lambda entry: str((entry.get("operands") or [''])[0])
-                        or str(entry.get("data_item_name", ''))},
-                    "item_name_for_plotting": {
-                        "types": (str,),
-                        "default": lambda entry: str(entry.get("trace_name_for_plotting", ''))},
-                    "experiment_idx": {"types": (int, np.integer), "default": 0},
+                prediction_entry_defaults = {
+                    "data_item_name": REQUIRED,
+                    "operands": REQUIRED,
+                    "unit": REQUIRED,
+                    "trace_name_for_plotting": lambda entry: str((entry.get("operands") or [''])[0])
+                        or str(entry.get("data_item_name", '')),
+                    "item_name_for_plotting": lambda entry: str(entry.get("trace_name_for_plotting", '')),
+                    "experiment_idx": 0,
                     # Optional measured data for the prediction: held-out data it is checked
                     # against afterwards, never scored in the calibration. A series needs obs_dt.
-                    "data_type": {"types": (str,), "default": None},
-                    "value": {"types": (int, float, np.integer, np.floating, list, tuple, np.ndarray),
-                              "default": None},
-                    "std": {"types": (int, float, np.integer, np.floating, list, tuple, np.ndarray),
-                            "default": None},
-                    "obs_dt": {"types": (int, float, np.integer, np.floating), "default": None},
+                    "data_type": None,
+                    "value": None,
+                    "std": None,
+                    "obs_dt": None,
                     # Optional reduction of the operands to one number, with the same vocabulary
                     # as a data_item's. An item with an operation is a scalar *feature*: held-out
                     # data is compared with operation(operands), and sensitivity analysis and
                     # emulator training can include it (include_prediction_items).
-                    "operation": {"types": (str,), "default": None},
-                    "operation_kwargs": {"types": (dict,), "default": None},
+                    "operation": None,
+                    "operation_kwargs": None,
                     # The sub-experiment of experiment_idx the item's operands are recorded over;
                     # defaults to that experiment's last one.
-                    "subexperiment_idx": {"types": (int, np.integer), "default": None},
+                    "subexperiment_idx": None,
                 }
                 optional_ground_truth = ("data_type", "value", "std", "obs_dt",
                                          "operation", "operation_kwargs", "subexperiment_idx")
@@ -3899,44 +3906,19 @@ class ObsAndParamDataParser(object):
 
                 prediction_info = _empty_prediction_info()
                 for entry_idx, raw_entry in enumerate(prediction_items):
-                    if not isinstance(raw_entry, dict):
-                        raise ValueError(
-                            f"prediction_items[{entry_idx}] must be a dict, got {type(raw_entry)}"
-                        )
                     entry = copy.deepcopy(raw_entry)
-
-                    unknown_pred_keys = sorted(set(entry.keys()) - set(prediction_entry_schema.keys()))
-                    if len(unknown_pred_keys) > 0:
-                        raise ValueError(
-                            f"Unknown keys in prediction_items[{entry_idx}] not in schema: {unknown_pred_keys}"
-                        )
-
+                    # keys and types are the schema's; here each missing key gets its default
                     missing_pred_required = []
-                    pred_type_errors = []
-                    for key, rules in prediction_entry_schema.items():
-                        allowed = rules["types"]
-                        default = rules["default"]
-
+                    for key, default in prediction_entry_defaults.items():
                         if key not in entry or _is_missing_scalar(entry[key]):
                             if default == REQUIRED:
                                 missing_pred_required.append(key)
                                 continue
                             entry[key] = default(entry) if callable(default) else copy.deepcopy(default)
 
-                        if key in optional_ground_truth and entry[key] is None:
-                            continue
-                        if not isinstance(entry[key], allowed):
-                            pred_type_errors.append(
-                                f"prediction_items[{entry_idx}]['{key}']: expected {allowed}, got {type(entry[key])}"
-                            )
-
                     if len(missing_pred_required) > 0:
                         raise ValueError(
                             f"Missing required keys in prediction_items[{entry_idx}]: {sorted(missing_pred_required)}"
-                        )
-                    if len(pred_type_errors) > 0:
-                        raise ValueError(
-                            "Invalid prediction_items value types:\n" + "\n".join(pred_type_errors)
                         )
 
                     prediction_info['operands'].append(list(entry['operands']))
@@ -3999,71 +3981,63 @@ class ObsAndParamDataParser(object):
 
         # Fill common optional fields so downstream processing can rely on defaults.
         if gt_df is not None:
-            schema = {
+            item_defaults = {
                 # The item's identity. Unique across data_items and prediction_items, because
                 # it is what an operation_kwargs value naming another item resolves against
                 # (#466) -- two items answering to one name means a reference silently picks
                 # whichever was computed last. Spelled `variable` before #466, which also stood
                 # in as the operand; that fallback is gone and `operands` is required.
-                "data_item_name": {"types": (str,), "default": REQUIRED},
-                "data_type": {"types": (str,), "default": REQUIRED},
-                "unit": {"types": (str,), "default": REQUIRED},
-                "weight": {"types": (int, float, np.integer, np.floating, list, np.ndarray), "default": 1.0},
-                "operands": {"types": (list, tuple, np.ndarray), "default": REQUIRED},
-                "operation": {"types": (str,), "default": None},
+                "data_item_name": REQUIRED,
+                "data_type": REQUIRED,
+                "unit": REQUIRED,
+                "weight": 1.0,
+                "operands": REQUIRED,
+                "operation": None,
                 # Two labels, because the old `name_for_plotting` named two things. The trace name
                 # is the axis label of the series; the item name is the label of the scalar the
                 # operation reduces it to, and is what a sensitivity table lists. Deliberately
                 # allowed to repeat -- the mean and the max of one trace share a trace name.
-                "trace_name_for_plotting": {"types": (str,),
-                                            "default": default_trace_names_for_plotting},
-                "item_name_for_plotting": {"types": (str,),
-                                           "default": default_item_names_for_plotting},
-                "operation_kwargs": {"types": (dict,), "default": lambda df: [{} for _ in range(len(df))]},
+                "trace_name_for_plotting": default_trace_names_for_plotting,
+                "item_name_for_plotting": default_item_names_for_plotting,
+                "operation_kwargs": lambda df: [{} for _ in range(len(df))],
                 # Extra keyword arguments for the data_item's cost_type func (issue #84), the
                 # cost-side counterpart of operation_kwargs. std and weight are supplied by CA
                 # from the fields above and are rejected here -- see param_id.cost_kwargs.
-                "cost_kwargs": {"types": (dict,), "default": lambda df: [{} for _ in range(len(df))]},
+                "cost_kwargs": lambda df: [{} for _ in range(len(df))],
                 # The scalar ground truth, and required as such -- but only for an item that
                 # has one. An item whose cost scores it against a distribution states its
                 # ground truth in "prob_dist_params" instead, and carrying a dummy value/std
                 # alongside would be a number nothing reads (issue #421). Enforced per row
                 # below rather than by REQUIRED, which is per column.
-                "value": {"types": (int, float, np.integer, np.floating, list, np.ndarray), "default": np.nan},
-                "std": {"types": (int, float, np.integer, np.floating, list, np.ndarray), "default": np.nan},
-                "experiment_idx": {"types": (int, np.integer), "default": 0},
-                "subexperiment_idx": {"types": (int, np.integer), "default": 0},
-                "plot_type": {"types": (str,), "default": None},
-                "plot_color": {"types": (str,), "default": None},
-                "comment": {"types": (str,), "default": None},
-                "cost_type": {"types": (str,), "default": DEFAULT_COST_TYPE},
-                "obs_type": {"types": (str,), "default": None},
-                "frequencies": {"types": (list, tuple, np.ndarray, int, float, np.integer, np.floating), "default": None},
+                "value": np.nan,
+                "std": np.nan,
+                "experiment_idx": 0,
+                "subexperiment_idx": 0,
+                "plot_type": None,
+                "plot_color": None,
+                "comment": None,
+                "cost_type": DEFAULT_COST_TYPE,
+                "obs_type": None,
+                "frequencies": None,
                 # If omitted, phase weighting should follow the same weighting as amplitude.
-                "phase_weight": {"types": (int, float, np.integer, np.floating, list, np.ndarray), "default": lambda df: df["weight"]},
-                "phase": {"types": (list, tuple, np.ndarray, int, float, np.integer, np.floating), "default": None},
-                "prob_dist_params": {"types": (dict,), "default": None},
-                "obs_dt": {"types": (int, float, np.integer, np.floating), "default": None},
-                "dt": {"types": (int, float, np.integer, np.floating), "default": None},
-                "sample_rate": {"types": (int, float, np.integer, np.floating), "default": None},
-                "species": {"types": (str,), "default": None},
-                "location": {"types": (str,), "default": None},
-                "source": {"types": (str, dict), "default": None},
-                "t_path": {"types": (str,), "default": None},
-                "value_path": {"types": (str,), "default": None},
+                "phase_weight": lambda df: df["weight"],
+                "phase": None,
+                "prob_dist_params": None,
+                "obs_dt": None,
+                "dt": None,
+                "sample_rate": None,
+                "species": None,
+                "location": None,
+                "source": None,
+                "t_path": None,
+                "value_path": None,
             }
 
             # A gt_df handed in directly has not been through migrate_legacy_obs_item_keys,
             # and building one in python is a supported way to drive a run (#466).
             gt_df = migrate_legacy_obs_columns(gt_df)
 
-            unknown_cols = sorted(set(gt_df.columns) - set(schema.keys()))
-            if len(unknown_cols) > 0:
-                raise ValueError(
-                    f"Unknown data_item keys not in schema: {unknown_cols}"
-                )
-
-            type_errors = []
+            # keys and types are the schema's; here each missing column gets its default
             missing_required_cols = []
             # No data items at all is a valid obs_data: a protocol-only file says
             # how to drive the model without yet saying what to measure, which is
@@ -4077,13 +4051,11 @@ class ObsAndParamDataParser(object):
             # made every read a KeyError and an obs_data carrying only protocol_info
             # impossible to open at all.
             if len(gt_df) == 0:
-                for col in schema:
+                for col in item_defaults:
                     if col not in gt_df.columns:
                         gt_df[col] = pd.Series(dtype=object)
 
-            for col, rules in ({} if len(gt_df) == 0 else schema).items():
-                allowed = rules["types"]
-                default = rules["default"]
+            for col, default in ({} if len(gt_df) == 0 else item_defaults).items():
 
                 if col not in gt_df.columns:
                     if default == REQUIRED:
@@ -4103,14 +4075,6 @@ class ObsAndParamDataParser(object):
                             else:
                                 gt_df[col] = gt_df[col].where(~missing_mask, default)
 
-                for row_idx, val in gt_df[col].items():
-                    if _is_missing_scalar(val):
-                        continue
-                    if not isinstance(val, allowed):
-                        type_errors.append(
-                            f"row {row_idx}, column '{col}': expected {allowed}, got {type(val)}"
-                        )
-
             if len(missing_required_cols) > 0:
                 hint = ""
                 if "data_item_name" in missing_required_cols:
@@ -4124,22 +4088,8 @@ class ObsAndParamDataParser(object):
 
             # An obs_data with no data_items is valid -- a protocol-only file says how to drive
             # the model without yet saying what to measure -- and the schema loop above is
-            # skipped for it, so none of these columns exist to validate.
-            bad_data_types = sorted({str(dt) for dt in gt_df["data_type"]}
-                                    - set(VALID_DATA_TYPES)) if len(gt_df) else []
-            if "prob_dist" in bad_data_types:
-                raise ValueError(
-                    'data_type "prob_dist" has been removed (issue #421). It described the '
-                    'ground truth rather than the data: the feature is an ordinary scalar, and '
-                    'comparing it against a distribution is the cost function\'s job. Write '
-                    '"data_type": "constant" with a cost_type that scores against a '
-                    'distribution (kernel_density_estimation, multimodal_gaussian, '
-                    'poisson_MLE), keep the item\'s "prob_dist_params", and drop its now-unread '
-                    '"value" and "std".')
-            if bad_data_types:
-                raise ValueError(
-                    f"Unknown data_item data_type(s) {bad_data_types}. "
-                    f"Valid data_types: {list(VALID_DATA_TYPES)}.")
+            # skipped for it, so none of these columns exist to validate. (data_type values are
+            # the schema's, with check_removed_obs_data_values advising on removed ones.)
 
             missing_ground_truth = []
             for row_idx in range(len(gt_df)):
@@ -4157,11 +4107,6 @@ class ObsAndParamDataParser(object):
                     "'value' and 'std', or 'prob_dist_params' for a cost that compares "
                     "against a distribution (kernel_density_estimation, multimodal_gaussian, "
                     "poisson_MLE). " + "; ".join(missing_ground_truth))
-
-            if len(type_errors) > 0:
-                raise ValueError(
-                    "Invalid data_item value types:\n" + "\n".join(type_errors)
-                )
 
             # A scalar item carries a number, a series a list -- never the other.
             for row_idx in range(len(gt_df)):
@@ -4658,8 +4603,20 @@ class ObsAndParamDataParser(object):
 
         return {'version': PARAMS_FOR_ID_JSON_VERSION, 'defaults': {}, 'params': params}
 
+    @staticmethod
+    def _lower_prior_names(doc):
+        """``doc`` with each entry's (and the defaults') ``prior`` in lower case, the only
+        spelling the schema has."""
+        if not isinstance(doc, dict):
+            return doc
+        doc = copy.deepcopy(doc)
+        for entry in ([doc.get('defaults')] + list(doc.get('params') or [])):
+            if isinstance(entry, dict) and isinstance(entry.get('prior'), str):
+                entry['prior'] = entry['prior'].strip().lower()
+        return doc
+
     @classmethod
-    def resolve_params_for_id_doc(cls, doc, modifier_funcs=None):
+    def resolve_params_for_id_doc(cls, doc, modifier_funcs=None, source=''):
         """Validate a params_for_id document and fold `defaults` into each entry.
 
         Resolution is a shallow per-key override -- an entry's own key wins over `defaults`, which
@@ -4670,45 +4627,21 @@ class ObsAndParamDataParser(object):
         ``modifier_funcs`` is the registry modifier entries validate against (operation names,
         declared inputs); defaults to the built-in + funcs_user registry. Pass
         ``get_modifier_funcs(external_path)`` to also accept externally-defined functions.
+        ``source`` names the file in an error.
         """
         if modifier_funcs is None:
             modifier_funcs = get_modifier_funcs(None)
-        if not isinstance(doc, dict):
-            raise ValueError(
-                f'params_for_id JSON must be an object with a "params" list, got '
-                f'{type(doc).__name__}.')
-
-        version = doc.get('version', PARAMS_FOR_ID_JSON_VERSION)
-        if int(version) != PARAMS_FOR_ID_JSON_VERSION:
-            raise ValueError(
-                f'params_for_id JSON version {version} is not supported by this version of '
-                f'circulatory_autogen (expected {PARAMS_FOR_ID_JSON_VERSION}).')
-
-        params = doc.get('params')
-        if not isinstance(params, list) or not params:
-            raise ValueError('params_for_id JSON needs a non-empty "params" list.')
-
+        # The schema owns the document's structure (keys, types, the version, the prior names
+        # and each prior's settings); prior names are read in any case, so they are lowered first.
+        doc = cls._lower_prior_names(doc)
+        validate_schema(PARAMS_FOR_ID_SCHEMA, doc, source=source or 'params_for_id',
+                        what='params_for_id file')
+        params = doc['params']
         defaults = doc.get('defaults') or {}
-        if not isinstance(defaults, dict):
-            raise ValueError(
-                f'params_for_id "defaults" must be an object, got {type(defaults).__name__}.')
-        unknown_defaults = set(defaults) - PARAMS_FOR_ID_ENTRY_KEYS
-        if unknown_defaults:
-            raise ValueError(
-                f'params_for_id "defaults" has unknown key(s) {sorted(unknown_defaults)}. '
-                f'Valid keys are the entry keys: {sorted(PARAMS_FOR_ID_ENTRY_KEYS)}.')
 
         resolved = []
         seen_names = {}
         for idx, raw in enumerate(params):
-            if not isinstance(raw, dict):
-                raise ValueError(
-                    f'params_for_id entry {idx} must be an object, got {type(raw).__name__}.')
-            unknown = set(raw) - PARAMS_FOR_ID_ENTRY_KEYS
-            if unknown:
-                raise ValueError(
-                    f'params_for_id entry {idx} has unknown key(s) {sorted(unknown)}. Valid '
-                    f'keys: {sorted(PARAMS_FOR_ID_ENTRY_KEYS)}.')
 
             entry = {k: v for k, v in defaults.items() if k != 'prior_params'}
             entry.update({k: v for k, v in raw.items() if k != 'prior_params'})
@@ -4914,7 +4847,8 @@ class ObsAndParamDataParser(object):
         else:
             doc = self.params_for_id_csv_to_json(params_for_id_path)
         entries = self.resolve_params_for_id_doc(
-            doc, modifier_funcs=get_modifier_funcs(self.modifier_funcs_external_path))
+            doc, modifier_funcs=get_modifier_funcs(self.modifier_funcs_external_path),
+            source=str(params_for_id_path))
         return self._build_param_id_info_from_entries(entries, idxs_to_ignore=idxs_to_ignore)
 
     def get_param_id_info_from_entries(self, params_for_id_entries, idxs_to_ignore=None):

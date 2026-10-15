@@ -820,7 +820,8 @@
                 ]
               }
             }
-          }
+          },
+          "description": "A held-out constant's value and std are single numbers."
         },
         {
           "if": {
@@ -861,7 +862,8 @@
             "required": [
               "obs_dt"
             ]
-          }
+          },
+          "description": "A held-out series' value is a list of numbers, and it needs obs_dt."
         }
       ]
     },

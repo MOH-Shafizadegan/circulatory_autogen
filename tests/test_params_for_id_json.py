@@ -149,7 +149,7 @@ def test_an_unknown_entry_key_is_refused():
     """Same stance as operation_kwargs/cost_kwargs: a key nothing reads changes nothing and gives
     no sign it was ignored."""
     parser = _parser()
-    with pytest.raises(ValueError, match='unknown key'):
+    with pytest.raises(ValueError, match='was unexpected'):
         parser.resolve_params_for_id_doc(
             {'version': 1, 'params': [{'targets': ['x/C'], 'min': 1, 'max': 2, 'mn': 0.1}]})
 
@@ -157,7 +157,7 @@ def test_an_unknown_entry_key_is_refused():
 @pytest.mark.unit
 def test_an_unknown_defaults_key_is_refused():
     parser = _parser()
-    with pytest.raises(ValueError, match='unknown key'):
+    with pytest.raises(ValueError, match='was unexpected'):
         parser.resolve_params_for_id_doc(
             {'version': 1, 'defaults': {'priorr': 'uniform'},
              'params': [{'targets': ['x/C'], 'min': 1, 'max': 2}]})
@@ -177,7 +177,7 @@ def test_duplicate_entry_names_are_refused():
 def test_a_target_without_a_component_is_refused():
     """The most common typo, and it used to fail much later and less clearly."""
     parser = _parser()
-    with pytest.raises(ValueError, match="not a 'component/param' name"):
+    with pytest.raises(ValueError, match=r"(?s)'C' is not in the form.*component/param"):
         parser.resolve_params_for_id_doc(
             {'version': 1, 'params': [{'targets': ['C'], 'min': 1, 'max': 2}]})
 

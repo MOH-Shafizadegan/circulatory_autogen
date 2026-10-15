@@ -91,6 +91,9 @@ dependencies = [
     # statsmodels.regression.linear_model.yule_walker to do it. The import is function-scope,
     # so an extra would surface as a failure at the end of a chain that had already run.
     "statsmodels>=0.12.0",
+    # Every reader validates its file against the shipped JSON Schema (libcuflynx.schemas):
+    # the schemas own the input files' structure.
+    "jsonschema>=4.0",
 ]
 
 [project.scripts]
@@ -223,10 +226,6 @@ dev = [
     # those tests need tomli. They used to `pytest.importorskip` it and pass by skipping,
     # which meant a green run said nothing at all about pyproject.toml.
     "tomli; python_version < '3.11'",
-    # tests/test_json_module_arrays.py validates module arrays and module configs against the
-    # shipped JSON Schemas (src/libcuflynx/schemas). Test-only: the loaders check the same
-    # rules themselves, so it is not a runtime dependency.
-    "jsonschema>=4.0",
     # Whole extras, not a hand-picked subset of them. `[dev]` listing `mpi4py` on its own
     # was enough to collect the suite (tests/conftest.py does `from mpi4py import MPI` at
     # module scope) but not to run it: paramID's multi-rank branch imports `schwimmbad`,

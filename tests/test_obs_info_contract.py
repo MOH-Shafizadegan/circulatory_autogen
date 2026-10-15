@@ -353,8 +353,8 @@ def test_a_prediction_can_carry_held_out_data():
 
 @pytest.mark.unit
 @pytest.mark.parametrize("item, message", [
-    ({"value": [1.0, 2.0]}, "needs data_type"),
-    ({"value": [1.0, 2.0], "data_type": "series"}, "needs obs_dt"),
+    ({"value": [1.0, 2.0]}, r"'data_type' is a required property"),
+    ({"value": [1.0, 2.0], "data_type": "series"}, r"'obs_dt' is a required property"),
 ])
 def test_held_out_data_on_a_prediction_must_say_what_it_is(item, message):
     parser = ObsAndParamDataParser()
@@ -388,7 +388,7 @@ def test_a_prediction_can_carry_an_operation():
 @pytest.mark.unit
 @pytest.mark.parametrize("item, message", [
     ({"operation_kwargs": {"x": 1}}, "operation_kwargs but no operation"),
-    ({"operation": 3}, "Invalid prediction_items value types"),
+    ({"operation": 3}, r"operation: 3 is not of type"),
     ({"operation": "max", "operation_kwargs": {"ref": "a/c0"}}, "references data_item"),
 ])
 def test_a_prediction_operation_is_checked_at_parse_time(item, message):
@@ -434,12 +434,12 @@ def test_a_prediction_operation_kwargs_key_is_checked_like_a_data_items():
 # One item is a scalar or a series, never both
 # ---------------------------------------------------------------------------
 _SHAPE_CASES = [
-    ({"data_type": "constant", "value": [1.0, 2.0], "std": 0.1}, "must be a single number"),
-    ({"data_type": "constant", "value": 1.0, "std": [0.1, 0.1]}, "std must be a single number"),
-    ({"data_type": "series", "value": 1.0, "std": 0.1, "obs_dt": 0.1}, "must be a list"),
+    ({"data_type": "constant", "value": [1.0, 2.0], "std": 0.1}, r"value: .* is not of type 'number'"),
+    ({"data_type": "constant", "value": 1.0, "std": [0.1, 0.1]}, r"std: .* is not of type 'number'"),
+    ({"data_type": "series", "value": 1.0, "std": 0.1, "obs_dt": 0.1}, r"value: 1.0 is not of type 'array'"),
     ({"data_type": "series", "value": [1.0, 2.0], "std": [0.1, 0.1, 0.1], "obs_dt": 0.1},
      r"2 values but has 3 stds|length \(3\) does not match series length \(2\)"),
-    ({"data_type": "series", "value": [1.0, 2.0], "std": 0.1}, "needs obs_dt"),
+    ({"data_type": "series", "value": [1.0, 2.0], "std": 0.1}, r"'obs_dt' is a required property"),
 ]
 
 

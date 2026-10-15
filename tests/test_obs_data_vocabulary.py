@@ -190,7 +190,8 @@ def test_a_missing_data_item_name_says_what_replaced_variable():
     with pytest.raises(ValueError) as excinfo:
         _parse(_doc([item]))
     msg = str(excinfo.value)
-    assert 'data_item_name' in msg and "'variable'" in msg
+    # the schema's rule says what replaced variable
+    assert 'data_item_name' in msg and 'deprecated name variable' in msg
 
 
 # --------------------------------------------------------------------------- prediction items
