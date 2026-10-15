@@ -21,6 +21,16 @@ Parameterisations:
 * ``twin/split`` -- ``calibration_workflow.json``: fit_a and fit_b, independent.
 * ``chain/rest`` -- z = Z_C with p_A fixed from fit_a: q = sqrt(Z_C - Y_A) (3 by default);
   ``calibration_workflow.json``: fit_a, then rest with fixed_from fit_a.
+* ``chain/screened`` -- ``calibration_workflow.json`` (``chain_analysed``): fit_a; ``screen``, a
+  Sobol analysis of z over p_A in [1.9, 2.1] and q_C in [0.1, 10], where q_C dominates;
+  ``reduce``, which keeps the one most influential parameter; ``fit``, which calibrates what
+  ``reduce`` kept with p_A fixed from fit_a (q = 3, as chain/rest); and ``ia``, a Laplace
+  identifiability analysis at ``fit``'s result: std(q) = STD_C / (2 q) = STD_C / 6.
+* ``chain/pipeline`` -- ``calibration_workflow.json`` (``chain_pipeline``), a whole study:
+  fit_a calibrates the submodule A; ``screen``, a Sobol analysis of z in the chain (p_A fixed)
+  over q_C in [0.1, 10] and the gain k_C in [0.9, 1.1], where q_C dominates; ``reduce`` keeps
+  it; ``emulate`` trains an emulator of z over q_C alone; ``posterior`` calibrates q_C on the
+  emulator and samples its posterior by MCMC: median 3, std about STD_C / 6.
 
 Module arrays (``arrays/``), the same chain without the module library's layout: ``a_only``
 (one record ``A``, lin_a) and ``chain`` (``A`` feeding ``C``), with their parameters files and
@@ -43,6 +53,16 @@ OPTIMISER_SETTINGS = {
                           'max_patience': 60, 'seed': 1, 'cost_type': 'gaussian_MLE'},
     'dt': 0.1,
 }
+
+#: A Sobol analysis small enough for a test: (2 D + 2) N = 384 runs for D = 2 parameters.
+SA_OPTIONS = {'method': 'sobol', 'sample_type': 'saltelli', 'num_samples': 64}
+#: An emulator a polynomial in one parameter fits exactly, from 32 runs.
+EMULATOR_SETTINGS = {'num_train_samples': 32, 'sample_type': 'sobol', 'random_seed': 0,
+                     'min_r2': 0.9, 'n_iter': 2, 'n_splits': 2,
+                     'models': 'PolynomialRegression'}
+#: MCMC short enough for a test of a one-parameter posterior.
+UQ_OPTIONS = {'num_steps': 200, 'num_walkers': 8, 'burn_in': 0.5}
+IA_OPTIONS = {'method': 'Laplace', 'gradient_source': 'FD'}
 
 _CELLML_HEADER = ("<?xml version='1.0' encoding='UTF-8'?>\n"
                   '<model name="{name}" xmlns="http://www.cellml.org/cellml/1.1#" '
@@ -168,8 +188,8 @@ def _library_step(step_id, module_type, directory, workflow_dir, **extra):
 
 def build_workflow_library(root, settings=None):
     """Write the library under ``root``. Returns a dict of paths: ``modules`` (the module
-    library dir), ``twin_split``, ``chain_rest`` and ``chain_array`` (the workflow files), and the
-    parameterisation directories by ``<type>/<parameterisation>``.
+    library dir), ``twin_split``, ``chain_rest``, ``chain_analysed``, ``chain_pipeline`` and
+    ``chain_array`` (the workflow files), and the parameterisation directories by ``<type>/<parameterisation>``.
 
     ``settings`` replaces the workflows' settings (default ``OPTIMISER_SETTINGS``).
     """
@@ -242,6 +262,69 @@ def build_workflow_library(root, settings=None):
         'steps': [_library_step('fit_a', 'lin_a', paths['lin_a/fit_a'], paths['chain/rest']),
                   _library_step('rest', 'chain', paths['chain/rest'], paths['chain/rest'],
                                 fixed_from=['fit_a'])]})
+
+    paths['chain/screened'] = _parameterisation(
+        modules, 'chain', 'screened', chain_rows, obs=[('z_c', 'mod_C/z', Z_C, STD_C)],
+        params_for_id=[('mod_A', 'p', 1.9, 2.1), ('mod_C', 'q', 0.1, 10.0)])
+    paths['chain_analysed'] = os.path.join(paths['chain/screened'], 'calibration_workflow.json')
+    screened = paths['chain/screened']
+
+    def screened_step(step_id, **extra):
+        return _library_step(step_id, 'chain', screened, screened, **extra)
+
+    fit = screened_step('fit', fixed_from=['fit_a'], params_for_id_from='reduce')
+    del fit['params_for_id']
+    _write_json(paths['chain_analysed'], {
+        'schema_version': 1, 'workflow_name': 'chain_analysed',
+        'description': 'C is found to matter by Sobol analysis, calibrated with A fixed, and '
+                       'its identifiability analysed at the fit',
+        'module_library_dirs': [os.path.relpath(modules, screened)],
+        'settings': settings,
+        'target': _target('chain', 'screened'),
+        'steps': [
+            _library_step('fit_a', 'lin_a', paths['lin_a/fit_a'], screened),
+            screened_step('screen', kind='sensitivity', settings={'sa_options': SA_OPTIONS}),
+            {'id': 'reduce', 'kind': 'reduction', 'sensitivity_from': 'screen',
+             'reduction': {'top_n': 1}},
+            fit,
+            dict(screened_step('ia', kind='identifiability', result_from='fit',
+                               settings={'ia_options': IA_OPTIONS}),
+                 params_for_id=os.path.relpath(
+                     os.path.join(paths['chain/rest'], 'rest_params_for_id.csv'), screened)),
+        ]})
+
+    paths['chain/pipeline'] = _parameterisation(
+        modules, 'chain', 'pipeline', chain_rows, obs=[('z_c', 'mod_C/z', Z_C, STD_C)],
+        params_for_id=[('mod_C', 'q', 0.1, 10.0), ('mod_C', 'k', 0.9, 1.1)])
+    paths['chain_pipeline'] = os.path.join(paths['chain/pipeline'], 'calibration_workflow.json')
+    pipeline = paths['chain/pipeline']
+
+    def pipeline_step(step_id, reduced=False, **extra):
+        step = _library_step(step_id, 'chain', pipeline, pipeline, **extra)
+        if reduced:
+            del step['params_for_id']
+            step['params_for_id_from'] = 'reduce'
+        return step
+
+    _write_json(paths['chain_pipeline'], {
+        'schema_version': 1, 'workflow_name': 'chain_pipeline',
+        'description': 'A calibrated alone; C screened by Sobol analysis, reduced to the '
+                       'parameter that matters, emulated, and its posterior sampled on the '
+                       'emulator',
+        'module_library_dirs': [os.path.relpath(modules, pipeline)],
+        'settings': settings,
+        'target': _target('chain', 'pipeline'),
+        'steps': [
+            _library_step('fit_a', 'lin_a', paths['lin_a/fit_a'], pipeline),
+            pipeline_step('screen', kind='sensitivity', fixed_from=['fit_a'],
+                          settings={'sa_options': SA_OPTIONS}),
+            {'id': 'reduce', 'kind': 'reduction', 'sensitivity_from': 'screen',
+             'reduction': {'top_n': 1}},
+            pipeline_step('emulate', reduced=True, kind='emulation', fixed_from=['fit_a'],
+                          settings={'emulator_settings': EMULATOR_SETTINGS}),
+            pipeline_step('posterior', reduced=True, emulator_from='emulate',
+                          store_distribution=True, settings={'UQ_options': UQ_OPTIONS}),
+        ]})
 
     arrays = os.path.join(os.path.abspath(root), 'arrays')
     paths['arrays'] = arrays

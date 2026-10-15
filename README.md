@@ -103,7 +103,6 @@ Each pipeline stage also has a console command, all configured from
 |---|---|
 | `cuflynx-generate` | generate a model from the CSV arrays |
 | `cuflynx-param-id` | generate + calibrate (`mpiexec -n N` for parallel) |
-| `cuflynx-sequential-param-id` | staged calibration — declared, not yet implemented |
 | `cuflynx-sensitivity` | Sobol sensitivity analysis |
 | `cuflynx-identifiability` | Laplace / profile-likelihood identifiability |
 | `cuflynx-train-emulator` | train a surrogate of the obs features |

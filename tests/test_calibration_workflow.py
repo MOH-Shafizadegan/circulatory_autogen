@@ -11,6 +11,11 @@ whose optima are known in closed form.
   params_for_id).
 * ``chain``: C reads A's output (z = 2 p_A^2 + q^2), so the value fit_a fixes for p_A decides
   what ``rest`` finds for q: q = sqrt(Z_C - Y_A).
+* ``chain_analysed``: the steps that are not calibrations -- a Sobol screen of p_A and q, a
+  reduction that keeps q, the calibration of what it kept, and a Laplace analysis at that fit,
+  whose std is known in closed form.
+* ``chain_pipeline``: a whole study in one workflow -- a submodule calibration, a Sobol screen,
+  a reduction, an emulator of what was kept, and MCMC on that emulator.
 """
 import copy
 import csv
@@ -28,8 +33,9 @@ from libcuflynx.calibration_workflow import naming
 from libcuflynx.calibration_workflow.distributions import (DistributionParameter,
                                                            transform_for_bounds)
 from libcuflynx.calibration_workflow.spec import ModuleArray, Target, parse_workflow
-from libcuflynx.external_testing.workflow_library import (OPTIMISER_SETTINGS, STD_A, STD_B, Y_A,
-                                                          Y_B, Z_C, build_workflow_library)
+from libcuflynx.external_testing.workflow_library import (OPTIMISER_SETTINGS, STD_A, STD_B,
+                                                          STD_C, Y_A, Y_B, Z_C,
+                                                          build_workflow_library)
 from libcuflynx.schemas import CALIBRATION_WORKFLOW_SCHEMA, load_schema
 
 
@@ -81,7 +87,7 @@ def test_a_step_names_its_files_relative_to_the_workflow(library):
 def test_the_shipped_schema_accepts_the_fixture_workflows_and_rejects_unknown_keys(library):
     jsonschema = pytest.importorskip('jsonschema')
     schema = load_schema(CALIBRATION_WORKFLOW_SCHEMA)
-    for which in ('twin_split', 'chain_rest', 'chain_array'):
+    for which in ('twin_split', 'chain_rest', 'chain_array', 'chain_analysed', 'chain_pipeline'):
         jsonschema.validate(_raw(library, which), schema)
     raw = _raw(library)
     raw['steps'][0]['fixed_values'] = {}
@@ -796,3 +802,358 @@ def test_a_workflow_records_itself_in_one_study_manifest(library, tmp_path):
     found = [f for _, _, files in os.walk(str(tmp_path / 'quiet')) for f in files
              if f.endswith('_cuflynx_study.json')]
     assert found == []
+
+
+# --------------------------------------------------------------------------------------------
+# steps that are not calibrations: sensitivity, reduction, emulation, identifiability
+# --------------------------------------------------------------------------------------------
+
+def _analysed(library, edit):
+    raw = _raw(library, 'chain_analysed')
+    edit(raw)
+    return lambda: parse_workflow(raw, path=library['chain_analysed'])
+
+
+def _steps(raw):
+    return {s['id']: s for s in raw['steps']}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('edit, message', [
+    (lambda w: _steps(w)['screen'].update(kind='screening'), "it is one of"),
+    (lambda w: _steps(w)['reduce'].update(model=_steps(w)['screen']['model']),
+     "a reduction step reads a sensitivity step's results and has no \['model'\]"),
+    (lambda w: _steps(w)['reduce'].pop('sensitivity_from'), 'needs "sensitivity_from"'),
+    (lambda w: _steps(w)['reduce'].update(reduction={'top_n': 0}), '"top_n"'),
+    (lambda w: _steps(w)['reduce'].update(reduction={'top_n': 1, 'criterion': 'median'}),
+     '"criterion"'),
+    (lambda w: _steps(w)['reduce'].update(sensitivity_from='fit_a'),
+     '"sensitivity_from" names "fit_a", a calibration step; it takes a sensitivity step'),
+    (lambda w: _steps(w)['screen']['settings']['sa_options'].update(method='local'),
+     'reads Sobol indices'),
+    (lambda w: _steps(w)['screen'].update(settings={}), 'needs "sa_options"'),
+    (lambda w: _steps(w)['ia'].pop('result_from'), 'needs "result_from"'),
+    (lambda w: _steps(w)['ia'].update(result_from='screen'),
+     '"result_from" names "screen", a sensitivity step'),
+    (lambda w: _steps(w)['fit'].update(fixed_from=['screen']),
+     '"fixed_from" names "screen", a sensitivity step'),
+    (lambda w: _steps(w)['fit'].update(params_for_id=_steps(w)['ia']['params_for_id']),
+     'not both'),
+    (lambda w: _steps(w)['fit'].update(result_from='fit_a'), 'a calibration step has no '
+                                                             '"result_from"'),
+    (lambda w: _steps(w)['screen'].update(store_distribution=True), 'for calibration steps'),
+    (lambda w: _steps(w)['fit'].update(model={'module_type': 'lin_a', 'version': 'v1',
+                                              'parameterisation': 'fit_a'}),
+     'which is of a different model'),
+    (lambda w: _steps(w)['fit'].update(reduction={'top_n': 1}), 'is for a reduction step'),
+])
+def test_invalid_analysis_steps_say_why(library, edit, message):
+    with pytest.raises(WorkflowError, match=message):
+        _analysed(library, edit)()
+
+
+def _emulated(library):
+    """chain_rest with ``rest`` calibrated, and Sobol-screened, on an emulator of the chain."""
+    raw = _raw(library)
+    fit_a, rest = raw['steps']
+    on_emulator = {k: v for k, v in rest.items() if k != 'fixed_from'}
+    raw['steps'] = [
+        fit_a,
+        dict(rest, id='emulate', kind='emulation', settings={'emulator_settings': {
+            'num_train_samples': 32, 'sample_type': 'sobol', 'random_seed': 0, 'min_r2': 0.9,
+            'n_iter': 2, 'n_splits': 2, 'models': 'PolynomialRegression'}}),
+        dict(on_emulator, emulator_from='emulate'),
+        dict(on_emulator, id='screen', kind='sensitivity', emulator_from='emulate',
+             settings={'sa_options': {'method': 'sobol', 'sample_type': 'saltelli',
+                                      'num_samples': 16}})]
+    return raw
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('edit, message', [
+    (lambda w: w['steps'][2].update(fixed_from=['fit_a']), 'no "fixed_from" or'),
+    (lambda w: w['steps'][3].update(result_from='fit_a'), 'no "fixed_from" or "result_from"'),
+    (lambda w: w['steps'][2].update(obs_data=w['steps'][0]['obs_data']),
+     'names a different obs_data'),
+    (lambda w: w['steps'][2].update(emulator_from='fit_a'),
+     '"emulator_from" names "fit_a", a calibration step; it takes a emulation step'),
+])
+def test_a_step_on_an_emulator_runs_on_what_it_was_trained_on(library, edit, message):
+    raw = _emulated(library)
+    edit(raw)
+    with pytest.raises(WorkflowError, match=message):
+        parse_workflow(raw, path=library['chain_rest'])
+
+
+@pytest.mark.unit
+def test_a_step_on_a_reduced_emulator_names_the_same_reduction(library):
+    raw = _raw(library, 'chain_pipeline')
+    posterior = raw['steps'][-1]
+    posterior.pop('params_for_id_from')
+    posterior['params_for_id'] = os.path.relpath(
+        os.path.join(library['chain/pipeline'], 'pipeline_params_for_id.csv'),
+        library['chain/pipeline'])
+    with pytest.raises(WorkflowError, match='different params_for_id and params_for_id_from'):
+        parse_workflow(raw, path=library['chain_pipeline'])
+
+
+@pytest.mark.unit
+def test_a_reduction_keeps_the_top_parameters_by_its_options(tmp_path):
+    from libcuflynx.sensitivity_analysis.parameter_reduction import SobolReduction
+    from libcuflynx.sensitivity_analysis.sobol_ranking import (rank_sobol_parameters,
+                                                               read_sobol_indices)
+    indices = tmp_path / 'all_outputs_n8_Sobol_indices.csv'
+    # a matters most to y1, b on average, c to neither
+    indices.write_text('Parameter,S1_y1,ST_y1,S1_y2,ST_y2\n'
+                       'm/a,0.9,0.95,0.0,0.01\n'
+                       'm/b,0.4,0.5,0.4,0.5\n'
+                       'm/c,0.01,0.02,0.0,0.01\n')
+    read = read_sobol_indices(str(indices))
+    assert read['ST']['y2'] == {'m/a': 0.01, 'm/b': 0.5, 'm/c': 0.01}
+    names = lambda ranked: [n for n, _ in ranked]  # noqa: E731
+    assert names(rank_sobol_parameters(read, top_n=1)) == ['m/a']
+    assert names(rank_sobol_parameters(read, top_n=1, criterion='mean')) == ['m/b']
+    assert names(rank_sobol_parameters(read, top_n=3, index_type='S1')) == ['m/a', 'm/b', 'm/c']
+    assert names(rank_sobol_parameters(read, top_n=3, threshold=0.1)) == ['m/a', 'm/b']
+
+    source = tmp_path / 'params_for_id.csv'
+    source.write_text('vessel_name,param_name,min,max,name_for_plotting\n'
+                      'm,a,0.1,1.0,a_m\nm,b,0.2,2.0,b_m\nm,c,0.3,3.0,c_m\n')
+    out = tmp_path / 'reduced.csv'
+    assert SobolReduction.write_params_for_id(str(source), str(out), ['m/c', 'm/a']) == 2
+    # whole rows, bounds and all, in the source's order
+    assert out.read_text().splitlines() == ['vessel_name,param_name,min,max,name_for_plotting',
+                                            'm,a,0.1,1.0,a_m', 'm,c,0.3,3.0,c_m']
+
+    # the class a reduction step is: ranks, keeps and writes in one call
+    reduction = SobolReduction(top_n=2, criterion='mean')
+    assert reduction.reduce(str(indices), str(source), str(out)) == [
+        ('m/b', 0.5), ('m/a', pytest.approx(0.48))]
+    assert out.read_text().splitlines()[1:] == ['m,a,0.1,1.0,a_m', 'm,b,0.2,2.0,b_m']
+    assert SobolReduction.from_options(reduction.as_dict()).as_dict() == {
+        'top_n': 2, 'index_type': 'ST', 'criterion': 'mean', 'threshold': None}
+    with pytest.raises(ValueError, match='no parameter scores'):
+        SobolReduction(top_n=2, threshold=0.99).reduce(str(indices), str(source), str(out))
+    for bad in ({'top_n': 0}, {'top_n': 1, 'index_type': 'S2'},
+                {'top_n': 1, 'criterion': 'median'}, {'top_n': 1, 'threshold': -1}):
+        with pytest.raises(ValueError):
+            SobolReduction(**bad)
+
+
+@pytest.mark.unit
+def test_a_workflow_screens_reduces_calibrates_and_analyses_the_fit(library, tmp_path):
+    out = str(tmp_path / 'run')
+    plan = {s['id']: s for s in plan_workflow(library['chain_analysed'])['steps']}
+    assert [plan[i]['kind'] for i in ('fit_a', 'screen', 'reduce', 'fit', 'ia')] == [
+        'calibration', 'sensitivity', 'reduction', 'calibration', 'identifiability']
+    assert plan['fit']['params_for_id_from'] == 'reduce' and plan['ia']['result_from'] == 'fit'
+    # only calibrations land in the target
+    assert plan['screen']['calibrates'] == [] and plan['ia']['calibrates'] == []
+
+    result = run_calibration_workflow(library['chain_analysed'], output_dir=out)
+    assert result['complete'] and result['order'] == ['fit_a', 'screen', 'reduce', 'fit', 'ia']
+    step = lambda sid: _read_json(os.path.join(out, sid, 'step_result.json'))  # noqa: E731
+
+    # q drives z over its range and p_A barely does: the reduction keeps q alone
+    assert os.path.isfile(step('screen')['sobol_indices'])
+    reduce = step('reduce')
+    assert [s['parameter'] for s in reduce['selected']] == ['mod_C/q']
+    with open(reduce['params_for_id'], newline='') as f:
+        assert [(r['vessel_name'], r['param_name']) for r in csv.DictReader(f)] == [
+            ('mod_C', 'q')]
+
+    # fit calibrates what was kept, with p_A fixed from fit_a, as chain/rest does
+    fit = step('fit')
+    assert fit['params_for_id_used'] == reduce['params_for_id']
+    assert _merged(result) == pytest.approx({'A/p': np.sqrt(Y_A / 2),
+                                             'C/q': np.sqrt(Z_C - Y_A)}, rel=1e-5)
+    assert {r['parameterisation_name']: r['from_step'] for r in result['merged_parameters']} \
+        == {'A/p': 'fit_a', 'C/q': 'fit'}
+
+    # the Laplace analysis is at fit's q: dz/dq = 2 q, so std(q) = STD_C / (2 q) (to the
+    # finite-difference error; at the model's own q = 1 it would be three times as wide)
+    ia = step('ia')
+    q = np.sqrt(Z_C - Y_A)
+    assert ia['at'] == pytest.approx([q], rel=1e-5)
+    assert ia['laplace']['std'] == pytest.approx([STD_C / (2 * q)], rel=1e-2)
+
+    # the manifest lists every step's kind, what it took from where, and its outputs
+    from libcuflynx.utilities.cuflynx_study import read_study
+    study = read_study(os.path.join(out, 'chain_analysed_cuflynx_study.json'))
+    steps = {s['id']: s for s in study['workflow']['steps']}
+    assert {i: s['kind'] for i, s in steps.items()} == {
+        'fit_a': 'calibration', 'screen': 'sensitivity', 'reduce': 'reduction',
+        'fit': 'calibration', 'ia': 'identifiability'}
+    assert steps['reduce']['sensitivity_from'] == ['screen']
+    assert steps['reduce']['reduction'] == {'top_n': 1, 'index_type': 'ST', 'criterion': 'max',
+                                            'threshold': None}
+    assert steps['fit']['params_for_id_from'] == ['reduce']
+    assert steps['ia']['result_from'] == ['fit']
+    assert steps['reduce']['outputs'] == {'params_for_id': reduce['params_for_id']}
+    assert steps['ia']['outputs']['laplace']['std'] == ia['laplace']['std']
+
+    # editing the screen's params_for_id makes everything downstream of it stale
+    from libcuflynx.calibration_workflow.runner import workflow_status
+    screened = os.path.join(library['chain/screened'], 'screened_params_for_id.csv')
+    with open(screened, 'a') as f:
+        f.write('\n')
+    status = workflow_status(library['chain_analysed'], out)['steps']
+    assert {i: s['stale'] for i, s in status.items()} == {
+        'fit_a': False, 'screen': True, 'reduce': True, 'fit': True, 'ia': True}
+
+
+@pytest.mark.unit
+def test_steps_on_an_emulator_run_the_emulation_steps_model(library, tmp_path):
+    pytest.importorskip('autoemulate')
+    raw = _emulated(library)
+    path = os.path.join(library['chain/rest'], 'emulated.json')
+    _write_json(path, raw)
+    out = str(tmp_path / 'run')
+    result = run_calibration_workflow(path, output_dir=out)
+    step = lambda sid: _read_json(os.path.join(out, sid, 'step_result.json'))  # noqa: E731
+    emulate = step('emulate')
+    assert os.path.isdir(emulate['emulator_dir'])
+    # rest runs a copy of emulate's model, so the emulator's fingerprint of it matches
+    rest = step('rest')
+    assert os.path.basename(rest['model_path']) == 'emulate.cellml'
+    assert rest['model_path'].startswith(os.path.join(out, 'rest') + os.sep)
+    with open(rest['model_path'], 'rb') as a, open(emulate['model_path'], 'rb') as b:
+        assert a.read() == b.read()
+    # rest's own fixed_from was dropped; the emulator was trained with p_A fixed from fit_a
+    assert _merged(result)['C/q'] == pytest.approx(np.sqrt(Z_C - Y_A), rel=0.03)
+    assert os.path.isfile(step('screen')['sobol_indices'])
+
+
+# --------------------------------------------------------------------------------------------
+# packing: every file a run needs, in one directory
+# --------------------------------------------------------------------------------------------
+
+def _files_under(directory):
+    return sorted(os.path.relpath(os.path.join(root, f), directory)
+                  for root, _, names in os.walk(directory) for f in names)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('which, expected', [
+    ('chain_analysed', {'A/p': np.sqrt(Y_A / 2), 'C/q': np.sqrt(Z_C - Y_A)}),
+    ('chain_array', {'A/p': np.sqrt(Y_A / 2), 'C/q': np.sqrt(Z_C - Y_A)}),
+])
+def test_a_packed_workflow_runs_without_the_files_it_was_packed_from(tmp_path, which,
+                                                                     expected):
+    from libcuflynx.calibration_workflow import pack_workflow
+    root = tmp_path / 'library'
+    library = build_workflow_library(str(root))
+    pack = str(tmp_path / 'pack')
+    packed = pack_workflow(library[which], pack)
+    assert packed['workflow'] == os.path.join(pack, 'calibration_workflow.json')
+    assert packed['files'] == _files_under(pack)
+    # inputs only: no step output directories, results or study manifests
+    assert not any(f.endswith(('step_result.json', 'workflow_result.json',
+                               '_cuflynx_study.json')) for f in packed['files'])
+    raw = _read_json(packed['workflow'])
+    assert raw['module_library_dirs'] == ['modules']
+    if which == 'chain_analysed':
+        # the module versions the workflow uses, not the whole library
+        assert packed['modules'] == [os.path.join('modules', t, 'versions', 'v1')
+                                     for t in ('chain', 'lin_a', 'lin_c')]
+        steps = {s['id']: s for s in raw['steps']}
+        assert steps['screen']['obs_data'] == 'inputs/screen/screened_obs_data.json'
+        assert steps['fit']['obs_data'] == steps['screen']['obs_data']   # packed once
+        assert 'params_for_id' not in steps['fit'] and 'obs_data' not in steps['reduce']
+    else:
+        assert raw['target'] == {'module_array': 'inputs/_target/chain_module_array.json',
+                                 'parameters': 'inputs/_target/chain_parameters.csv'}
+
+    os.rename(str(root), str(tmp_path / 'moved'))      # the originals are gone
+    result = run_calibration_workflow(packed['workflow'], output_dir=str(tmp_path / 'run'))
+    assert result['complete']
+    assert _merged(result) == pytest.approx(expected, rel=1e-5)
+
+
+@pytest.mark.unit
+def test_settings_paths_are_relative_to_the_workflow_and_are_packed(library, tmp_path):
+    from libcuflynx.calibration_workflow import pack_workflow
+    from libcuflynx.scripts.calibration_workflow_run_script import build_parser, run
+    raw = _raw(library)
+    funcs = os.path.join(library['chain/rest'], 'funcs', 'my_operations.py')
+    os.makedirs(os.path.dirname(funcs))
+    with open(funcs, 'w') as f:
+        f.write('# user operation funcs\n')
+    raw['settings']['operation_funcs_external_path'] = 'funcs/my_operations.py'
+    raw['steps'][1]['settings'] = {'cost_funcs_external_path': 'funcs/my_operations.py'}
+    path = os.path.join(library['chain/rest'], 'with_funcs.json')
+    _write_json(path, raw)
+    workflow = load_workflow(path)
+    assert workflow.settings['operation_funcs_external_path'] == funcs
+    assert workflow.step_settings(workflow.step('rest'))['cost_funcs_external_path'] == funcs
+
+    pack = str(tmp_path / 'pack')
+    packed = run(build_parser().parse_args([path, '--pack', pack]))   # the command's own path
+    raw = _read_json(packed['workflow'])
+    in_pack = 'settings/operation_funcs_external_path/my_operations.py'
+    assert raw['settings']['operation_funcs_external_path'] == in_pack
+    # one file named twice is packed once
+    assert raw['steps'][1]['settings']['cost_funcs_external_path'] == in_pack
+    with open(os.path.join(pack, in_pack)) as f:
+        assert f.read() == '# user operation funcs\n'
+    with pytest.raises(ValueError, match='not empty'):
+        pack_workflow(path, pack)
+
+
+@pytest.mark.unit
+def test_the_command_reports_steps_that_are_not_calibrations(capsys):
+    from libcuflynx.scripts.calibration_workflow_run_script import _print_progress
+    _print_progress({'event': 'step_started', 'step': 'reduce', 'index': 2, 'total': 5,
+                     'kind': 'reduction', 'model': None})
+    _print_progress({'event': 'step_finished', 'step': 'reduce', 'best_cost': None,
+                     'duration_s': 0.25})
+    _print_progress({'event': 'step_finished', 'step': 'fit', 'best_cost': 1.5e-3,
+                     'duration_s': 2.0})
+    assert capsys.readouterr().out.splitlines() == [
+        '[workflow] step 3/5: reduce (reduction, no model)',
+        '[workflow] step reduce done: in 0.2 s',
+        '[workflow] step fit done: best cost 0.0015 in 2.0 s']
+
+
+@pytest.mark.integration
+def test_a_whole_study_runs_from_submodule_calibration_to_mcmc_on_an_emulator(library,
+                                                                             tmp_path):
+    """Submodule calibration -> Sobol screen -> reduction -> emulator of what was kept ->
+    MCMC on the emulator, in one workflow of the algebraic chain (about 10 s)."""
+    pytest.importorskip('autoemulate')
+    out = str(tmp_path / 'run')
+    result = run_calibration_workflow(library['chain_pipeline'], output_dir=out)
+    assert result['complete']
+    assert result['order'] == ['fit_a', 'screen', 'reduce', 'emulate', 'posterior']
+    step = lambda sid: _read_json(os.path.join(out, sid, 'step_result.json'))  # noqa: E731
+
+    # the submodule's value is fixed in the chain for the screen and the emulator
+    assert step('screen')['fixed'][0]['model_name'] == 'p_mod_A'
+    assert step('screen')['fixed'][0]['value'] == pytest.approx(np.sqrt(Y_A / 2), rel=1e-5)
+
+    # q drives z over its range and the gain k barely does: the reduction keeps q
+    reduce = step('reduce')
+    assert [s['parameter'] for s in reduce['selected']] == ['mod_C/q']
+    with open(reduce['params_for_id'], newline='') as f:
+        assert [(r['vessel_name'], r['param_name']) for r in csv.DictReader(f)] == [
+            ('mod_C', 'q')]
+
+    # the emulator is trained over the kept parameter alone, and the posterior is sampled on it
+    emulate, posterior = step('emulate'), step('posterior')
+    assert emulate['params_for_id_used'] == reduce['params_for_id']
+    assert posterior['params_for_id_used'] == reduce['params_for_id']
+    from libcuflynx.utilities.cuflynx_study import read_study
+    study = read_study(os.path.join(out, 'posterior', 'param_id',
+                                    'posterior_cuflynx_study.json'))
+    assert study['emulator'] == emulate['emulator_dir']
+    assert study['runs'][0]['analyses'] == ['CMA-ES', 'mcmc']
+
+    # dz/dq = 2 q at q = 3, so sd(q) = STD_C / 6; the emulator is good to about 1 %
+    distribution = StoredDistribution.load(posterior['distribution_dir'])
+    assert distribution.names == ['q_mod_C']
+    q = np.sqrt(Z_C - Y_A)
+    assert np.median(distribution.samples) == pytest.approx(q, rel=0.03)
+    assert np.std(distribution.samples) == pytest.approx(STD_C / (2 * q), rel=0.5)
+    assert _merged(result) == pytest.approx({'A/p': np.sqrt(Y_A / 2), 'C/q': q}, rel=0.03)
+    assert {r['parameterisation_name']: r['from_step'] for r in result['merged_parameters']} \
+        == {'A/p': 'fit_a', 'C/q': 'posterior'}

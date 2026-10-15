@@ -5,6 +5,50 @@ next release; add to that section as you land a change.
 
 ## Unreleased
 
+### Added — packing a calibration workflow
+
+`pack_workflow(workflow, dest_dir)` and `cuflynx-calibration-workflow <workflow> --pack DIR`
+copy every file a workflow needs to run into one directory: the workflow rewritten to the
+packed files, each step's obs_data, params_for_id and module array with its parameters file,
+each module version it uses (with every units file of its library), and the files its settings
+name. Results are not packed. CUFLynx's OMEX export packs a workflow with it.
+
+### Changed — workflow settings paths are relative to the workflow file
+
+`external_modules_dir` and the `*_funcs_external_path` settings of a calibration workflow are
+read relative to the workflow file, like its other paths, not to the directory it is run from.
+
+### Added — analysis steps in calibration workflows
+
+A workflow step has a `kind`: `calibration` (the default, so existing files are unchanged),
+`sensitivity`, `reduction`, `emulation` or `identifiability`, so one `calibration_workflow.json`
+records the whole order of a study.
+
+- `sensitivity` runs Sobol or local sensitivity analysis (`settings.sa_options`).
+- `reduction` ranks a Sobol step's parameters (`sensitivity_from`) and keeps the `top_n`
+  (`reduction`: `index_type`, `criterion`, `threshold`), writing those rows of its
+  params_for_id; a calibration fits them with `params_for_id_from`.
+- `emulation` trains an emulator (`settings.emulator_settings`); a calibration or sensitivity
+  step with `emulator_from` runs on it, with a copy of the emulation step's model.
+- `identifiability` runs a Laplace analysis (`settings.ia_options`) at the values of the
+  calibration in its `result_from`.
+
+An emulation step may be trained on a reduction's parameters (`params_for_id_from`), and a
+calibration with the same `params_for_id_from` and `emulator_from` pointing at it can sample
+its posterior on that emulator (`store_distribution`). `SobolReduction`
+(`libcuflynx.sensitivity_analysis.parameter_reduction`) is the reduction, usable on its own.
+
+Only calibrations are merged into the target. The study manifest, `--dry-run` plan, status and
+methods LaTeX (text and flow chart) show each step's kind, what it takes from where and its
+outputs. `run_identifiability_analysis` takes `best_param_vals`, and Sobol indices are ranked by
+`libcuflynx.sensitivity_analysis.sobol_ranking`.
+
+### Removed — `cuflynx-sequential-param-id`
+
+The command and `user_run_files/run_sequential_param_id.sh` are gone, with the script and the
+two obsolete copies behind them. The stage was never implemented: the command only said so.
+Ordered calibrations and analyses are run by `cuflynx-calibration-workflow`.
+
 ### Changed — multi-port coupling follows PhLynx (#575)
 
 - **Multiply on either end.** A `"Multiply"` port scales its variable into the neighbour

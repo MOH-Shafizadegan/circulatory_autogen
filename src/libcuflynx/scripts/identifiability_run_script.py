@@ -21,10 +21,16 @@ from libcuflynx.identifiabilty_analysis.identifiabilityAnalysis import Identifia
 from libcuflynx.parsers.PrimitiveParsers import CSVFileParser, JSONFileParser
 from libcuflynx.scripts import _cli
 
-def run_identifiability_analysis(inp_data_dict=None):
+def run_identifiability_analysis(inp_data_dict=None, best_param_vals=None):
+    """Identifiability analysis at ``best_param_vals`` (one value per params_for_id entry),
+    or by default at the best fit saved by the param_id run of the same configuration."""
 
+    # given values are analysed on the model as generated; otherwise on the model the param_id
+    # run calibrated, at its saved best fit
     yaml_parser = YamlFileParser()
-    inp_data_dict = yaml_parser.parse_user_inputs_file(inp_data_dict, obs_path_needed=True, do_generation_with_fit_parameters=True)
+    inp_data_dict = yaml_parser.parse_user_inputs_file(
+        inp_data_dict, obs_path_needed=True,
+        do_generation_with_fit_parameters=best_param_vals is None)
 
     DEBUG = inp_data_dict['DEBUG']
     model_path = inp_data_dict['model_path']
@@ -69,10 +75,12 @@ def run_identifiability_analysis(inp_data_dict=None):
     id_analysis = IdentifiabilityAnalysis(model_path, model_type, file_prefix, param_id_output_dir=param_id_output_dir,
                                             resources_dir=resources_dir, param_id=param_id.param_id)  # pass in param_id object so we can use its cost functions
 
-    csv_parser = CSVFileParser()
-    param_id_name_and_vals, param_id_date = csv_parser.get_param_id_params_as_lists_of_tuples(inp_data_dict['param_id_output_dir_abs_path'])
-    best_param_vals = np.array([val for name, val in param_id_name_and_vals])
-    
+    if best_param_vals is None:
+        csv_parser = CSVFileParser()
+        param_id_name_and_vals, param_id_date = csv_parser.get_param_id_params_as_lists_of_tuples(inp_data_dict['param_id_output_dir_abs_path'])
+        best_param_vals = np.array([val for name, val in param_id_name_and_vals])
+    best_param_vals = np.asarray(best_param_vals, dtype=float)
+
     id_analysis.set_best_param_vals(best_param_vals)
     if inp_data_dict.get("ia_options", {}).get("method") == "Laplace":
         ensure_mle_cost_type_for_bayesian_inner(param_id.param_id, inp_data_dict)

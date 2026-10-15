@@ -185,8 +185,7 @@ The shell scripts under `user_run_files/` (`run_param_id.sh`, `run_autogeneratio
 
 With the project installed, the console commands are on your `PATH` and can be run from any
 directory: `cuflynx-generate`, `cuflynx-param-id`, `cuflynx-sensitivity`,
-`cuflynx-identifiability`, `cuflynx-train-emulator`, `cuflynx-plot` (and
-`cuflynx-sequential-param-id`, which is declared but not yet implemented). Every one of them
+`cuflynx-identifiability`, `cuflynx-train-emulator` and `cuflynx-plot`. Every one of them
 reads `user_run_files/user_inputs.yaml` and takes `--help`. `cuflynx-calibration-workflow`
 instead takes a `calibration_workflow.json` (see
 [Calibration workflows](parameter-identification.md#calibration-workflows)).

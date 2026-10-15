@@ -1,6 +1,7 @@
 '''
-Running a calibration workflow: every step through the normal param_id path, in dependency
-order, then merging the results into the workflow's target.
+Running a calibration workflow: every step through the normal path of its kind (param_id,
+sensitivity analysis, emulator training, identifiability analysis), in dependency order, then
+merging the calibrations' results into the workflow's target.
 
 Output layout (``output_dir``)::
 
@@ -10,8 +11,12 @@ Output layout (``output_dir``)::
         step_result.json           calibrated values, fixed values and priors used, input hashes
         model/                     the generated step model (resources/, generated_models/)
         param_id/                  the normal param_id outputs (best_param_vals.npy, ...)
-        <step_id>_params_for_id.csv   only when priors_from adds parameters to the step's own
+        <step_id>_params_for_id.csv   a reduction's choice, or a step's own with the
+                                   parameters priors_from adds
         distribution/              only with store_distribution (see distributions.py)
+        sensitivity/               a sensitivity step's outputs (sa_options.output_dir)
+        emulator/                  an emulation step's emulator
+        <step_id>_laplace_*.npy    an identifiability step's Laplace mean and covariance
     _target/model/                 the target generated with every calibrated value
 
 A step's model is generated from a library module or from a copy of its module array; the
@@ -22,7 +27,9 @@ write happen on rank 0, and what rank 0 reads is broadcast.
 '''
 
 import copy
+import csv
 import datetime
+import glob
 import hashlib
 import json
 import os
@@ -38,7 +45,10 @@ from libcuflynx.calibration_workflow.distributions import (DISTRIBUTION_DIR,
                                                            StoredDistribution,
                                                            parameters_from_info)
 from libcuflynx.calibration_workflow.generate import generate_model, read_parameter_rows
-from libcuflynx.calibration_workflow.resolve import CalibratedParameter, resolve_workflow
+from libcuflynx.calibration_workflow.resolve import (CalibratedParameter,
+                                                     read_calibrated_parameters,
+                                                     resolve_workflow)
+from libcuflynx.sensitivity_analysis.parameter_reduction import SobolReduction
 from libcuflynx.utilities.parameter_names import (is_path_name, split_path_name,
                                                   supermodule_row_name)
 from libcuflynx.calibration_workflow.spec import (WORKFLOW_FILE_NAME, WorkflowError, load_workflow,
@@ -50,6 +60,15 @@ POINT_BEST_FIT = 'best_fit'
 POINT_POSTERIOR_MEDIAN = 'posterior_median'
 WORKFLOW_RESULT = 'workflow_result.json'
 TARGET_DIR = '_target'
+SENSITIVITY_DIR = 'sensitivity'
+EMULATOR_DIR = 'emulator'
+SOBOL_INDICES_GLOB = 'all_outputs_n*_Sobol_indices.csv'
+#: the result keys the study manifest lists as each kind's outputs
+STEP_OUTPUTS = {'calibration': ('param_id_output_dir', 'distribution_dir'),
+                'sensitivity': ('sensitivity_dir', 'sobol_indices'),
+                'reduction': ('params_for_id',),
+                'emulation': ('emulator_dir',),
+                'identifiability': ('laplace',)}
 
 # what a step's user_inputs get unless the workflow's settings say otherwise
 STEP_DEFAULTS = {'model_type': 'cellml', 'DEBUG': False, 'do_ad': False, 'do_ia': False,
@@ -149,7 +168,12 @@ class _Run:
 
     def inputs(self, step_id):
         rs = self.resolved.steps[step_id]
-        files = {'obs_data': rs.obs_data_path, 'params_for_id': rs.params_for_id_path}
+        if rs.model is None:
+            return {}       # a reduction: its inputs are its sensitivity step's
+        files = {'obs_data': rs.obs_data_path,
+                 'params_for_id': self.params_for_id_of(rs.step)}
+        if not os.path.isfile(files['params_for_id']):
+            del files['params_for_id']    # a reduction's, not yet written
         if os.path.isfile(rs.model.parameters_path):
             files['parameters'] = rs.model.parameters_path
         if rs.model.kind == 'array':
@@ -174,11 +198,11 @@ class _Run:
 
     # -- what a step gets from earlier steps ---------------------------------------------
 
-    def fixed_values(self, step):
-        '''``{model name in this step: row}`` from every fixed_from step: its calibrated
+    def fixed_values(self, step, sources):
+        '''``{model name in this step: row}`` from every step in ``sources``: its calibrated
         values and the values it was itself given as fixed.'''
         values = {}
-        for source in step.fixed_from:
+        for source in sources:
             result = self.require_current(source, step.id)
             vessel_of = self.resolved.map_between(source, step.id)
             left_out = []
@@ -226,29 +250,68 @@ class _Run:
     # -- one step --------------------------------------------------------------------------
 
     def run_step(self, step, index, total):
-        from libcuflynx.scripts.param_id_run_script import run_param_id
+        started, t0 = _now(), time.time()
+        self.emit('step_started', step=step.id, index=index, total=total, kind=step.kind,
+                  model=step.model.as_dict() if step.model is not None else None)
+        run = {'calibration': self._run_calibration, 'sensitivity': self._run_sensitivity,
+               'reduction': self._run_reduction, 'emulation': self._run_emulation,
+               'identifiability': self._run_identifiability}[step.kind]
+        record = run(step, self.workflow.step_settings(step))
 
+        def finish():
+            result = dict({'step': step.id, 'kind': step.kind, 'status': 'done',
+                           'model': step.model.as_dict() if step.model is not None else None,
+                           'place': self.resolved.steps[step.id].place if step.model else '',
+                           'started': started, 'finished': _now(),
+                           'duration_s': round(time.time() - t0, 3),
+                           'calibrated': [], 'fixed': [], 'inputs': self.inputs(step.id)},
+                          **record)
+            _write_json(os.path.join(self.step_dir(step.id), STEP_RESULT), result)
+            return result
+
+        result = self.on_root(finish)
+        self.emit('step_finished', step=step.id, index=index, total=total, kind=step.kind,
+                  best_cost=result.get('best_cost'), duration_s=result['duration_s'])
+        return result
+
+    def params_for_id_of(self, step):
+        '''The params_for_id a step runs with: its own, or the one its reduction wrote.'''
+        if step.params_for_id_from:
+            return reduced_params_for_id_path(self.output_dir, step.params_for_id_from)
+        return step.params_for_id
+
+    def _prepare(self, step, settings):
+        '''Rank 0: a clean step directory and the step's model, generated with the values it is
+        given (``fixed_from``, and ``result_from`` including the parameters it analyses), or
+        copied from its ``emulator_from`` step. Returns ``(generated, params_for_id, units,
+        fixed, priors)``.'''
         resolved = self.resolved.steps[step.id]
         step_dir = self.step_dir(step.id)
-        started, t0 = _now(), time.time()
-        self.emit('step_started', step=step.id, index=index, total=total,
-                  model=step.model.as_dict())
-
-        settings = self.workflow.step_settings(step)
-
-        def prepare():
-            own = {p.model_name for p in resolved.parameters}
-            # a parameter the step calibrates itself is not fixed: the later calibration wins
-            fixed = {n: row for n, row in self.fixed_values(step).items() if n not in own}
-            priors = self.priors(step)
-            prior_names = [n for _, dist in priors for n in dist.names]
-            clash = sorted((own | set(fixed)) & set(prior_names))
-            if clash:
-                raise WorkflowError(f'step "{step.id}" is given priors for {clash}, which it '
-                                    f'also calibrates or is given as fixed values.')
-            if os.path.isdir(step_dir):
-                shutil.rmtree(step_dir)
-            os.makedirs(step_dir)
+        params_for_id = self.params_for_id_of(step)
+        if step.params_for_id_from:
+            self.require_current(step.params_for_id_from, step.id)
+        own = {p.model_name for p in read_calibrated_parameters(params_for_id, step.id)}
+        # a parameter the step calibrates itself is not fixed: the later calibration wins
+        fixed = {n: row for n, row in self.fixed_values(step, step.fixed_from).items()
+                 if n not in own}
+        if step.result_from:
+            fixed.update(self.fixed_values(step, [step.result_from]))
+        priors = self.priors(step)
+        prior_names = [n for _, dist in priors for n in dist.names]
+        clash = sorted((own | set(fixed)) & set(prior_names))
+        if clash:
+            raise WorkflowError(f'step "{step.id}" is given priors for {clash}, which it '
+                                f'also calibrates or is given as fixed values.')
+        if os.path.isdir(step_dir):
+            shutil.rmtree(step_dir)
+        os.makedirs(step_dir)
+        if step.emulator_from:
+            source = self.require_current(step.emulator_from, step.id)
+            source_dir = self.step_dir(step.emulator_from)
+            shutil.copytree(os.path.join(source_dir, 'model'), os.path.join(step_dir, 'model'))
+            generated = {k: (v.replace(source_dir, step_dir, 1) if isinstance(v, str) else v)
+                         for k, v in source['generated'].items()}
+        else:
             overrides = [{'variable_name': name, 'units': row['units'],
                           'value': repr(float(row['value'])),
                           'data_reference': f'fixed by calibration workflow '
@@ -259,47 +322,68 @@ class _Run:
                 library_inputs=self.resolved.library_inputs,
                 model_type=settings.get('model_type', STEP_DEFAULTS['model_type']),
                 solver=settings.get('solver'))
-            model_rows = {r['variable_name']: r
-                          for r in read_parameter_rows(generated['parameters_path'])}
-            for name, row in fixed.items():
-                if name not in model_rows:
-                    raise WorkflowError(
-                        f'step "{step.id}": the value fixed from "{row["from_step"]}" for '
-                        f'"{name}" has no parameter of that name in the step model '
-                        f'({generated["parameters_path"]}).')
-            params_for_id = resolved.params_for_id_path
-            if priors:
-                params_for_id = os.path.join(step_dir, f'{step.id}_params_for_id.csv')
-                _write_params_for_id_with_priors(resolved.params_for_id_path,
-                                                 params_for_id, priors, step.id)
-            units = {k: v.get('units', '') for k, v in model_rows.items()}
-            return generated, params_for_id, units, fixed, priors
+        model_rows = {r['variable_name']: r
+                      for r in read_parameter_rows(generated['parameters_path'])}
+        for name, row in fixed.items():
+            if name not in model_rows:
+                raise WorkflowError(
+                    f'step "{step.id}": the value fixed from "{row["from_step"]}" for '
+                    f'"{name}" has no parameter of that name in the step model '
+                    f'({generated["parameters_path"]}).')
+        if priors:
+            source_path = params_for_id
+            params_for_id = os.path.join(step_dir, f'{step.id}_params_for_id.csv')
+            _write_params_for_id_with_priors(source_path, params_for_id, priors, step.id)
+        units = {k: v.get('units', '') for k, v in model_rows.items()}
+        return generated, params_for_id, units, fixed, priors
 
-        generated, params_for_id, units, fixed, priors = self.on_root(prepare)
-
+    def _inp(self, step, settings, generated, params_for_id):
+        '''The user_inputs of one step's run. A step on an emulator runs the emulation step's
+        model (its files carry that step's prefix) with its emulator.'''
+        step_dir = self.step_dir(step.id)
+        prefix = step.emulator_from or step.id
         inp = copy.deepcopy(STEP_DEFAULTS)
         inp.update(copy.deepcopy(settings))
         inp.update({
-            'file_prefix': step.id,
+            'file_prefix': prefix,
+            'study_name': step.id,
             'resources_dir': generated['resources_dir'],
             'generated_models_dir': generated['generated_models_dir'],
-            'input_param_file': f'{step.id}_parameters.csv',
-            'param_id_obs_path': resolved.obs_data_path,
+            'input_param_file': f'{prefix}_parameters.csv',
+            'param_id_obs_path': self.resolved.steps[step.id].obs_data_path,
             'params_for_id_file': params_for_id,
             'param_id_output_dir': os.path.join(step_dir, 'param_id'),
             'do_uq': step.store_distribution,
         })
         inp.update({k: v for k, v in self.resolved.library_inputs.items()})
+        if step.emulator_from:
+            emulation = self.workflow.step(step.emulator_from)
+            inp['use_emulator'] = True
+            inp['emulator_settings'] = dict(
+                self.workflow.step_settings(emulation).get('emulator_settings') or {},
+                emulator_dir=emulator_dir(self.output_dir, emulation.id))
+        return inp
+
+    def _run_stage(self, step, what, fn, *args):
+        try:
+            return fn(*args)
+        except SystemExit as exc:
+            # the user_inputs parser exit()s on a bad configuration, after printing why
+            raise WorkflowStepError(step.id, f'the {what} configuration was refused (exit '
+                                             f'{exc.code}); the messages above say why.')
+
+    def _run_calibration(self, step, settings):
+        from libcuflynx.scripts.param_id_run_script import run_param_id
+
+        resolved = self.resolved.steps[step.id]
+        generated, params_for_id, units, fixed, priors = self.on_root(
+            lambda: self._prepare(step, settings))
+        inp = self._inp(step, settings, generated, params_for_id)
         if priors:
             inp['joint_priors'] = [([n for n in dist.names],
                                     dist.as_prior(prior.kind, prior.inflate))
                                    for prior, dist in priors]
-        try:
-            outcome = run_param_id(inp)
-        except SystemExit as exc:
-            # the user_inputs parser exit()s on a bad configuration, after printing why
-            raise WorkflowStepError(step.id, f'the param_id configuration was refused (exit '
-                                             f'{exc.code}); the messages above say why.')
+        outcome = self._run_stage(step, 'param_id', run_param_id, inp)
 
         def finish():
             case_dir = outcome['output_dir']
@@ -327,10 +411,7 @@ class _Run:
                         'target_parameterisation_name':
                             resolved.target_parameterisation_name(parameter),
                         'value': float(value), 'units': units.get(parameter.model_name, '')})
-            result = {
-                'step': step.id, 'status': 'done', 'model': step.model.as_dict(),
-                'place': resolved.place, 'started': started, 'finished': _now(),
-                'duration_s': round(time.time() - t0, 3),
+            return {
                 'method': settings.get('param_id_method'), 'best_cost': best_cost,
                 'point_estimate': point_estimate,
                 'best_fit': [float(v) for v in best],
@@ -338,20 +419,122 @@ class _Run:
                 'fixed': [dict(row) for _, row in sorted(fixed.items())],
                 'priors': [dict(prior.as_dict(), parameters=dist.names)
                            for prior, dist in priors],
-                'inputs': self.inputs(step.id),
                 'params_for_id_used': params_for_id,
                 'settings': settings,
+                'generated': generated,
                 'model_path': generated['model_path'],
                 'param_id_output_dir': case_dir,
                 'distribution_dir': distribution_dir,
             }
-            _write_json(os.path.join(step_dir, STEP_RESULT), result)
-            return result
 
-        result = self.on_root(finish)
-        self.emit('step_finished', step=step.id, index=index, total=total,
-                  best_cost=result['best_cost'], duration_s=result['duration_s'])
-        return result
+        return self.on_root(finish)
+
+    def _run_sensitivity(self, step, settings):
+        from libcuflynx.scripts.sensitivity_analysis_run_script import run_SA
+
+        generated, params_for_id, _, fixed, _ = self.on_root(
+            lambda: self._prepare(step, settings))
+        out_dir = os.path.join(self.step_dir(step.id), SENSITIVITY_DIR)
+        sa_options = dict(settings['sa_options'], output_dir=out_dir)
+        inp = self._inp(step, settings, generated, params_for_id)
+        inp['sa_options'] = sa_options
+        self._run_stage(step, 'sensitivity analysis', run_SA, inp)
+
+        def finish():
+            method = sa_options.get('method', 'sobol')
+            found = sorted(glob.glob(os.path.join(out_dir, SOBOL_INDICES_GLOB)))
+            if method == 'sobol' and not found:
+                raise WorkflowStepError(step.id, f'the Sobol analysis wrote no indices into '
+                                                 f'{out_dir}.')
+            return {'method': method, 'sensitivity_dir': out_dir,
+                    'sobol_indices': found[0] if found else None,
+                    'fixed': [dict(row) for _, row in sorted(fixed.items())],
+                    'params_for_id_used': params_for_id, 'settings': settings,
+                    'generated': generated, 'model_path': generated['model_path']}
+
+        return self.on_root(finish)
+
+    def _run_reduction(self, step, settings):
+        def reduce():
+            source = self.require_current(step.sensitivity_from, step.id)
+            reduction = SobolReduction.from_options(step.reduction)
+            step_dir = self.step_dir(step.id)
+            if os.path.isdir(step_dir):
+                shutil.rmtree(step_dir)
+            os.makedirs(step_dir)
+            out = reduced_params_for_id_path(self.output_dir, step.id)
+            try:
+                ranked = reduction.reduce(source['sobol_indices'],
+                                          source['params_for_id_used'], out)
+            except ValueError as exc:
+                raise WorkflowStepError(step.id, f'reducing "{step.sensitivity_from}": '
+                                                 f'{exc}') from exc
+            return {'sensitivity_step': step.sensitivity_from,
+                    'reduction': reduction.as_dict(),
+                    'selected': [{'parameter': name, 'score': float(score)}
+                                 for name, score in ranked],
+                    'kept_rows': len(ranked), 'params_for_id': out}
+
+        return self.on_root(reduce)
+
+    def _run_emulation(self, step, settings):
+        from libcuflynx.scripts.train_emulator_run_script import train_emulator
+
+        generated, params_for_id, _, fixed, _ = self.on_root(
+            lambda: self._prepare(step, settings))
+        inp = self._inp(step, settings, generated, params_for_id)
+        directory = emulator_dir(self.output_dir, step.id)
+        inp['emulator_settings'] = dict(settings.get('emulator_settings') or {},
+                                        emulator_dir=directory)
+        self._run_stage(step, 'emulator training', train_emulator, inp)
+
+        def finish():
+            return {'emulator_dir': directory,
+                    'fixed': [dict(row) for _, row in sorted(fixed.items())],
+                    'params_for_id_used': params_for_id, 'settings': settings,
+                    'generated': generated, 'model_path': generated['model_path']}
+
+        return self.on_root(finish)
+
+    def _run_identifiability(self, step, settings):
+        from libcuflynx.scripts.identifiability_run_script import run_identifiability_analysis
+        from libcuflynx.parsers.PrimitiveParsers import ObsAndParamDataParser
+
+        generated, params_for_id, units, fixed, _ = self.on_root(
+            lambda: self._prepare(step, settings))
+        info = ObsAndParamDataParser().get_param_id_info(params_for_id)
+        model_rows = self.on_root(lambda: {r['variable_name']: float(r['value'])
+                                           for r in read_parameter_rows(
+                                               generated['parameters_path'])})
+        # the analysis is at the result_from step's values, which the model was generated with
+        best = []
+        for qnames in info['param_names']:
+            first = qnames[0] if isinstance(qnames, (list, tuple)) else qnames
+            vessel, _, param = str(first).partition('/')
+            best.append(model_rows[CalibratedParameter(vessel=vessel, param=param).model_name])
+        inp = self._inp(step, settings, generated, params_for_id)
+        inp['ia_options'] = settings['ia_options']
+        self._run_stage(step, 'identifiability analysis', run_identifiability_analysis, inp,
+                        best)
+
+        def finish():
+            record = {'method': settings['ia_options'].get('method'),
+                      'parameters': list(info.get('param_labels') or []),
+                      'at': [float(v) for v in best],
+                      'fixed': [dict(row) for _, row in sorted(fixed.items())],
+                      'params_for_id_used': params_for_id, 'settings': settings,
+                      'generated': generated, 'model_path': generated['model_path']}
+            prefix = os.path.join(self.step_dir(step.id), step.emulator_from or step.id)
+            mean, covariance = prefix + '_laplace_mean.npy', prefix + '_laplace_covariance.npy'
+            if os.path.isfile(covariance):
+                cov = np.atleast_2d(np.load(covariance))
+                record['laplace'] = {'mean': np.atleast_1d(np.load(mean)).tolist(),
+                                     'covariance': cov.tolist(),
+                                     'std': np.sqrt(np.diag(cov)).tolist(),
+                                     'mean_path': mean, 'covariance_path': covariance}
+            return record
+
+        return self.on_root(finish)
 
     def _store_distribution(self, step, case_dir, info, settings):
         chain_path = os.path.join(case_dir, 'mcmc_chain.npy')
@@ -405,14 +588,20 @@ class _Run:
             rs = self.resolved.steps[step.id]
             result = self.step_result(step.id)
             done = bool(result) and result.get('status') == 'done'
-            steps.append({
-                'id': step.id, 'model': _model_files(step.model),
-                'obs_data': rs.obs_data_path, 'params_for_id': rs.params_for_id_path,
-                'place': rs.place, 'fixed_from': list(step.fixed_from),
-                'priors_from': [p.step for p in step.priors_from],
+            entry = {
+                'id': step.id, 'kind': step.kind, 'model': _model_files(step.model),
+                'obs_data': rs.obs_data_path, 'params_for_id': step.params_for_id,
+                'place': rs.place if step.model is not None else '',
                 'status': 'failed' if step.id == failed else ('done' if done else 'not_run'),
                 'run': (result or {}).get('param_id_output_dir') if done else None,
-                'manifest': self.step_manifest(step.id) if done else None})
+                'outputs': {k: (result or {}).get(k) for k in STEP_OUTPUTS[step.kind]}
+                if done else None,
+                'manifest': self.step_manifest(step.id) if done else None}
+            entry.update({key: ids for key, ids in step.sources().items() if ids or
+                          key in ('fixed_from', 'priors_from')})
+            if step.kind == 'reduction':
+                entry['reduction'] = dict(step.reduction)
+            steps.append(entry)
         target = (workflow_result or {}).get('target_model') or {}
         block = {'name': self.workflow.name,
                  'file': os.path.join(self.output_dir, WORKFLOW_FILE_NAME),
@@ -507,8 +696,18 @@ class _Run:
 
 def _model_files(model):
     '''A step's or target's model as the manifest records it: a module array's files, or a
-    library module's ``{module_type, version, parameterisation}``.'''
-    return model.as_dict()
+    library module's ``{module_type, version, parameterisation}``; None for a reduction.'''
+    return model.as_dict() if model is not None else None
+
+
+def reduced_params_for_id_path(output_dir, step_id):
+    '''The params_for_id a reduction step writes.'''
+    return os.path.join(output_dir, step_id, f'{step_id}_params_for_id.csv')
+
+
+def emulator_dir(output_dir, step_id):
+    '''Where an emulation step's emulator is trained.'''
+    return os.path.join(output_dir, step_id, EMULATOR_DIR)
 
 
 def write_calibrated_parameters(target, merged_parameters, workflow_name):
@@ -614,20 +813,28 @@ def plan_workflow(source, module_library_dirs=None):
                 vessel = vessel_of(p.vessel)
                 fixed.append({'from_step': source_id, 'model_name': p.model_name,
                               'in_step': naming.model_name(vessel, p.param) if vessel else None})
-        steps.append({
-            'id': step.id, 'model': step.model.as_dict(),
-            'place': rs.place, 'depends_on': list(step.depends_on),
+        entry = {
+            'id': step.id, 'kind': step.kind,
+            'model': step.model.as_dict() if step.model is not None else None,
+            'place': rs.place if step.model is not None else '',
+            'depends_on': list(step.depends_on),
             'obs_data': rs.obs_data_path,
-            'params_for_id': rs.params_for_id_path,
+            'params_for_id': step.params_for_id,
             'calibrates': [{'model_name': p.model_name,
                             'target_model_name': rs.target_model_name(p),
                             'target_parameterisation_name': rs.target_parameterisation_name(p)}
-                           for p in rs.parameters],
+                           for p in rs.parameters] if step.kind == 'calibration' else [],
             'fixed_from': fixed,
             'priors_from': [p.as_dict() for p in step.priors_from],
             'store_distribution': step.store_distribution,
-            'settings': workflow.step_settings(step),
-        })
+            'settings': workflow.step_settings(step) if step.model is not None else {},
+        }
+        for key in ('emulator_from', 'result_from', 'sensitivity_from', 'params_for_id_from'):
+            if getattr(step, key):
+                entry[key] = getattr(step, key)
+        if step.kind == 'reduction':
+            entry['reduction'] = dict(step.reduction)
+        steps.append(entry)
     return {'workflow_name': workflow.name, 'target': workflow.target.as_dict(),
             'target_parameters': resolved.target.parameters_path,
             'module_library_dirs': workflow.module_library_dirs, 'steps': steps}
@@ -726,7 +933,7 @@ def workflow_status(source, output_dir, module_library_dirs=None):
             current = run.inputs(step.id)
             stale = any(key in current and current[key]['sha256'] != info.get('sha256')
                         for key, info in result.get('inputs', {}).items())
-            for source_id in step.fixed_from + [p.step for p in step.priors_from]:
+            for source_id in step.depends_on:
                 upstream = steps.get(source_id, {})
                 if upstream.get('stale') or upstream.get('status') != 'done' or \
                         (upstream.get('finished') or '') > (result.get('started') or ''):
@@ -786,11 +993,14 @@ def workflow_model(source, view, *, output_dir, work_dir, module_library_dirs=No
                 overrides[record['target_model_name']] = (record, step.id)
         calibrated = [{'model_name': name, 'value': rec['value'], 'units': rec.get('units', ''),
                        'from_step': sid} for name, (rec, sid) in sorted(overrides.items())]
-        own_step = next((s for s in workflow.steps if s.model == workflow.target), None)
+        own_step = next((s for s in workflow.steps if s.model == workflow.target
+                         and s.kind == 'calibration'), None)
         place = ''
         own_result = run.step_result(own_step.id) if own_step else None
     else:
         step = workflow.step(view)
+        if step.model is None:
+            raise WorkflowError(f'step "{step.id}" is a reduction, which has no model.')
         kind, model = 'step', step.model
         rs = resolved.steps[step.id]
         place = rs.place
@@ -843,7 +1053,7 @@ def workflow_model(source, view, *, output_dir, work_dir, module_library_dirs=No
         'flat_model_path': generated['flat_model_path'],
         'parameters_path': generated['parameters_path'],
         'obs_data_path': existing(own_step.obs_data) if has_own else None,
-        'params_for_id_path': existing(own_step.params_for_id) if has_own else None,
+        'params_for_id_path': existing(run.params_for_id_of(own_step)) if has_own else None,
         'fixed': fixed, 'calibrated': calibrated,
         'waiting_for': sorted(set(waiting)), 'stale': sorted(set(stale)),
         'result': own_result,
