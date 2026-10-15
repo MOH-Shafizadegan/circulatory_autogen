@@ -29,18 +29,21 @@ _valid = OrderedDict()
 
 
 NO_JSONSCHEMA = (
-    'jsonschema is not installed, so input files are not checked against their schemas (only '
-    'by the readers\' own checks). Install it: pip install jsonschema. This happens in a '
-    'CUFLynx app released before libcuflynx required it.')
+    'jsonschema is not installed or does not import ({error}), so input files are not checked '
+    'against their schemas, only by the readers\' own checks. Install it: pip install '
+    'jsonschema. This happens in a CUFLynx app bundled before libcuflynx required it.')
 
 
 @functools.lru_cache(maxsize=None)
 def jsonschema_available():
-    """Whether jsonschema imports; warns once when it does not."""
+    """Whether jsonschema imports; warns once when it does not. Any error counts: a frozen
+    app can bundle jsonschema with an optional format package missing its data file, and then
+    the import itself raises FileNotFoundError."""
     try:
         import jsonschema  # noqa: F401
-    except ImportError:
-        warnings.warn(NO_JSONSCHEMA, UserWarning, stacklevel=3)
+    except Exception as exc:  # noqa: BLE001 - see the docstring
+        warnings.warn(NO_JSONSCHEMA.format(error=f'{type(exc).__name__}: {exc}'), UserWarning,
+                      stacklevel=3)
         return False
     return True
 

@@ -124,13 +124,15 @@ def test_without_jsonschema_files_still_load_with_a_warning(monkeypatch):
 
     def no_jsonschema(name, *args, **kwargs):
         if name == 'jsonschema' or name.startswith('jsonschema.'):
-            raise ImportError('no jsonschema')
+            # what CUFLynx v0.7.1's bundle raises: an optional format package's grammar file
+            # was not bundled
+            raise FileNotFoundError('rfc3987_syntax/syntax_rfc3987.lark')
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, '__import__', no_jsonschema)
     validation.jsonschema_available.cache_clear()
     try:
-        with pytest.warns(UserWarning, match='jsonschema is not installed'):
+        with pytest.warns(UserWarning, match='does not import .FileNotFoundError'):
             validate(OBS_DATA_SCHEMA, {'data_items': [_item(colour='red')]})
     finally:
         validation.jsonschema_available.cache_clear()
