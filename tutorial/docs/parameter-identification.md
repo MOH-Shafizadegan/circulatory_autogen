@@ -1131,7 +1131,7 @@ model, obs_data and params_for_id, and only calibrations' values are merged into
 | `calibration` | a param_id run; MCMC with `store_distribution` | | `fixed_from`, `priors_from`, `emulator_from`, `params_for_id_from` |
 | `sensitivity` | Sobol or local sensitivity analysis | `sa_options` in its settings | `fixed_from`, `emulator_from`, `result_from` |
 | `reduction` | keeps the parameters a Sobol step found most influential | `sensitivity_from`, `reduction`; no model or files | |
-| `emulation` | trains an emulator of the observables | `emulator_settings` (optional) | `fixed_from` |
+| `emulation` | trains an emulator of the observables | `emulator_settings` (optional) | `fixed_from`, `params_for_id_from` |
 | `identifiability` | Laplace identifiability analysis at a calibration's result | `ia_options`, `result_from` | `fixed_from` |
 
 The keys that pass something on, each naming one step of the kind shown:
@@ -1143,7 +1143,7 @@ The keys that pass something on, each naming one step of the kind shown:
 | `result_from` | calibration | its values, including those of the parameters this step analyses: a local sensitivity or identifiability analysis is then at that fit |
 | `emulator_from` | emulation | its emulator, which this step (a calibration or sensitivity) runs on instead of the model. The step names the same model, obs_data and params_for_id as the emulation step (an emulator answers only for what it was trained on) and has no `fixed_from` or `result_from`: it runs on a copy of that step's model, with the values that step was given |
 | `sensitivity_from` | sensitivity (Sobol) | a reduction's indices |
-| `params_for_id_from` | reduction | the params_for_id the reduction wrote, in place of the step's own (a calibration of the same model as the sensitivity step) |
+| `params_for_id_from` | reduction | the params_for_id the reduction wrote, in place of the step's own (a calibration or emulation of the same model as the sensitivity step; a step on that emulator names the same reduction) |
 
 A **reduction** ranks the sensitivity step's parameters by the `criterion` (`max`, default, or
 `mean`) over the observables of their `index_type` index (`ST`, total, default, or `S1`), keeps
@@ -1163,6 +1163,19 @@ step's params_for_id -- bounds and all -- as `<step_id>/<step_id>_params_for_id.
 ```
 
 Rerunning `screen` reruns `keep-5`, and so `fit` and `ia`, since each takes from the one before.
+
+A reduction is a `libcuflynx.sensitivity_analysis.parameter_reduction.SobolReduction`, which
+can also be used on its own:
+
+```python
+from libcuflynx.sensitivity_analysis.parameter_reduction import SobolReduction
+SobolReduction(top_n=5, threshold=0.01).reduce(
+    'sa/all_outputs_n256_Sobol_indices.csv', 'candidates_params_for_id.csv', 'kept.csv')
+```
+
+An emulator can be trained on the kept parameters alone, and MCMC run on it: an `emulation`
+step with `"params_for_id_from": "keep-5"`, then a calibration with the same
+`params_for_id_from`, `"emulator_from"` that step and `"store_distribution": true`.
 
 ### How values move between models
 

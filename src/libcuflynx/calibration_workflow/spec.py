@@ -11,7 +11,8 @@ one of :data:`STEP_KINDS` (default ``calibration``):
 * ``reduction`` -- keeps the parameters a Sobol ``sensitivity`` step found most influential
   (``sensitivity_from``), as a params_for_id a calibration takes with ``params_for_id_from``;
 * ``emulation`` -- trains an emulator (``emulator_settings``) that later calibration and
-  sensitivity steps run on through ``emulator_from``, with the emulation step's model;
+  sensitivity steps run on through ``emulator_from``, with the emulation step's model; it may
+  be trained on a reduction's parameters (``params_for_id_from``);
 * ``identifiability`` -- identifiability analysis (``ia_options``) at a calibration's result
   (``result_from``).
 
@@ -74,7 +75,7 @@ _SOURCE_USERS = {'fixed_from': ('calibration', 'sensitivity', 'emulation', 'iden
                  'emulator_from': ('calibration', 'sensitivity'),
                  'result_from': ('sensitivity', 'identifiability'),
                  'sensitivity_from': ('reduction',),
-                 'params_for_id_from': ('calibration',)}
+                 'params_for_id_from': ('calibration', 'emulation')}
 #: the analysis options each kind needs in its settings
 _KIND_SETTINGS = {'sensitivity': 'sa_options', 'identifiability': 'ia_options'}
 _TARGET_KEYS = {'module_type', 'version', 'parameterisation'}
@@ -156,7 +157,7 @@ class Step:
     id: str
     model: object                  # Target (a library module) or ModuleArray; None: reduction
     obs_data: str                  # None for a reduction
-    params_for_id: str             # None for a reduction, or a calibration's params_for_id_from
+    params_for_id: str             # None for a reduction, or a step with params_for_id_from
     kind: str = DEFAULT_KIND
     submodule: str = None          # where a library module sits in a supermodule target
     vessel: str = None             # where a library module sits in a module-array target
@@ -168,7 +169,7 @@ class Step:
     emulator_from: str = None      # an emulation step whose emulator (and model) this step uses
     result_from: str = None        # a calibration step whose result this step analyses
     sensitivity_from: str = None   # (reduction) the Sobol step whose indices it reads
-    params_for_id_from: str = None  # (calibration) the reduction whose params_for_id it fits
+    params_for_id_from: str = None  # (calibration, emulation) the reduction whose params it uses
     reduction: dict = field(default_factory=dict)
     settings: dict = field(default_factory=dict)
     description: str = ''
@@ -568,13 +569,14 @@ def check_workflow(workflow):
                         f'{workflow.step(source).kind} step; it takes a {wanted} step.')
         if step.emulator_from:
             emulation = workflow.step(step.emulator_from)
-            differ = [k for k in ('model', 'obs_data', 'params_for_id')
+            differ = [k for k in ('model', 'obs_data', 'params_for_id', 'params_for_id_from')
                       if getattr(step, k) != getattr(emulation, k)]
             if differ:
                 raise WorkflowError(
                     f'step "{step.id}" uses the emulator of "{emulation.id}" but names a '
                     f'different {" and ".join(differ)}. An emulator answers only for what it '
-                    f'was trained on: give the same model, obs_data and params_for_id.')
+                    f'was trained on: give the same model, obs_data and params_for_id (or '
+                    f'params_for_id_from).')
         if step.sensitivity_from:
             method = (workflow.step_settings(workflow.step(step.sensitivity_from))
                       .get('sa_options') or {}).get('method', 'sobol')
@@ -583,11 +585,6 @@ def check_workflow(workflow):
                     f'reduction "{step.id}" reads Sobol indices, but "{step.sensitivity_from}" '
                     f'runs {method!r} sensitivity analysis.')
         if step.params_for_id_from:
-            if step.emulator_from:
-                raise WorkflowError(
-                    f'step "{step.id}" fits the reduced params_for_id of '
-                    f'"{step.params_for_id_from}", which no emulator was trained on; it cannot '
-                    f'also use "emulator_from".')
             sensitivity = workflow.step(workflow.step(step.params_for_id_from).sensitivity_from)
             if step.model != sensitivity.model:
                 raise WorkflowError(

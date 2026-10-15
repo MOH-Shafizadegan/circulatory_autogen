@@ -48,8 +48,7 @@ from libcuflynx.calibration_workflow.generate import generate_model, read_parame
 from libcuflynx.calibration_workflow.resolve import (CalibratedParameter,
                                                      read_calibrated_parameters,
                                                      resolve_workflow)
-from libcuflynx.sensitivity_analysis.sobol_ranking import (rank_sobol_parameters,
-                                                           read_sobol_indices)
+from libcuflynx.sensitivity_analysis.parameter_reduction import SobolReduction
 from libcuflynx.utilities.parameter_names import (is_path_name, split_path_name,
                                                   supermodule_row_name)
 from libcuflynx.calibration_workflow.spec import (WORKFLOW_FILE_NAME, WorkflowError, load_workflow,
@@ -458,24 +457,23 @@ class _Run:
     def _run_reduction(self, step, settings):
         def reduce():
             source = self.require_current(step.sensitivity_from, step.id)
-            options = step.reduction
-            ranked = rank_sobol_parameters(read_sobol_indices(source['sobol_indices']),
-                                           options['top_n'], options['index_type'],
-                                           options['criterion'], options['threshold'])
-            if not ranked:
-                raise WorkflowStepError(step.id, f'no parameter of "{step.sensitivity_from}" '
-                                                 f'scores {options["threshold"]} or more.')
+            reduction = SobolReduction.from_options(step.reduction)
             step_dir = self.step_dir(step.id)
             if os.path.isdir(step_dir):
                 shutil.rmtree(step_dir)
             os.makedirs(step_dir)
             out = reduced_params_for_id_path(self.output_dir, step.id)
-            kept = _write_reduced_params_for_id(source['params_for_id_used'], out,
-                                                [name for name, _ in ranked], step.id)
-            return {'sensitivity_step': step.sensitivity_from, 'reduction': dict(options),
+            try:
+                ranked = reduction.reduce(source['sobol_indices'],
+                                          source['params_for_id_used'], out)
+            except ValueError as exc:
+                raise WorkflowStepError(step.id, f'reducing "{step.sensitivity_from}": '
+                                                 f'{exc}') from exc
+            return {'sensitivity_step': step.sensitivity_from,
+                    'reduction': reduction.as_dict(),
                     'selected': [{'parameter': name, 'score': float(score)}
                                  for name, score in ranked],
-                    'kept_rows': kept, 'params_for_id': out}
+                    'kept_rows': len(ranked), 'params_for_id': out}
 
         return self.on_root(reduce)
 
@@ -710,30 +708,6 @@ def reduced_params_for_id_path(output_dir, step_id):
 def emulator_dir(output_dir, step_id):
     '''Where an emulation step's emulator is trained.'''
     return os.path.join(output_dir, step_id, EMULATOR_DIR)
-
-
-def _write_reduced_params_for_id(source_path, out_path, labels, step_id):
-    '''The rows of ``source_path`` whose entries are named in ``labels``, in its order. Returns
-    the number of rows kept.'''
-    from libcuflynx.parsers.PrimitiveParsers import ObsAndParamDataParser, param_entry_labels
-    with open(source_path, newline='') as f:
-        reader = csv.DictReader(f)
-        fields, rows = reader.fieldnames, list(reader)
-    entry_labels = param_entry_labels(ObsAndParamDataParser().get_param_id_info(source_path))
-    if len(entry_labels) != len(rows):
-        raise WorkflowStepError(step_id, f'{source_path} has {len(rows)} rows but '
-                                         f'{len(entry_labels)} parameters; a reduction keeps '
-                                         f'whole rows, one parameter each.')
-    unknown = sorted(set(labels) - set(entry_labels))
-    if unknown:
-        raise WorkflowStepError(step_id, f'the Sobol indices name {unknown}, which '
-                                         f'{source_path} does not.')
-    kept = [row for row, label in zip(rows, entry_labels) if label in labels]
-    with open(out_path, 'w', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=fields)
-        writer.writeheader()
-        writer.writerows(kept)
-    return len(kept)
 
 
 def write_calibrated_parameters(target, merged_parameters, workflow_name):

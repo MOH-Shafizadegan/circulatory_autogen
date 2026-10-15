@@ -33,6 +33,11 @@ records the whole order of a study.
 - `identifiability` runs a Laplace analysis (`settings.ia_options`) at the values of the
   calibration in its `result_from`.
 
+An emulation step may be trained on a reduction's parameters (`params_for_id_from`), and a
+calibration with the same `params_for_id_from` and `emulator_from` it samples its posterior
+on that emulator (`store_distribution`). `SobolReduction`
+(`libcuflynx.sensitivity_analysis.parameter_reduction`) is the reduction, usable on its own.
+
 Only calibrations are merged into the target. The study manifest, `--dry-run` plan, status and
 methods LaTeX (text and flow chart) show each step's kind, what it takes from where and its
 outputs. `run_identifiability_analysis` takes `best_param_vals`, and Sobol indices are ranked by

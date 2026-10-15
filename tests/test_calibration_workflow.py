@@ -14,6 +14,8 @@ whose optima are known in closed form.
 * ``chain_analysed``: the steps that are not calibrations -- a Sobol screen of p_A and q, a
   reduction that keeps q, the calibration of what it kept, and a Laplace analysis at that fit,
   whose std is known in closed form.
+* ``chain_pipeline``: a whole study in one workflow -- a submodule calibration, a Sobol screen,
+  a reduction, an emulator of what was kept, and MCMC on that emulator.
 """
 import copy
 import csv
@@ -85,7 +87,7 @@ def test_a_step_names_its_files_relative_to_the_workflow(library):
 def test_the_shipped_schema_accepts_the_fixture_workflows_and_rejects_unknown_keys(library):
     jsonschema = pytest.importorskip('jsonschema')
     schema = load_schema(CALIBRATION_WORKFLOW_SCHEMA)
-    for which in ('twin_split', 'chain_rest', 'chain_array', 'chain_analysed'):
+    for which in ('twin_split', 'chain_rest', 'chain_array', 'chain_analysed', 'chain_pipeline'):
         jsonschema.validate(_raw(library, which), schema)
     raw = _raw(library)
     raw['steps'][0]['fixed_values'] = {}
@@ -884,8 +886,20 @@ def test_a_step_on_an_emulator_runs_on_what_it_was_trained_on(library, edit, mes
 
 
 @pytest.mark.unit
+def test_a_step_on_a_reduced_emulator_names_the_same_reduction(library):
+    raw = _raw(library, 'chain_pipeline')
+    posterior = raw['steps'][-1]
+    posterior.pop('params_for_id_from')
+    posterior['params_for_id'] = os.path.relpath(
+        os.path.join(library['chain/pipeline'], 'pipeline_params_for_id.csv'),
+        library['chain/pipeline'])
+    with pytest.raises(WorkflowError, match='different params_for_id and params_for_id_from'):
+        parse_workflow(raw, path=library['chain_pipeline'])
+
+
+@pytest.mark.unit
 def test_a_reduction_keeps_the_top_parameters_by_its_options(tmp_path):
-    from libcuflynx.calibration_workflow.runner import _write_reduced_params_for_id
+    from libcuflynx.sensitivity_analysis.parameter_reduction import SobolReduction
     from libcuflynx.sensitivity_analysis.sobol_ranking import (rank_sobol_parameters,
                                                                read_sobol_indices)
     indices = tmp_path / 'all_outputs_n8_Sobol_indices.csv'
@@ -906,10 +920,24 @@ def test_a_reduction_keeps_the_top_parameters_by_its_options(tmp_path):
     source.write_text('vessel_name,param_name,min,max,name_for_plotting\n'
                       'm,a,0.1,1.0,a_m\nm,b,0.2,2.0,b_m\nm,c,0.3,3.0,c_m\n')
     out = tmp_path / 'reduced.csv'
-    assert _write_reduced_params_for_id(str(source), str(out), ['m/c', 'm/a'], 'r') == 2
+    assert SobolReduction.write_params_for_id(str(source), str(out), ['m/c', 'm/a']) == 2
     # whole rows, bounds and all, in the source's order
     assert out.read_text().splitlines() == ['vessel_name,param_name,min,max,name_for_plotting',
                                             'm,a,0.1,1.0,a_m', 'm,c,0.3,3.0,c_m']
+
+    # the class a reduction step is: ranks, keeps and writes in one call
+    reduction = SobolReduction(top_n=2, criterion='mean')
+    assert reduction.reduce(str(indices), str(source), str(out)) == [
+        ('m/b', 0.5), ('m/a', pytest.approx(0.48))]
+    assert out.read_text().splitlines()[1:] == ['m,a,0.1,1.0,a_m', 'm,b,0.2,2.0,b_m']
+    assert SobolReduction.from_options(reduction.as_dict()).as_dict() == {
+        'top_n': 2, 'index_type': 'ST', 'criterion': 'mean', 'threshold': None}
+    with pytest.raises(ValueError, match='no parameter scores'):
+        SobolReduction(top_n=2, threshold=0.99).reduce(str(indices), str(source), str(out))
+    for bad in ({'top_n': 0}, {'top_n': 1, 'index_type': 'S2'},
+                {'top_n': 1, 'criterion': 'median'}, {'top_n': 1, 'threshold': -1}):
+        with pytest.raises(ValueError):
+            SobolReduction(**bad)
 
 
 @pytest.mark.unit
@@ -1085,3 +1113,47 @@ def test_the_command_reports_steps_that_are_not_calibrations(capsys):
         '[workflow] step 3/5: reduce (reduction, no model)',
         '[workflow] step reduce done: in 0.2 s',
         '[workflow] step fit done: best cost 0.0015 in 2.0 s']
+
+
+@pytest.mark.integration
+def test_a_whole_study_runs_from_submodule_calibration_to_mcmc_on_an_emulator(library,
+                                                                             tmp_path):
+    """Submodule calibration -> Sobol screen -> reduction -> emulator of what was kept ->
+    MCMC on the emulator, in one workflow of the algebraic chain (about 10 s)."""
+    pytest.importorskip('autoemulate')
+    out = str(tmp_path / 'run')
+    result = run_calibration_workflow(library['chain_pipeline'], output_dir=out)
+    assert result['complete']
+    assert result['order'] == ['fit_a', 'screen', 'reduce', 'emulate', 'posterior']
+    step = lambda sid: _read_json(os.path.join(out, sid, 'step_result.json'))  # noqa: E731
+
+    # the submodule's value is fixed in the chain for the screen and the emulator
+    assert step('screen')['fixed'][0]['model_name'] == 'p_mod_A'
+    assert step('screen')['fixed'][0]['value'] == pytest.approx(np.sqrt(Y_A / 2), rel=1e-5)
+
+    # q drives z over its range and the gain k barely does: the reduction keeps q
+    reduce = step('reduce')
+    assert [s['parameter'] for s in reduce['selected']] == ['mod_C/q']
+    with open(reduce['params_for_id'], newline='') as f:
+        assert [(r['vessel_name'], r['param_name']) for r in csv.DictReader(f)] == [
+            ('mod_C', 'q')]
+
+    # the emulator is trained over the kept parameter alone, and the posterior is sampled on it
+    emulate, posterior = step('emulate'), step('posterior')
+    assert emulate['params_for_id_used'] == reduce['params_for_id']
+    assert posterior['params_for_id_used'] == reduce['params_for_id']
+    from libcuflynx.utilities.cuflynx_study import read_study
+    study = read_study(os.path.join(out, 'posterior', 'param_id',
+                                    'posterior_cuflynx_study.json'))
+    assert study['emulator'] == emulate['emulator_dir']
+    assert study['runs'][0]['analyses'] == ['CMA-ES', 'mcmc']
+
+    # dz/dq = 2 q at q = 3, so sd(q) = STD_C / 6; the emulator is good to about 1 %
+    distribution = StoredDistribution.load(posterior['distribution_dir'])
+    assert distribution.names == ['q_mod_C']
+    q = np.sqrt(Z_C - Y_A)
+    assert np.median(distribution.samples) == pytest.approx(q, rel=0.03)
+    assert np.std(distribution.samples) == pytest.approx(STD_C / (2 * q), rel=0.5)
+    assert _merged(result) == pytest.approx({'A/p': np.sqrt(Y_A / 2), 'C/q': q}, rel=0.03)
+    assert {r['parameterisation_name']: r['from_step'] for r in result['merged_parameters']} \
+        == {'A/p': 'fit_a', 'C/q': 'posterior'}
