@@ -11,6 +11,7 @@ place, the registry, and written into the schema by::
 
 import argparse
 import json
+import os
 import sys
 
 from libcuflynx.schemas import (CALIBRATION_WORKFLOW_SCHEMA, MODULE_CONFIG_SCHEMA,
@@ -100,7 +101,7 @@ def write():
             changed.add(schema_name)
     for schema_name in changed:
         path = schema_file(schema_name)
-        with open(str(path), 'w', encoding='utf-8') as f:
+        with open(str(path), 'w', encoding='utf-8') as f:  # checked by main()
             f.write(json.dumps(documents[schema_name], indent=2, ensure_ascii=False) + '\n')
     return sorted(changed)
 
@@ -111,7 +112,15 @@ def main(argv=None):
     parser.add_argument('--write', action='store_true')
     args = parser.parse_args(argv)
     if args.write:
-        print('rewrote', ', '.join(write()) or 'nothing')
+        # the schemas of whichever libcuflynx is imported: refuse an installed copy, and say
+        # which checkout was written, so a venv pointing elsewhere cannot go unnoticed
+        here = os.path.dirname(os.path.abspath(str(schema_file(OBS_DATA_SCHEMA))))
+        root = os.path.dirname(os.path.dirname(os.path.dirname(here)))
+        if not os.path.isfile(os.path.join(root, 'pyproject.toml')):
+            print(f'{here} is not in a source checkout; run from one with its src on '
+                  f'PYTHONPATH.')
+            return 2
+        print(f'rewrote {", ".join(write()) or "nothing"} in {here}')
         return 0
     stale = out_of_step()
     for schema_name, pointer, current, values in stale:

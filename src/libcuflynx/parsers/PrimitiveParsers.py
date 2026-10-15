@@ -25,6 +25,7 @@ from datetime import date
 
 from libcuflynx.utilities.protocol_shapes import materialise_shapes, validate_trace_references
 from libcuflynx.schemas import OBS_DATA_SCHEMA, PARAMS_FOR_ID_SCHEMA
+from libcuflynx.schemas.validation import validate as validate_schema
 from libcuflynx.utilities.obs_data_helpers import (LEGACY_OBS_ITEM_KEYS, LEGACY_OBS_KEY_ADVICE,
                                         migrate_legacy_obs_item_keys, check_obs_data_name,
                                         DEFAULT_COST_TYPE, PREVIOUS_DEFAULT_COST_TYPE,
@@ -3529,12 +3530,6 @@ def _held_out_std(entry, entry_idx):
     return float(stds[0]) if entry['data_type'] == 'constant' else stds.tolist()
 
 
-def validate_schema(schema_name, document, source='', what='file'):
-    """Check ``document`` against the shipped schema ``schema_name`` (libcuflynx.schemas)."""
-    from libcuflynx.schemas.validation import validate
-    validate(schema_name, document, source=source, what=what)
-
-
 #: data_type values that were removed, and what to write instead
 REMOVED_DATA_TYPES = {
     'prob_dist': (
@@ -3941,7 +3936,7 @@ class ObsAndParamDataParser(object):
                         raise ValueError(
                             f"{where}: subexperiment_idx {sub_idx} is not a sub-experiment of "
                             f"experiment {exp_idx}, which has {num_sub}.")
-                    prediction_info['experiment_idxs'].append(entry['experiment_idx'])
+                    prediction_info['experiment_idxs'].append(exp_idx)
                     prediction_info['subexperiment_idxs'].append(sub_idx)
                     if entry['value'] is not None and entry['data_type'] is None:
                         raise ValueError(
@@ -4074,6 +4069,12 @@ class ObsAndParamDataParser(object):
                                 gt_df[col] = gt_df[col].where(~missing_mask, default_series)
                             else:
                                 gt_df[col] = gt_df[col].where(~missing_mask, default)
+
+            # indices are integers: JSON Schema's integer takes 1.0, and pandas makes the
+            # column float whenever an item leaves the key out
+            for col in ('experiment_idx', 'subexperiment_idx'):
+                if col in gt_df.columns and len(gt_df):
+                    gt_df[col] = gt_df[col].astype(int)
 
             if len(missing_required_cols) > 0:
                 hint = ""

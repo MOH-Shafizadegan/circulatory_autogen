@@ -136,3 +136,40 @@ def test_without_jsonschema_files_still_load_with_a_warning(monkeypatch):
             validate(OBS_DATA_SCHEMA, {'data_items': [_item(colour='red')]})
     finally:
         validation.jsonschema_available.cache_clear()
+
+
+@pytest.mark.unit
+def test_a_numpy_value_is_not_taken_for_its_string_spelling():
+    """np.int64(0) and "0" must not share a cache entry: the second is not a valid index."""
+    validate(OBS_DATA_SCHEMA, {'data_items': [_item(experiment_idx=np.int64(0))]})
+    with pytest.raises(SchemaValidationError, match='experiment_idx'):
+        validate(OBS_DATA_SCHEMA, {'data_items': [_item(experiment_idx='0')]})
+
+
+@pytest.mark.unit
+def test_problems_are_listed_in_document_order():
+    doc = {'data_items': [_item(data_item_name=f'i{n}', **({'colour': 'r'} if n in (2, 10) else {}))
+                          for n in range(11)]}
+    with pytest.raises(SchemaValidationError) as excinfo:
+        validate(OBS_DATA_SCHEMA, doc)
+    assert [p for p, _ in excinfo.value.problems] == ["data_items[2] ('i2')", "data_items[10] ('i10')"]
+
+
+@pytest.mark.unit
+def test_a_value_of_the_wrong_type_is_one_problem():
+    from libcuflynx.schemas import PARAMS_FOR_ID_SCHEMA
+    with pytest.raises(SchemaValidationError) as excinfo:
+        validate(PARAMS_FOR_ID_SCHEMA, {'params': [5]})
+    assert excinfo.value.problems == [('params[0]', "5 is not of type 'object'")]
+
+
+@pytest.mark.unit
+def test_write_refuses_a_copy_outside_a_source_checkout(monkeypatch, tmp_path, capsys):
+    from importlib.resources import files
+    installed = tmp_path / 'site-packages' / 'libcuflynx' / 'schemas'
+    installed.mkdir(parents=True)
+    monkeypatch.setattr(registries, 'schema_file', lambda name: installed / name)
+    monkeypatch.setattr(registries, 'write', lambda: pytest.fail('wrote an installed copy'))
+    assert registries.main(['--write']) == 2
+    assert 'not in a source checkout' in capsys.readouterr().out
+    assert files  # importlib.resources is what schema_file uses in the package

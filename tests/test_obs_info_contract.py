@@ -525,3 +525,19 @@ def test_an_experiment_without_data_items_is_not_a_cost_experiment(tmp_path, cap
         gt_df=parsed["gt_df"], protocol_info=parsed["protocol_info"], dt=0.01)
     assert cost_experiment_idxs(protocol) == [0, 1]
     assert "no data_items" not in capsys.readouterr().out
+
+
+@pytest.mark.unit
+def test_experiment_indices_are_integers_when_some_items_leave_them_out():
+    """pandas makes the column float when an item leaves the key out; the indices index lists
+    (plot_reconstruction_pages slices with them), so they come back as int."""
+    parser = ObsAndParamDataParser()
+    item = {"data_item_name": "a", "operands": ["main/x"], "unit": "m", "data_type": "constant",
+            "value": 1.0, "std": 0.1, "operation": "max"}
+    doc = {"protocol_info": {"pre_times": [0.0, 0.0], "sim_times": [[1.0], [1.0, 1.0]],
+                             "params_to_change": {}},
+           "data_items": [dict(item, experiment_idx=1, subexperiment_idx=1),
+                          dict(item, data_item_name="b")]}
+    gt_df = parser.parse_obs_data_json(obs_data_dict=doc)["gt_df"]
+    assert list(gt_df["experiment_idx"]) == [1, 0]
+    assert all(isinstance(v, (int, np.integer)) for v in gt_df["subexperiment_idx"])

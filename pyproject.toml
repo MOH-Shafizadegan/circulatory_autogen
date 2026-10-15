@@ -153,8 +153,7 @@ exclude = ["obsolete*", "libcuflynx.obsolete*"]
 "libcuflynx.solver1d" = ["Make_files/*"]
 # Example input for example_format_obs_data_json_file(), which is itself shipped.
 "libcuflynx.scripts" = ["example_data/*.csv"]
-# JSON Schemas of the module array and module config files (for editors, PhLynx and tests;
-# the loaders in utilities/config_schemas.py check the same rules without a schema library).
+# JSON Schemas of the input files: every reader validates its file against its schema.
 "libcuflynx.schemas" = ["*.schema.json"]
 
 [project.optional-dependencies]

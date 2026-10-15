@@ -30,8 +30,9 @@ _valid = OrderedDict()
 
 NO_JSONSCHEMA = (
     'jsonschema is not installed or does not import ({error}), so input files are not checked '
-    'against their schemas, only by the readers\' own checks. Install it: pip install '
-    'jsonschema. This happens in a CUFLynx app bundled before libcuflynx required it.')
+    'against their schemas: a malformed obs_data or params_for_id file can then fail with an '
+    'unclear error. Install it: pip install jsonschema. This happens in a CUFLynx app bundled '
+    'before libcuflynx required it.')
 
 
 @functools.lru_cache(maxsize=None)
@@ -48,9 +49,21 @@ def jsonschema_available():
     return True
 
 
+def _jsonable(value):
+    """A numpy value as its JSON value; anything else is not cached (TypeError)."""
+    import numpy as np
+    if isinstance(value, np.ndarray):
+        return {'__ndarray__': value.tolist()}
+    if isinstance(value, np.generic):
+        return {'__numpy__': type(value).__name__, 'value': value.item()}
+    raise TypeError(type(value).__name__)
+
+
 def _digest(schema_name, document):
+    """The cache key of ``document``, or None for one that cannot be keyed exactly. numpy
+    values are tagged, so ``np.int64(0)`` is not taken for the string ``"0"``."""
     try:
-        text = json.dumps(document, sort_keys=True, default=repr)
+        text = json.dumps(document, sort_keys=True, default=_jsonable)
     except (TypeError, ValueError):
         return None
     return schema_name, hashlib.sha1(text.encode('utf-8')).hexdigest()
@@ -223,16 +236,21 @@ def problems(schema_name, document):
     ``document``, in document order."""
     seen, out = set(), []
     validator = _validator(schema_name)
+    # document order: list indices as numbers, so data_items[2] comes before data_items[10]
     errors = sorted(validator.iter_errors(document),
-                    key=lambda e: [str(p) for p in e.absolute_path])
-    for error in errors:
-        for leaf in _leaves(error):
-            message = _message(leaf)
-            key = (tuple(leaf.absolute_path), message)
-            if key not in seen:
-                seen.add(key)
-                out.append((_where(leaf.absolute_path, document), message,
-                            _description(leaf, validator.schema, _owners(schema_name))))
+                    key=lambda e: [(isinstance(p, str), p) for p in e.absolute_path])
+    leaves = [leaf for error in errors for leaf in _leaves(error)]
+    # where a value has the wrong type, the rules about its keys only add noise
+    mistyped = {tuple(leaf.absolute_path) for leaf in leaves if leaf.validator == 'type'}
+    leaves = [leaf for leaf in leaves if leaf.validator == 'type'
+              or tuple(leaf.absolute_path) not in mistyped]
+    for leaf in leaves:
+        message = _message(leaf)
+        key = (tuple(leaf.absolute_path), message)
+        if key not in seen:
+            seen.add(key)
+            out.append((_where(leaf.absolute_path, document), message,
+                        _description(leaf, validator.schema, _owners(schema_name))))
     return out
 
 
@@ -244,8 +262,8 @@ def validate(schema_name, document, source='', what='file'):
     if not jsonschema_available():
         return
     key = _digest(schema_name, document)
-    if key is not None and key in _valid:
-        _valid.move_to_end(key)
+    if key is not None and _valid.pop(key, None):
+        _valid[key] = True                  # most recently used; pop/set are each atomic
         return
     found = problems(schema_name, document)
     if not found:
