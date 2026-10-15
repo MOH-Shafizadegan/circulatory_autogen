@@ -23,6 +23,7 @@ import tempfile
 from libcuflynx.reporting import flowchart
 from libcuflynx.reporting.bibliography import cite, cited_keys, module_bib_files, read_bib, write_bib
 from libcuflynx.reporting.latex_names import escape
+from libcuflynx.utilities.parameter_names import PARAMETER_COMPONENTS
 from libcuflynx.reporting.model_latex import (format_number, format_units, module_sections,
                                               parameter_sources_section)
 from libcuflynx.reporting.variable_mapping import (default_mapping_path, load_model,
@@ -113,24 +114,23 @@ class Symbols:
         vessel, sep, variable = str(name).partition('/')
         if not sep:
             return _tt(name)
-        canonical = f'{strip_module(self._vessel(vessel))}/{variable}'
-        latex = self.latex.get(canonical) or self.latex.get(f'parameters/{variable}_{vessel}')
+        from libcuflynx.parsers.PrimitiveParsers import model_qname_candidates
+        latex = self._first([f'{strip_module(self._vessel(vessel))}/{variable}']
+                            + model_qname_candidates(f'{vessel}/{variable}'))
         return _math(latex) if latex else _tt(name)
 
     def parameter(self, vessel, param):
-        from libcuflynx.parsers.PrimitiveParsers import param_name_for_gen
-        model_name = param_name_for_gen(self._vessel(vessel), param)
-        for key in (f'parameters/{model_name}', f'parameters_global/{model_name}'):
-            if key in self.latex:
-                return _math(self.latex[key])
-        return _tt(f'{vessel}/{param}')
+        from libcuflynx.parsers.PrimitiveParsers import model_qname_candidates
+        latex = self._first(model_qname_candidates(f'{self._vessel(vessel)}/{param}'))
+        return _math(latex) if latex else _tt(f'{vessel}/{param}')
 
     def model_name(self, name):
         '''A generated-model parameter name (``p_mod_A``).'''
-        for key in (f'parameters/{name}', f'parameters_global/{name}'):
-            if key in self.latex:
-                return _math(self.latex[key])
-        return _tt(name)
+        latex = self._first([f'{component}/{name}' for component in PARAMETER_COMPONENTS])
+        return _math(latex) if latex else _tt(name)
+
+    def _first(self, keys):
+        return next((self.latex[key] for key in keys if key in self.latex), None)
 
 
 # --------------------------------------------------------------------------------------------

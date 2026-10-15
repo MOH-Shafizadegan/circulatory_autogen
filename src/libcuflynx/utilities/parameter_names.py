@@ -32,6 +32,40 @@ SEPARATOR = '/'
 GLOBAL = 'global'
 MIGRATE_COMMAND = 'cuflynx-migrate-parameter-names'
 
+#: Where another generator may have hoisted the constant ``<comp>/<var>``, as
+#: ``(component, variable name template)``, in the order they are tried. CA's own convention
+#: (``parameters/{var}_{comp}``, globals in ``parameters_global``) is tried before these.
+#: PhLynx before v0.3.0 used ``parameters``/``parameters_global``; from v0.3.0 on it uses
+#: ``instance_parameters``/``global_parameters``. A constant only one instance has keeps its
+#: bare name; one shared by several instances is prefixed with the instance.
+HOISTED_PARAMETER_CONVENTIONS = (
+    ('parameters', '{comp}_{var}'),
+    ('parameters', '{var}'),
+    ('parameters_global', '{var}'),
+    ('instance_parameters', '{comp}_{var}'),
+    ('instance_parameters', '{var}'),
+    ('global_parameters', '{var}'),
+)
+
+#: Components that hold a model's parameters, and those of them that hold global constants.
+PARAMETER_COMPONENTS = tuple(dict.fromkeys(c for c, _ in HOISTED_PARAMETER_CONVENTIONS))
+GLOBAL_PARAMETER_COMPONENTS = tuple(
+    c for c in PARAMETER_COMPONENTS if c.endswith('_global') or c.startswith('global_'))
+
+
+def hoisted_names(component, variable, sep=SEPARATOR):
+    '''The names ``<component>/<variable>`` may have after hoisting, in
+    HOISTED_PARAMETER_CONVENTIONS order, without repeats. A component ending ``_module`` is
+    tried with and without the suffix.'''
+    bare = component[:-len('_module')] if component.endswith('_module') else component
+    names = []
+    for target, template in HOISTED_PARAMETER_CONVENTIONS:
+        for comp in (component, bare):
+            name = f'{target}{sep}{template.format(comp=comp, var=variable)}'
+            if name not in names:
+                names.append(name)
+    return names
+
 
 def is_path_name(name):
     '''Whether ``name`` is written in the ``/`` form.'''

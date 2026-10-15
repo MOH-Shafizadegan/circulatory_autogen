@@ -37,6 +37,7 @@ from libcuflynx.param_id.modifier_funcs import (BUILTIN_MODIFIER_FUNCS, get_modi
 # answers without opening MPI when nothing launched this process.
 from libcuflynx.utilities import mpi_utils as _mpi_utils
 from libcuflynx.utilities.module_library import as_dir_list
+from libcuflynx.utilities.parameter_names import hoisted_names
 from libcuflynx.utilities.config_schemas import (load_module_config, load_module_array,
                                                  module_array_path)
 from libcuflynx.utilities.paths import (default_generated_models_dir, default_funcs_user_dir,
@@ -1095,9 +1096,9 @@ def model_qname_candidates(qname):
     uploaded model's variable set. Ordering is meaningful: the first hit wins, so the
     component-qualified name is offered before any flattened alias and the bare name last.
 
-    Mirrors the alias list in ``solver_wrappers.name_resolver.VariableNameResolver``, which is
-    equivalent but cannot be imported without pulling in ``solver_wrappers/__init__`` (and thus
-    scipy) -- see the module note there.
+    Mirrors the alias list in ``solver_wrappers.name_resolver.VariableNameResolver``, which
+    cannot be imported without pulling in ``solver_wrappers/__init__`` (and thus scipy); both
+    take the hoisted names from ``utilities.parameter_names.hoisted_names``.
     """
     text = str(qname).strip()
     if '/' not in text:
@@ -1112,7 +1113,8 @@ def model_qname_candidates(qname):
     else:
         candidates.append(f'{vessel}_module/{param}')
     candidates += [f'parameters/{gen}', f'parameters_{vessel}/{param}',
-                   f'parameters_global/{gen}', gen]
+                   f'parameters_global/{gen}']
+    candidates += hoisted_names(vessel, param) + [gen]
     # order-preserving de-duplication: 'global/x' makes several candidates coincide
     seen, ordered = set(), []
     for candidate in candidates:
