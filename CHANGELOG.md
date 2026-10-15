@@ -34,8 +34,8 @@ records the whole order of a study.
   calibration in its `result_from`.
 
 An emulation step may be trained on a reduction's parameters (`params_for_id_from`), and a
-calibration with the same `params_for_id_from` and `emulator_from` it samples its posterior
-on that emulator (`store_distribution`). `SobolReduction`
+calibration with the same `params_for_id_from` and `emulator_from` pointing at it can sample
+its posterior on that emulator (`store_distribution`). `SobolReduction`
 (`libcuflynx.sensitivity_analysis.parameter_reduction`) is the reduction, usable on its own.
 
 Only calibrations are merged into the target. The study manifest, `--dry-run` plan, status and
