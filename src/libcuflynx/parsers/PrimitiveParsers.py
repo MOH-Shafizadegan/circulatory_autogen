@@ -3558,7 +3558,7 @@ class ObsAndParamDataParser(object):
             return None
 
         # The schema owns the file's structure (keys, types, enums); what follows reads it,
-        # migrates legacy spellings and fills defaults, and checks what needs the protocol.
+        # fills defaults, and checks what needs the protocol.
         check_removed_obs_data_values(json_obj)
         validate_schema(OBS_DATA_SCHEMA, json_obj, source=param_id_obs_path or 'obs_data',
                         what='obs_data file')

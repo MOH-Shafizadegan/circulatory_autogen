@@ -113,7 +113,7 @@ def _validator(schema_name):
 
 
 #: keys that name an entry of a list, shown after its index
-IDENTIFYING_KEYS = ('data_item_name', 'variable', 'id', 'name')
+IDENTIFYING_KEYS = ('data_item_name', 'id', 'name')
 
 
 def _where(path, document):
