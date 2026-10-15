@@ -278,7 +278,7 @@ def parse_workflow(raw, path=None, module_library_dirs=None):
             f'({{"module_type", "version", "parameterisation"}}).')
     target = _model(raw['target'], f'{where}: "target"', base_dir)
 
-    settings = _settings(raw.get('settings', {}), f'{where}: "settings"')
+    settings = _settings(raw.get('settings', {}), f'{where}: "settings"', base_dir)
 
     raw_steps = raw.get('steps')
     if not isinstance(raw_steps, list) or not raw_steps:
@@ -351,7 +351,12 @@ def _target(value, where):
     return Target(value['module_type'].strip(), value['version'].strip(), parameterisation)
 
 
-def _settings(value, where):
+#: settings that name a file or directory, relative to the workflow file like its other paths
+PATH_SETTINGS = ('external_modules_dir', 'operation_funcs_external_path',
+                 'cost_funcs_external_path', 'modifier_funcs_external_path')
+
+
+def _settings(value, where, base_dir):
     if not isinstance(value, dict):
         raise WorkflowError(f'{where} must be an object.')
     unknown = sorted(set(value) - set(ALLOWED_SETTINGS))
@@ -360,7 +365,11 @@ def _settings(value, where):
             f'{where}: {unknown} cannot be set by a workflow. The model, obs_data, '
             f'params_for_id and output directories of each step are chosen by the workflow '
             f'itself; settings may be {list(ALLOWED_SETTINGS)}.')
-    return copy.deepcopy(value)
+    settings = copy.deepcopy(value)
+    for key in PATH_SETTINGS:
+        if settings.get(key):
+            settings[key] = _path(settings[key], f'{where}: "{key}"', base_dir)
+    return settings
 
 
 def _prior_source(value, where):
@@ -526,7 +535,8 @@ def _step(value, index, where, base_dir):
                 store_distribution=store,
                 emulator_from=refs['emulator_from'], result_from=refs['result_from'],
                 params_for_id_from=refs['params_for_id_from'],
-                settings=_settings(value.get('settings', {}), f'{label}: "settings"'),
+                settings=_settings(value.get('settings', {}), f'{label}: "settings"',
+                                   base_dir),
                 description=value.get('description', '') or '')
 
 

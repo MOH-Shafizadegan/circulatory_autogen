@@ -5,6 +5,19 @@ next release; add to that section as you land a change.
 
 ## Unreleased
 
+### Added — packing a calibration workflow
+
+`pack_workflow(workflow, dest_dir)` and `cuflynx-calibration-workflow <workflow> --pack DIR`
+copy every file a workflow needs to run into one directory: the workflow rewritten to the
+packed files, each step's obs_data, params_for_id and module array with its parameters file,
+each module version it uses (with every units file of its library), and the files its settings
+name. Results are not packed. CUFLynx's OMEX export packs a workflow with it.
+
+### Changed — workflow settings paths are relative to the workflow file
+
+`external_modules_dir` and the `*_funcs_external_path` settings of a calibration workflow are
+read relative to the workflow file, like its other paths, not to the directory it is run from.
+
 ### Added — analysis steps in calibration workflows
 
 A workflow step has a `kind`: `calibration` (the default, so existing files are unchanged),

@@ -1220,6 +1220,13 @@ updated as each step finishes, so CUFLynx can follow a running workflow. Each st
 manifest, in `<step_id>/param_id/`, links back to it. `"write_cuflynx_study": false` in the
 settings turns both off.
 
+`--pack DIR` (or `pack_workflow` in Python) copies every file the workflow needs to run, and
+none of its results, into the new directory `DIR`: `DIR/calibration_workflow.json` runs anywhere
+and gives the same results. It holds each step's files under `inputs/<step_id>/`, the module
+versions the workflow uses under `modules/` (built-in modules come with libcuflynx), and the
+files its settings name under `settings/`. Paths in `settings` (`external_modules_dir`,
+`*_funcs_external_path`) are relative to the workflow file, like its other paths.
+
 `--from-step X` reruns X and everything after it, reusing the earlier results (and refusing if
 their obs_data, params_for_id or parameters changed since); `--only X` reruns one step.
 `--write-calibrated` writes the merged set beside the target's parameters file, as

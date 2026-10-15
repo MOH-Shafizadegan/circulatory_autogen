@@ -994,3 +994,79 @@ def test_steps_on_an_emulator_run_the_emulation_steps_model(library, tmp_path):
     # rest's own fixed_from was dropped; the emulator was trained with p_A fixed from fit_a
     assert _merged(result)['C/q'] == pytest.approx(np.sqrt(Z_C - Y_A), rel=0.03)
     assert os.path.isfile(step('screen')['sobol_indices'])
+
+
+# --------------------------------------------------------------------------------------------
+# packing: every file a run needs, in one directory
+# --------------------------------------------------------------------------------------------
+
+def _files_under(directory):
+    return sorted(os.path.relpath(os.path.join(root, f), directory)
+                  for root, _, names in os.walk(directory) for f in names)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('which, expected', [
+    ('chain_analysed', {'A/p': np.sqrt(Y_A / 2), 'C/q': np.sqrt(Z_C - Y_A)}),
+    ('chain_array', {'A/p': np.sqrt(Y_A / 2), 'C/q': np.sqrt(Z_C - Y_A)}),
+])
+def test_a_packed_workflow_runs_without_the_files_it_was_packed_from(tmp_path, which,
+                                                                     expected):
+    from libcuflynx.calibration_workflow import pack_workflow
+    root = tmp_path / 'library'
+    library = build_workflow_library(str(root))
+    pack = str(tmp_path / 'pack')
+    packed = pack_workflow(library[which], pack)
+    assert packed['workflow'] == os.path.join(pack, 'calibration_workflow.json')
+    assert packed['files'] == _files_under(pack)
+    # inputs only: no step output directories, results or study manifests
+    assert not any(f.endswith(('step_result.json', 'workflow_result.json',
+                               '_cuflynx_study.json')) for f in packed['files'])
+    raw = _read_json(packed['workflow'])
+    assert raw['module_library_dirs'] == ['modules']
+    if which == 'chain_analysed':
+        # the module versions the workflow uses, not the whole library
+        assert packed['modules'] == [os.path.join('modules', t, 'versions', 'v1')
+                                     for t in ('chain', 'lin_a', 'lin_c')]
+        steps = {s['id']: s for s in raw['steps']}
+        assert steps['screen']['obs_data'] == 'inputs/screen/screened_obs_data.json'
+        assert steps['fit']['obs_data'] == steps['screen']['obs_data']   # packed once
+        assert 'params_for_id' not in steps['fit'] and 'obs_data' not in steps['reduce']
+    else:
+        assert raw['target'] == {'module_array': 'inputs/_target/chain_module_array.json',
+                                 'parameters': 'inputs/_target/chain_parameters.csv'}
+
+    os.rename(str(root), str(tmp_path / 'moved'))      # the originals are gone
+    result = run_calibration_workflow(packed['workflow'], output_dir=str(tmp_path / 'run'))
+    assert result['complete']
+    assert _merged(result) == pytest.approx(expected, rel=1e-5)
+
+
+@pytest.mark.unit
+def test_settings_paths_are_relative_to_the_workflow_and_are_packed(library, tmp_path):
+    from libcuflynx.calibration_workflow import pack_workflow
+    from libcuflynx.scripts.calibration_workflow_run_script import build_parser, run
+    raw = _raw(library)
+    funcs = os.path.join(library['chain/rest'], 'funcs', 'my_operations.py')
+    os.makedirs(os.path.dirname(funcs))
+    with open(funcs, 'w') as f:
+        f.write('# user operation funcs\n')
+    raw['settings']['operation_funcs_external_path'] = 'funcs/my_operations.py'
+    raw['steps'][1]['settings'] = {'cost_funcs_external_path': 'funcs/my_operations.py'}
+    path = os.path.join(library['chain/rest'], 'with_funcs.json')
+    _write_json(path, raw)
+    workflow = load_workflow(path)
+    assert workflow.settings['operation_funcs_external_path'] == funcs
+    assert workflow.step_settings(workflow.step('rest'))['cost_funcs_external_path'] == funcs
+
+    pack = str(tmp_path / 'pack')
+    packed = run(build_parser().parse_args([path, '--pack', pack]))   # the command's own path
+    raw = _read_json(packed['workflow'])
+    in_pack = 'settings/operation_funcs_external_path/my_operations.py'
+    assert raw['settings']['operation_funcs_external_path'] == in_pack
+    # one file named twice is packed once
+    assert raw['steps'][1]['settings']['cost_funcs_external_path'] == in_pack
+    with open(os.path.join(pack, in_pack)) as f:
+        assert f.read() == '# user operation funcs\n'
+    with pytest.raises(ValueError, match='not empty'):
+        pack_workflow(path, pack)

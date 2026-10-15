@@ -56,10 +56,16 @@ def build_parser():
     parser.add_argument('--write-calibrated', action='store_true',
                         help='also write the merged set beside the target\'s parameters '
                              'file, as <name>_calibrated_parameters.csv')
+    parser.add_argument('--pack', default=None, metavar='DIR',
+                        help='copy every file the workflow needs to run (its inputs, module '
+                             'versions and settings files, none of its results) into the new '
+                             'directory DIR, with the workflow rewritten to them; run nothing')
     return parser
 
 
 def _model_label(model):
+    if model is None:
+        return 'no model'
     if 'module_array' in model:
         return model['module_array']
     return f"{model['module_type']}/{model['version']}/{model['parameterisation']}"
@@ -69,10 +75,13 @@ def _print_progress(event):
     kind = event['event']
     if kind == 'step_started':
         print(f"[workflow] step {event['index'] + 1}/{event['total']}: {event['step']} "
-              f"({_model_label(event['model'])})", flush=True)
+              f"({event.get('kind', 'calibration')}, {_model_label(event['model'])})",
+              flush=True)
     elif kind == 'step_finished':
-        print(f"[workflow] step {event['step']} done: best cost {event['best_cost']:.6g} "
-              f"in {event['duration_s']:.1f} s", flush=True)
+        cost = (f"best cost {event['best_cost']:.6g} " if event.get('best_cost') is not None
+                else '')
+        print(f"[workflow] step {event['step']} done: {cost}in {event['duration_s']:.1f} s",
+              flush=True)
     elif kind == 'step_failed':
         print(f"[workflow] step {event['step']} FAILED: {event['error']}", flush=True)
     elif kind == 'step_skipped':
@@ -80,7 +89,15 @@ def _print_progress(event):
 
 
 def run(args):
-    from libcuflynx.calibration_workflow import run_calibration_workflow
+    from libcuflynx.calibration_workflow import pack_workflow, run_calibration_workflow
+    if args.pack:
+        if MPI.COMM_WORLD.Get_rank() != 0:
+            return None
+        packed = pack_workflow(args.workflow, args.pack,
+                               module_library_dirs=args.module_library_dirs)
+        print(f"[workflow] packed {len(packed['files'])} files ({len(packed['modules'])} "
+              f"module versions) into {args.pack}; run {packed['workflow']}")
+        return packed
     result = run_calibration_workflow(
         args.workflow, output_dir=args.output_dir, module_library_dirs=args.module_library_dirs,
         from_step=args.from_step, only=args.only, dry_run=args.dry_run,
