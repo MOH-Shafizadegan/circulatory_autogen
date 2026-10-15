@@ -1070,3 +1070,18 @@ def test_settings_paths_are_relative_to_the_workflow_and_are_packed(library, tmp
         assert f.read() == '# user operation funcs\n'
     with pytest.raises(ValueError, match='not empty'):
         pack_workflow(path, pack)
+
+
+@pytest.mark.unit
+def test_the_command_reports_steps_that_are_not_calibrations(capsys):
+    from libcuflynx.scripts.calibration_workflow_run_script import _print_progress
+    _print_progress({'event': 'step_started', 'step': 'reduce', 'index': 2, 'total': 5,
+                     'kind': 'reduction', 'model': None})
+    _print_progress({'event': 'step_finished', 'step': 'reduce', 'best_cost': None,
+                     'duration_s': 0.25})
+    _print_progress({'event': 'step_finished', 'step': 'fit', 'best_cost': 1.5e-3,
+                     'duration_s': 2.0})
+    assert capsys.readouterr().out.splitlines() == [
+        '[workflow] step 3/5: reduce (reduction, no model)',
+        '[workflow] step reduce done: in 0.2 s',
+        '[workflow] step fit done: best cost 0.0015 in 2.0 s']
