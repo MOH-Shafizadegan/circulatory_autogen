@@ -264,6 +264,7 @@ def test_generate_cpp_model_succeeds(base_user_inputs, resources_dir, temp_outpu
         'input_param_file': 'aortic_bif_1d_parameters.csv',
         'model_type': 'cpp',
         'solver': 'RK4',
+        'solver_info': {'dt_solver': 0.0001},
         'couple_to_1d': True,
         'generated_models_dir': temp_generated_models_dir,
         'cpp_generated_models_dir': temp_output_dir,

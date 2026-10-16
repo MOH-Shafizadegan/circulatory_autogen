@@ -5104,7 +5104,7 @@ def test_offline_pre_time_multisub_fsa_gradient(
     runner, baseline = _build_lotka_offline_gradient_runner(
         base_user_inputs, resources_dir, temp_output_dir, temp_generated_models_dir,
         model_type='cellml', solver='CVODE_myokit',
-        solver_info={'MaximumStep': 0.005, 'MaximumNumberOfSteps': 50000,
+        solver_info={'MaximumStep': 0.005,
                      'rtol': 1e-10, 'atol': 1e-10},
         offline_calls=offline_calls)
     inner = runner.param_id

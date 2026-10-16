@@ -566,7 +566,7 @@ def test_generation_uses_parameterisations_and_the_host_file_wins(tmp_path, real
                 [_rec('s1', *I_M, parameterisation=I_M_NAMED), _rec('s2', *I_M)])
     # host values that differ from every instance's, under the module's own units
     _write_parameters(str(resources / f'{prefix}_parameters.csv'),
-                      [('tau_w_num_s1', units['tau_w_num'], '999'),
+                      [('s1/tau_w_num', units['tau_w_num'], '999'),
                        ('T', units['T'], '300')], 'host_value')
     generated = tmp_path / 'generated_models'
     config = {'file_prefix': prefix, 'input_param_file': f'{prefix}_parameters.csv',

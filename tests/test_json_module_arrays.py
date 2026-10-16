@@ -524,7 +524,9 @@ def test_nested_supermodule_generates_the_same_model_as_the_flattened_array(
         _rec('o_in_rd', 'reader', inp=['o_in_g']),
     ], gain + src)
     nested = _generate(tmp_path / 'nested', super_library_dir, 'jv_nested',
-                       [_rec('o', 'outer', subtype='supermodule')], gain + src)
+                       [_rec('o', 'outer', subtype='supermodule')],
+                       _prescribed_params('o/in/g', 1.0e-5, 0.5, 3.0)
+                       + _prescribed_params('o/src', 2.0e-5, 0.4, 5.0))
     _assert_same_up_to_level_joins(flattened, nested)
 
 
