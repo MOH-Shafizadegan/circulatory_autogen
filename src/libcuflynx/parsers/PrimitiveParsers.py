@@ -3503,28 +3503,6 @@ def _held_out_std(entry, entry_idx):
     return float(stds[0]) if entry['data_type'] == 'constant' else stds.tolist()
 
 
-#: data_type values that were removed, and what to write instead
-REMOVED_DATA_TYPES = {
-    'prob_dist': (
-        'data_type "prob_dist" has been removed (issue #421). It described the ground truth '
-        'rather than the data: the feature is an ordinary scalar, and comparing it against a '
-        'distribution is the cost function\'s job. Write "data_type": "constant" with a '
-        'cost_type that scores against a distribution (kernel_density_estimation, '
-        'multimodal_gaussian, poisson_MLE), keep the item\'s "prob_dist_params", and drop its '
-        'now-unread "value" and "std".'),
-}
-
-
-def check_removed_obs_data_values(json_obj):
-    """Raise, with what to write instead, for a value obs_data no longer accepts. Run before
-    the schema, whose error would only say the value is not allowed."""
-    items = json_obj if isinstance(json_obj, list) else (
-        json_obj.get('data_items') or [] if isinstance(json_obj, dict) else [])
-    for item in items if isinstance(items, list) else []:
-        if isinstance(item, dict) and item.get('data_type') in REMOVED_DATA_TYPES:
-            raise ValueError(REMOVED_DATA_TYPES[item['data_type']])
-
-
 class ObsAndParamDataParser(object):
     def __init__(self, modifier_funcs_external_path=None):
         # Optional external file of user modifier functions (issue #383), threaded from the
@@ -3558,7 +3536,6 @@ class ObsAndParamDataParser(object):
 
         # The schema owns the file's structure (keys, types, enums); what follows reads it,
         # fills defaults, and checks what needs the protocol.
-        check_removed_obs_data_values(json_obj)
         validate_schema(OBS_DATA_SCHEMA, json_obj, source=param_id_obs_path or 'obs_data',
                         what='obs_data file')
 
@@ -3999,7 +3976,7 @@ class ObsAndParamDataParser(object):
             # An obs_data with no data_items is valid -- a protocol-only file says how to drive
             # the model without yet saying what to measure -- and the schema loop above is
             # skipped for it, so none of these columns exist to validate. (data_type values are
-            # the schema's, with check_removed_obs_data_values advising on removed ones.)
+            # the schema's.)
 
             missing_ground_truth = []
             for row_idx in range(len(gt_df)):
@@ -4169,9 +4146,7 @@ class ObsAndParamDataParser(object):
 
         # The distribution a data_item is compared against, for a cost that scores against one
         # (kernel_density_estimation, multimodal_gaussian, poisson_MLE) rather than against a
-        # value/std. Such an item is an ordinary scalar observable -- prob_dist used to be a
-        # data_type of its own, which filed it in a parallel vector and hid it from everything
-        # that works on scalar features, the emulator included (issue #421).
+        # value/std. Such an item is an ordinary scalar observable.
         #
         # Full length over all data_items and indexed by row, like cost_type and the weight
         # vectors, so it stays correct when the per-type vectors are compacted to their own

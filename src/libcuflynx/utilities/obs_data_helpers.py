@@ -20,12 +20,8 @@ from typing import Any
 # get_valid_plot_types().
 # ---------------------------------------------------------------------------
 
-# Recognised data_item ``data_type`` values. ``timeseries`` is a deprecated
-# alias for ``series`` and is intentionally not advertised here. Nor is
-# ``prob_dist``, which was removed in issue #421: it described the shape of the
-# ground truth rather than of the data, and an observable compared against a
-# distribution is an ordinary ``constant`` whose cost_type takes
-# ``prob_dist_params``.
+# Recognised data_item ``data_type`` values. An observable compared against a
+# distribution is a ``constant`` whose cost_type takes ``prob_dist_params``.
 VALID_DATA_TYPES = ("constant", "series", "frequency")
 
 # Recognised ``plot_type`` values. ``None`` / ``""`` means "draw no marker".

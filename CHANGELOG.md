@@ -16,6 +16,10 @@ No shipped or library file used them, so they are no longer read; the schema ref
 - params_for_id: `operation` on a modifier entry (use `modifier`), and on a saved modifiers
   record.
 
+- obs_data's `data_type: "prob_dist"` no longer gets its own advice: it is refused like any
+  other unknown data_type. An observable scored against a distribution is a `constant` with a
+  distribution `cost_type` and `prob_dist_params`.
+
 `cuflynx-migrate-obs-data`, which rewrote those spellings, is removed with them. A bare list of
 data items is still read as an obs_data.
 

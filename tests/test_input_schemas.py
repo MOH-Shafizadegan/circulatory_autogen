@@ -222,7 +222,6 @@ def test_a_valid_obs_data_document_is_accepted_by_both():
                             'colour': 'red'}]), r"at prediction_items\[0\][^:]*: .*'colour'"),
     (_obs_doc(sim_time=[[1.0]]), r"at protocol_info: .*'sim_time' was unexpected"),
     (_obs_doc([_item(unit=None)]), r"at data_items\[0\][^:]*: 'unit' is a required property"),
-    (_obs_doc([_item(data_type='prob_dist')]), 'prob_dist" has been removed'),
     (_obs_doc([_item(value=[1.0, 2.0])]), r"(?s)at data_items\[0\][^:]*\.value: .*A constant's "
                                           r"value and std are single numbers"),
     (_obs_doc([_item(std=None)]), r"(?s)'std' is a required property.*needs a ground truth"),
