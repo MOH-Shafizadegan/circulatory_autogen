@@ -22,6 +22,11 @@ def _protocol_info():
         duration=2000.0,
     )
     return info
+def test_a_bare_list_of_data_items_is_refused():
+    with pytest.raises(ValueError, match="bare list.*cuflynx-upgrade obs-data"):
+        fill_protocol_info([{"data_item_name": "x"}], _protocol_info())
+
+
 def test_hand_written_labels_survive_a_reconversion():
     info = _protocol_info()
     existing = {"protocol_info": {"experiment_labels": ["1 Hz pacing"],

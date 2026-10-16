@@ -459,7 +459,7 @@ def test_calibrating_independent_parts_apart_matches_calibrating_them_together(l
     # the merged target model and the jointly calibrated model predict the same observables
     calibrated_joint = generate_parameterisation(
         Target('twin', 'v1', 'joint'), str(tmp_path / 'joint_calibrated'), 'joint_calibrated',
-        [{'variable_name': f'p_mod_{sub}', 'units': 'dimensionless',
+        [{'variable_name': f'mod__{sub}/p', 'units': 'dimensionless',
           'value': repr(joint[f'{sub}/p']), 'data_reference': 'joint calibration'}
          for sub in ('A', 'B')],
         library_inputs={'module_library_dirs': [library['modules']]})
