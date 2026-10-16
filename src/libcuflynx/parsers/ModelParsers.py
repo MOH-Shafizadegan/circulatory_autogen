@@ -10,7 +10,7 @@ from libcuflynx.utilities.config_schemas import (is_heart_module_type,
                                                  load_expanded_vessel_records, load_module_array,
                                                  vessel_records_to_string_frame)
 from libcuflynx.models.LumpedModels import CVS0DModel
-from libcuflynx.utilities.parameter_names import LEVEL_SEPARATOR, host_model_names
+from libcuflynx.utilities.parameter_names import host_model_names
 from libcuflynx.checks.LumpedModelChecks import LumpedCompositeCheck, LumpedBCVesselCheck, LumpedIDParamsCheck, LumpedPortVariableCheck
 import pandas as pd
 import numpy as np
@@ -42,16 +42,12 @@ def _vessel_variables(vessels_df):
 
 
 def _with_model_names(parameters_array, vessels_df, source):
-    '''``parameters_array`` with any ``<vessel>/<variable>`` names turned into model names, and
-    names whose nested vessel is joined with a single ``_`` (before #582) read as the current
-    ones.'''
+    '''``parameters_array`` with its ``<vessel>/<variable>`` names turned into model names
+    (``parameter_names.host_model_names``, which refuses the older forms).'''
     fields = parameters_array.dtype.names or ()
     if 'variable_name' not in fields or not len(parameters_array):
         return parameters_array
     names = parameters_array['variable_name'].tolist()
-    if not any('/' in str(n) for n in names) and \
-            not any(LEVEL_SEPARATOR in str(v) for v in vessels_df['name']):
-        return parameters_array
     model_names = host_model_names(names, _vessel_variables(vessels_df), source)
     width = max(len(n) for n in model_names)
     dtype = [(f, f'<U{max(width, parameters_array.dtype[f].itemsize // 4)}')
@@ -520,7 +516,7 @@ class CSV0DModelParser(object):
         hearts = [n for n, vt in zip(vessels_df["name"], vessels_df["module_type"]) if is_heart_module_type(vt)]
         if len(hearts) == 1:
             heart_row = vessels_df.loc[vessels_df["name"] == hearts[0]]
-            if len(heart_row.out_instances.values[0]) < 2:
+            if len(heart_row.out_instances.values[0]) == 1:
                 from libcuflynx.upgrade import hint
                 raise ValueError(
                     f'{self.vessel_filename}: the heart "{hearts[0]}" has one output; it needs '

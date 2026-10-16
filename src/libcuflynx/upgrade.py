@@ -143,7 +143,7 @@ def _heart_rows(records):
     '''The par/pvn records a heart with one output needs, with the heart connected to them.'''
     from libcuflynx.utilities.config_schemas import is_heart_module_type
     hearts = [r for r in records if is_heart_module_type(r.get('module_type'))]
-    if len(hearts) != 1 or len(hearts[0].get('out_instances') or []) >= 2:
+    if len(hearts) != 1 or len(hearts[0].get('out_instances') or []) != 1:
         return []
     heart = hearts[0]
     heart['out_instances'] = list(heart.get('out_instances') or []) + ['par']

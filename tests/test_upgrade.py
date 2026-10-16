@@ -129,3 +129,13 @@ def test_obs_data_needs_the_times(tmp_path):
     path = _write(tmp_path / 'm_obs_data.json', [])
     with pytest.raises(SystemExit, match='needs pre_time and sim_time'):
         upgrade(['obs-data', path])
+
+
+def test_a_heart_with_no_outputs_is_left_alone(tmp_path):
+    """A heart module tested on its own has no neighbours; only a one-output heart lacks its
+    pulmonary circuit."""
+    path = _write(tmp_path / 'm_module_array.json',
+                  [{'name': 'mod', 'module_type': 'heart', 'module_subtype': 'vp_simple'}])
+    before = open(path).read()
+    assert upgrade(['module-array', path]) == 0
+    assert open(path).read() == before
