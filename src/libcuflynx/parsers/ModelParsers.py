@@ -119,10 +119,6 @@ class CSV0DModelParser(object):
 
         self.conn_1d_0d_info = None
 
-    def split_0d_1d_vessel_array(self, supermodule_registry=None, component_registry=None):
-        """The old name of split_0d_1d_module_array (vessel arrays are now module arrays)."""
-        warnings.warn('split_0d_1d_vessel_array is now split_0d_1d_module_array', FutureWarning, stacklevel=2)
-        return self.split_0d_1d_module_array(supermodule_registry, component_registry)
 
     def split_0d_1d_module_array(self, supermodule_registry=None, component_registry=None):
         '''
@@ -518,26 +514,19 @@ class CSV0DModelParser(object):
                 extra_param_rows = self.split_0d_1d_module_array(supermodule_registry,
                                                                  component_registry)
                 vessels_df, _ = load_module_array(self.vessel_filename_0d)
-        
-
-        # TODO remove the below:
-        #  Temporarily we add a pulmonary system if there isnt one defined, this should be defined by
-        #   the user but we include this to improve backwards compatitibility.
 
         # the heart is found by its module_type, so it can have any name (a heart inside a
-        # supermodule is <instance>_<submodule>)
+        # supermodule is <instance>__<submodule>)
         hearts = [n for n, vt in zip(vessels_df["name"], vessels_df["module_type"]) if is_heart_module_type(vt)]
         if len(hearts) == 1:
-            heart = hearts[0]
-            heart_row = vessels_df.loc[vessels_df["name"] == heart]
+            heart_row = vessels_df.loc[vessels_df["name"] == hearts[0]]
             if len(heart_row.out_instances.values[0]) < 2:
-                # if the heart only has one output we assume it doesn't have an output to a pulmonary artery
-                # add pulmonary vein and artery to df
-                _append_vessel_row(vessels_df, 'par', 'vp', 'arterial_simple', [heart], ['pvn'], blank=[])
-                _append_vessel_row(vessels_df, 'pvn', 'vp', 'arterial_simple', ['par'], [heart], blank=[])
-                # add pulmonary artery (par) to output of heart and pvn to input
-                vessels_df.loc[vessels_df["name"] == heart].out_instances.values[0].append('par')
-                vessels_df.loc[vessels_df["name"] == heart].inp_instances.values[0].append('pvn')
+                from libcuflynx.upgrade import hint
+                raise ValueError(
+                    f'{self.vessel_filename}: the heart "{hearts[0]}" has one output; it needs '
+                    f'the pulmonary circuit (a pulmonary artery out and vein in), which '
+                    f'libcuflynx no longer adds. '
+                    + hint('module-array', self.vessel_filename))
         elif len(hearts) > 1:
             print('cannot have 2 hearts or more, we dont model octopii')
             exit()

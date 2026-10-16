@@ -10,7 +10,6 @@ import numpy as np
 import pandas as pd
 import os
 import sys
-import json
 import csv
 from pathlib import Path
 from libcuflynx.utilities.config_schemas import (dump_vessel_records, read_module_array_records,
@@ -19,10 +18,7 @@ from libcuflynx.utilities.config_schemas import (dump_vessel_records, read_modul
 
 def _write_json_records(source_path, source_records, df_vess, out_path):
     """The converted frame as JSON records: each source record (every key kept) with the
-    frame's edited columns, in the key style of the source file."""
-    with open(source_path, encoding='utf-8-sig') as f:
-        raw = json.load(f)
-    style = 'phlynx' if raw and 'module_type' in raw[0] and 'module_subtype' in raw[0] else 'libcuflynx'
+    frame's edited columns."""
     by_name = {r['name']: r for r in source_records}
     records = []
     for _, row in df_vess.iterrows():
@@ -35,7 +31,7 @@ def _write_json_records(source_path, source_records, df_vess, out_path):
                 record[column] = value
         records.append(record)
     with open(out_path, 'w') as f:
-        f.write(dump_vessel_records(records, style))
+        f.write(dump_vessel_records(records))
 
 
 def convert_0d_to_1d(model, folder_0d, param_file_0d, folder_hyb=None, vess_1d_list=[]):

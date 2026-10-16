@@ -4,14 +4,13 @@ A nested instance's vessel joins its path with ``__`` (``pair/coll`` is ``pair__
 module-array or submodule name may contain ``__`` or begin or end with ``_``, so a flat name
 splits back into one path. A host may name a submodule by its path in its own lists, a
 ``per_submodule_*`` key may be a path into a nested instance, and a supermodule may declare an
-``interface`` that hosts bind to by port type. Names joined with a single ``_`` (before #582)
-are still read, with a FutureWarning, when they name one vessel.
+``interface`` that hosts bind to by port type. Nested levels joined with a single ``_`` name
+nothing.
 
 The fixture library (``flowpair``, ``inner``, ``outer``) is test_json_module_arrays'.
 """
 import copy
 import os
-import warnings
 
 import myokit
 import pytest
@@ -20,8 +19,7 @@ from libcuflynx.solver_wrappers.name_resolver import VariableNameResolver
 from libcuflynx.utilities.config_schemas import (load_component_registry,
                                                  normalise_module_config_entry,
                                                  normalise_vessel_record)
-from libcuflynx.utilities.parameter_names import (flat_name, host_model_names,
-                                                  legacy_flat_name)
+from libcuflynx.utilities.parameter_names import flat_name, host_model_names
 from test_json_module_arrays import (_expand, _flowpair_host, _links, _rec, registry,  # noqa: F401
                                      super_library_dir)
 
@@ -129,30 +127,24 @@ def test_bad_names_are_rejected(name, where):
 _VESSELS = {'pair__g': {'mean': 'constant'}, 'src_a': {'mean': 'constant'}}
 
 
-@pytest.mark.parametrize('kind', ['param_file', 'params_for_id', 'operand'])
-def test_old_names_warn(kind):
-    if kind == 'param_file':
-        with pytest.warns(FutureWarning, match='pair__g'):
-            assert host_model_names(['mean_pair_g'], _VESSELS, 'p.csv') == ['mean_pair__g']
-        with pytest.warns(FutureWarning, match='pair__g'):
-            assert host_model_names(['pair_g/mean'], _VESSELS, 'p.csv') == ['mean_pair__g']
-        with warnings.catch_warnings():
-            warnings.simplefilter('error')
-            assert host_model_names(['mean_src_a'], _VESSELS, 'p.csv') == ['mean_src_a']
-    elif kind == 'params_for_id':
-        # a calibration parameter is resolved in the model by its {var}_{vessel} name
-        model = myokit.parse_model(_MMT)
-        keyed = [('var', {v.qname(): v for v in model.variables(deep=True)})]
-        with pytest.warns(FutureWarning, match='parameters.mean_pair__g'):
-            assert VariableNameResolver.resolve_key('pair_g/mean', keyed, separator='.') == \
-                ('var', 'parameters.mean_pair__g')
-    else:
-        model = myokit.parse_model(_MMT)
-        keyed = [('state', {v.qname(): i for i, v in enumerate(model.states())}),
-                 ('var', {v.qname(): v for v in model.variables(deep=True)})]
-        with pytest.warns(FutureWarning, match='pair__coll_module.v'):
-            assert VariableNameResolver.resolve_key('pair_coll/v', keyed, separator='.') == \
-                ('state', 'pair__coll_module.v')
+def test_a_host_file_name_in_the_older_forms_is_refused():
+    with pytest.raises(ValueError, match=r'written \{variable\}_\{vessel\}.*cuflynx-upgrade '
+                                         r'parameter-names'):
+        host_model_names(['mean_pair_g'], _VESSELS, 'p.csv')
+    with pytest.raises(ValueError, match=r'written \{variable\}_\{vessel\}'):
+        host_model_names(['mean_src_a'], _VESSELS, 'p.csv')
+    with pytest.raises(ValueError, match='no vessel "pair_g"'):
+        host_model_names(['pair_g/mean'], _VESSELS, 'p.csv')
+    assert host_model_names(['pair/g/mean', 'src_a/mean'], _VESSELS, 'p.csv') == \
+        ['mean_pair__g', 'mean_src_a']
+
+
+@pytest.mark.parametrize('name', ['pair_g/mean', 'pair_coll/v'])
+def test_a_single_underscore_join_resolves_to_nothing(name):
+    model = myokit.parse_model(_MMT)
+    keyed = [('state', {v.qname(): i for i, v in enumerate(model.states())}),
+             ('var', {v.qname(): v for v in model.variables(deep=True)})]
+    assert VariableNameResolver.resolve_key(name, keyed, separator='.') == (None, None)
 
 
 _MMT = """
@@ -167,8 +159,9 @@ dot(v) = parameters.mean_pair__g
 """
 
 
-def test_old_names_in_a_workflow_s_params_for_id_warn(tmp_path):
+def test_a_workflow_s_params_for_id_with_a_single_underscore_join_is_refused(tmp_path):
     from libcuflynx.calibration_workflow import load_workflow, resolve_workflow
+    from libcuflynx.calibration_workflow.spec import WorkflowError
     from libcuflynx.external_testing.workflow_library import build_workflow_library
     library = build_workflow_library(str(tmp_path / 'library'))
     path = os.path.join(library['chain/rest'], 'rest_params_for_id.csv')
@@ -176,17 +169,8 @@ def test_old_names_in_a_workflow_s_params_for_id_warn(tmp_path):
         text = f.read()
     with open(path, 'w') as f:
         f.write(text.replace('mod__C', 'mod_C'))
-    with pytest.warns(FutureWarning, match='"mod__C"'):
-        resolved = resolve_workflow(load_workflow(library['chain_rest']))
-    assert [p.vessel for p in resolved.steps['rest'].parameters] == ['mod__C']
-
-
-def test_an_ambiguous_old_name_is_an_error():
-    with pytest.raises(ValueError, match=r"could be any of \['a__b_c', 'a_b__c'\]"):
-        legacy_flat_name('a_b_c', ['a__b_c', 'a_b__c'], 'p.csv')
-    vessels = {'a__b_c': {'k': 'constant'}, 'a_b__c': {'k': 'constant'}}
-    with pytest.raises(ValueError, match='could be any of'):
-        host_model_names(['k_a_b_c'], vessels, 'p.csv')
+    with pytest.raises(WorkflowError, match='names vessel "mod_C"'):
+        resolve_workflow(load_workflow(library['chain_rest']))
 
 
 # --------------------------------------------------------------------------------------------

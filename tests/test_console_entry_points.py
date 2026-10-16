@@ -41,7 +41,7 @@ EXPECTED_ENTRY_POINTS = {
     "cuflynx-train-emulator",
     "cuflynx-plot",
     "cuflynx-generate-pipeline",
-    "cuflynx-migrate-parameter-names",
+    "cuflynx-upgrade",
     "cuflynx-run-predictions",
 }
 
@@ -357,7 +357,7 @@ NON_STAGE_COMMANDS = {
     "cuflynx-calibration-workflow",
     "cuflynx-variable-mapping",
     "cuflynx-methods-latex",
-    "cuflynx-migrate-parameter-names",
+    "cuflynx-upgrade",
     "cuflynx-run-predictions",
 }
 

@@ -124,7 +124,7 @@ def obs_operand_lists(info):
 
 #: Top-level key naming an obs_data file: the module parameterisation (or data set) it belongs
 #: to. In a module library a parameterisation's ``parameterisations/<name>/<name>_obs_data.json``
-#: (``instances/<name>/`` in older libraries) carries ``"obs_data_name": "<name>"``. Optional;
+#: carries ``"obs_data_name": "<name>"``. Optional;
 #: see ``schemas/obs_data.schema.json``.
 OBS_DATA_NAME_KEY = 'obs_data_name'
 
@@ -132,9 +132,8 @@ OBS_DATA_NAME_KEY = 'obs_data_name'
 def check_obs_data_name(json_obj, path=None):
     """The ``obs_data_name`` of an obs_data document, or None when it has none.
 
-    ``json_obj`` is the loaded file (a dict, or the legacy bare list of data items, which has
-    no name). A name that is not a non-empty string is a ValueError. When ``path`` lies in a
-    ``parameterisations/<name>/`` (or older ``instances/<name>/``) directory of a module
+    ``json_obj`` is the loaded file. A name that is not a non-empty string is a ValueError.
+    When ``path`` lies in a ``parameterisations/<name>/`` directory of a module
     library, a missing or different ``obs_data_name`` is warned about (UserWarning), since the
     file then describes another parameterisation than the one it is filed under.
     """
@@ -146,7 +145,7 @@ def check_obs_data_name(json_obj, path=None):
         name = name.strip()
     if path is not None:
         directory = os.path.dirname(os.path.abspath(str(path)))
-        if os.path.basename(os.path.dirname(directory)) in ('parameterisations', 'instances'):
+        if os.path.basename(os.path.dirname(directory)) == 'parameterisations':
             instance = os.path.basename(directory)
             if name != instance:
                 found = f"'{OBS_DATA_NAME_KEY}' is {name!r}" if name is not None else \
@@ -496,8 +495,6 @@ def fill_protocol_info(
     second thing to forget; the EasyML reader produces one too, and so could
     anything else.
     """
-    if isinstance(obs_data, list):
-        obs_data = {"data_items": obs_data}
     out = dict(obs_data or {})
     existing = out.get("protocol_info") or {}
     merged = dict(protocol_info)

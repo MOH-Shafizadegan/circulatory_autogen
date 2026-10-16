@@ -13,7 +13,7 @@ A schematic view of this model is shown above with details of boundary condition
 
 ![Module array file of 3compartment model](images/3compartment-parameters.png)
 
-In the `module_array` file, there are five columns: **name**, **module_subtype**, **module_type**, **inp_instances**, and **out_instances** (older names: BC_type, vessel_type, inp_vessels, out_vessels). 
+In the `module_array` file, there are five columns: **name**, **module_subtype**, **module_type**, **inp_instances**, and **out_instances** 
 
 **name** is the user-chosen module's name, for example *"heart"* or *"aortic_root"*. 
 

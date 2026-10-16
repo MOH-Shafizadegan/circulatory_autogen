@@ -125,17 +125,10 @@ def test_a_group_with_two_items_in_one_experiment_is_rejected():
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("form", ["dict", "legacy"])
-def test_default_is_empty_list(form):
-    if form == "dict":
-        obs = _obs(None)
-        del obs["prediction_plots"]
-        parsed = ObsAndParamDataParser().parse_obs_data_json(obs_data_dict=obs)
-    else:
-        items = [{"data_item_name": "c0", "operands": ["main/x"], "data_type": "constant",
-                  "unit": "dimensionless", "value": 1.0, "std": 0.1}]
-        parsed = ObsAndParamDataParser().parse_obs_data_json(obs_data_dict=items, pre_time=0.0,
-                                                              sim_time=1.0)
+def test_default_is_empty_list():
+    obs = _obs(None)
+    del obs["prediction_plots"]
+    parsed = ObsAndParamDataParser().parse_obs_data_json(obs_data_dict=obs)
     assert parsed["prediction_plots"] == []
 
 

@@ -49,8 +49,7 @@ def _parsed_prediction_info(items, sim_times=((2.0,),)):
            "prediction_items": items,
            "protocol_info": {"pre_times": [0.0] * len(sim_times),
                              "sim_times": [list(t) for t in sim_times]}}
-    parsed = ObsAndParamDataParser().parse_obs_data_json(obs_data_dict=doc, pre_time=0.0,
-                                                          sim_time=2.0)
+    parsed = ObsAndParamDataParser().parse_obs_data_json(obs_data_dict=doc)
     return parsed["prediction_info"], parsed["protocol_info"]
 
 
@@ -341,7 +340,7 @@ def _benchmark_obs(tmp_path, items=PREDICTION_ITEMS, resources_dir=None):
 
 def _parsed_benchmark(obs_path, scratch):
     parser = ObsAndParamDataParser()
-    parsed = parser.parse_obs_data_json(param_id_obs_path=obs_path, pre_time=0.0, sim_time=8.0)
+    parsed = parser.parse_obs_data_json(param_id_obs_path=obs_path)
     os.makedirs(scratch, exist_ok=True)
     obs_info = parser.process_obs_info(gt_df=parsed['gt_df'], output_dir=scratch, dt=0.05)
     protocol_info = parser.process_protocol_and_weights(
@@ -608,7 +607,7 @@ def _benchmark_config(base_user_inputs, resources_dir, temp_output_dir,
         'do_uq': False,
         'do_ia': False,
         'plot_predictions': False,
-        'solver_info': {'MaximumStep': 0.01, 'MaximumNumberOfSteps': 5000},
+        'solver_info': {'MaximumStep': 0.01},
         'param_id_obs_path': obs_path,
         'params_for_id_path': os.path.join(resources_dir,
                                            'Simple_ODE_Benchmark_params_for_id.csv'),
