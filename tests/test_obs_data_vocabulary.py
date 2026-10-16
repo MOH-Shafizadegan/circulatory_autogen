@@ -22,9 +22,7 @@ from libcuflynx.parsers.PrimitiveParsers import (ObsAndParamDataParser,
                                                  check_data_item_names_unique,
                                                  default_item_name_for_plotting)
 from libcuflynx.utilities.obs_data_helpers import (LEGACY_OBS_INFO_KEYS,
-                                                   LEGACY_OBS_ITEM_KEYS,
                                                    LEGACY_PREDICTION_INFO_KEYS,
-                                                   migrate_legacy_obs_item_keys,
                                                    normalise_obs_info,
                                                    normalise_prediction_info,
                                                    obs_item_labels, obs_item_names,
@@ -54,54 +52,14 @@ def _parse(doc):
                                                        pre_time=0.0, sim_time=1.0)
 
 
-# ------------------------------------------------------------------ the legacy keys migrate
+# ------------------------------------------------------------------ the old keys are refused
 
 @pytest.mark.unit
-def test_a_legacy_variable_becomes_the_data_item_name_and_warns_about_both_of_its_jobs():
-    doc = _doc([{'variable': 'mean of x', 'data_type': 'constant', 'unit': 'dimensionless',
-                 'operands': ['main/x'], 'operation': 'mean', 'weight': 1.0,
-                 'value': 1.0, 'std': 0.1}])
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter('always')
-        out = _parse(doc)
-    assert out['gt_df']['data_item_name'].tolist() == ['mean of x']
-    messages = ' '.join(str(w.message) for w in caught
-                        if issubclass(w.category, DeprecationWarning))
-    # both replacements named, because `variable` did both jobs
-    assert 'data_item_name' in messages and 'operands' in messages
-
-
-@pytest.mark.unit
-def test_a_legacy_name_for_plotting_becomes_the_trace_name_and_warns_about_both_labels():
-    doc = _doc([_item(name_for_plotting='x_{m}', **{})])
-    doc['data_items'][0].pop('data_item_name', None)
-    doc['data_items'][0]['data_item_name'] = 'mean of x'
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter('always')
-        out = _parse(doc)
-    assert out['gt_df']['trace_name_for_plotting'].tolist() == ['x_{m}']
-    messages = ' '.join(str(w.message) for w in caught
-                        if issubclass(w.category, DeprecationWarning))
-    assert 'trace_name_for_plotting' in messages and 'item_name_for_plotting' in messages
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize('legacy,current', sorted(LEGACY_OBS_ITEM_KEYS.items()))
-def test_setting_a_legacy_key_and_its_replacement_together_is_an_error(legacy, current):
-    """No precedence rule: silently picking one would fit whichever the author did not mean."""
-    with pytest.raises(ValueError) as excinfo:
-        migrate_legacy_obs_item_keys([{legacy: 'a', current: 'b'}])
-    assert legacy in str(excinfo.value) and current in str(excinfo.value)
-
-
-@pytest.mark.unit
-def test_migration_does_not_mutate_the_caller_s_dicts():
-    """An obs_data dict handed in by a user (or built by ObsDataCreator) is theirs."""
-    original = {'variable': 'x', 'operands': ['main/x']}
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore', DeprecationWarning)
-        migrate_legacy_obs_item_keys([original])
-    assert original == {'variable': 'x', 'operands': ['main/x']}
+@pytest.mark.parametrize('key', ['variable', 'name_for_plotting', 'obs_type', 'vm_path'])
+def test_an_old_data_item_key_is_refused_by_the_schema(key):
+    item = dict(_item(), **{key: 'x'})
+    with pytest.raises(ValueError, match=f"'{key}' was unexpected"):
+        _parse(_doc([item]))
 
 
 # ------------------------------------------------------------------------- the two labels
@@ -168,43 +126,6 @@ def test_the_uniqueness_rule_is_importable_on_its_own():
     check_data_item_names_unique(pd.DataFrame([{'data_item_name': 'a'}]))
 
 
-# --------------------------------------------------------------- the removed operand fallback
-
-@pytest.mark.unit
-def test_obs_type_no_longer_takes_its_operand_from_the_item_name():
-    """`obs_type: max` used to mean "max of whatever `variable` names". `variable` no longer
-    names a model variable, so the operand has to be stated."""
-    item = _item(operation=None, obs_type='max')
-    item['operands'] = []
-    parser = ObsAndParamDataParser()
-    parsed = parser.parse_obs_data_json(obs_data_dict=_doc([item]), pre_time=0.0, sim_time=1.0)
-    with pytest.raises(ValueError) as excinfo:
-        parser.process_obs_info(parsed['gt_df'], '/tmp', 0.01)
-    assert 'operands' in str(excinfo.value)
-
-
-@pytest.mark.unit
-def test_a_missing_data_item_name_says_what_replaced_variable():
-    item = _item()
-    del item['data_item_name']
-    with pytest.raises(ValueError) as excinfo:
-        _parse(_doc([item]))
-    msg = str(excinfo.value)
-    assert 'data_item_name' in msg and "'variable'" in msg
-
-
-# --------------------------------------------------------------------------- prediction items
-
-@pytest.mark.unit
-def test_a_legacy_prediction_item_gets_its_operand_from_the_variable_it_named():
-    """There was no `operands` key on a prediction_item at all -- `variable` was the qname."""
-    out = _parse(_doc([_item()],
-                      [{'variable': 'main/y', 'unit': 'dimensionless'}]))
-    pred = out['prediction_info']
-    assert pred['operands'] == [['main/y']]
-    assert pred['data_item_names'] == ['main/y']
-
-
 # ------------------------------------------------------------------- the shipped fixtures
 
 def _authored_obs_data_files():
@@ -224,18 +145,15 @@ def _authored_obs_data_files():
 @pytest.mark.unit
 @pytest.mark.parametrize('path', _authored_obs_data_files(),
                          ids=lambda p: os.path.basename(p))
-def test_every_authored_obs_data_file_uses_the_current_vocabulary(path):
+def test_every_authored_obs_data_file_names_each_item_once(path):
     with open(path, encoding='utf-8-sig') as fh:
         doc = json.load(fh)
-    items = doc if isinstance(doc, list) else (doc.get('data_items') or doc.get('data_item') or [])
+    items = doc if isinstance(doc, list) else (doc.get('data_items') or [])
     preds = [] if isinstance(doc, list) else (doc.get('prediction_items') or [])
     items = [i for i in items if isinstance(i, dict)]
     preds = [i for i in preds if isinstance(i, dict)]
     if not items:
         pytest.skip('not an obs_data file')
-    legacy = sorted({k for i in items + preds for k in i if k in LEGACY_OBS_ITEM_KEYS})
-    assert not legacy, f'{os.path.relpath(path, _ROOT)} still uses {legacy}'
-
     names = [i.get('data_item_name') for i in items + preds]
     dupes = sorted({n for n in names if names.count(n) > 1})
     assert not dupes, f'{os.path.relpath(path, _ROOT)} repeats data_item_name {dupes}'
@@ -280,29 +198,6 @@ _RESOURCES = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file
 def _shipped_obs_data_files():
     return sorted(f for f in os.listdir(_RESOURCES)
                   if 'obs_data' in f and f.endswith('.json'))
-
-
-@pytest.mark.unit
-def test_no_shipped_obs_data_uses_the_deprecated_obs_type():
-    """The files people copy must be written the way people should write them.
-
-    `obs_type` is read only when `operation` is null, and then only `min`/`max`/`mean` name an
-    operation at all -- `series`/`frequency` were saying what `data_type` already says. Five
-    shipped files still spelled it the old way after the #466 migration, so someone starting
-    from `simple_physiological_obs_data.json` would learn the deprecated key and get the
-    deprecation path.
-
-    A file is checked as *text*: the parser accepts `obs_type` on purpose (that is what makes
-    an existing study keep working), so parsing one proves nothing about how it is spelled.
-    """
-    offenders = []
-    for name in _shipped_obs_data_files():
-        with open(os.path.join(_RESOURCES, name), encoding='utf-8') as f:
-            if '"obs_type"' in f.read():
-                offenders.append(name)
-    assert not offenders, (
-        "these shipped obs_data files still use the deprecated 'obs_type': %s. Use 'operation' "
-        "for min/max/mean; 'series'/'frequency' belong in 'data_type'." % offenders)
 
 
 @pytest.mark.unit
@@ -424,3 +319,14 @@ def test_the_accessors_survive_a_numpy_column():
     assert obs_scalar_rows({"const_idx_to_obs_idx": np.array([])}) == []
     assert obs_item_names({"data_item_names": np.array(["a", "b"])}) == ["a", "b"]
     assert obs_operand_lists(None) == []
+
+
+@pytest.mark.unit
+def test_the_obs_data_creator_writes_a_file_the_reader_accepts(tmp_path):
+    from libcuflynx.scripts.example_format_obs_data_json_file import \
+        example_format_obs_data_json_file
+    path = tmp_path / 'obs_data.json'
+    example_format_obs_data_json_file(str(path))
+    out = ObsAndParamDataParser().parse_obs_data_json(param_id_obs_path=str(path),
+                                                      pre_time=1.0, sim_time=1.0)
+    assert out['prediction_info']['operands'] == [['NKE_pump/v_2'], ['NKE_pump/u_e']]

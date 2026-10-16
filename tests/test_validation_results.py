@@ -77,7 +77,7 @@ def test_a_held_out_series_std_is_one_number_or_one_per_point(std, expected):
     ({"data_item_name": "c", "operands": ["main/c"], "unit": "m3", "data_type": "constant",
       "value": 4.0, "std": 0.0}, 'finite and > 0'),
     ({"data_item_name": "c", "operands": ["main/c"], "unit": "m3", "data_type": "constant",
-      "value": 4.0, "std": [1.0]}, 'its std must be a single number'),
+      "value": 4.0, "std": [1.0]}, r"\('c'\)\.std: \[1\.0\] is not of type 'number'"),
 ])
 def test_a_bad_held_out_std_is_a_parse_error_naming_the_item(item, match):
     with pytest.raises(ValueError, match=match):

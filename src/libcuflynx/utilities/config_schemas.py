@@ -136,6 +136,10 @@ _LIBCUFLYNX_ONLY_KEYS = ('vessel_type', 'BC_type', 'module_file')
 _PORT_KEYS = ('entrance_ports', 'exit_ports', 'general_ports')
 
 SUPERMODULE_FORMAT = 'supermodule'
+#: variables_and_units rows are [name, units, access, kind]: whether the variable is exposed
+#: (public) in the generated model, and which parameters the parameters file must set for it
+VARIABLE_ACCESS = ('access', 'no_access')
+VARIABLE_KINDS = ('constant', 'global_constant', 'boundary_condition', 'variable')
 
 # module arrays used to be called vessel arrays: <prefix>_vessel_array.json/.csv are still read
 LEGACY_ARRAY_SUFFIXES = ('_vessel_array.json', '_vessel_array.csv')
@@ -318,11 +322,17 @@ def normalise_module_config_entry(entry, source=None):
 
 
 def normalise_module_config(entries, source=None):
-    '''A list of module config entries (one JSON file), each normalised on its own.'''
+    '''A list of module config entries (one JSON file), each normalised on its own. The file is
+    then checked against ``module_config.schema.json``, which refuses what the checks here
+    do not look for (they come first for their more specific messages).'''
+    from libcuflynx.schemas import MODULE_CONFIG_SCHEMA
+    from libcuflynx.schemas.validation import validate
     if not isinstance(entries, list):
         raise ValueError(f'module config {source or ""} must be a JSON list of entries, '
                          f'not a {type(entries).__name__}')
-    return [normalise_module_config_entry(entry, source) for entry in entries]
+    normalised = [normalise_module_config_entry(entry, source) for entry in entries]
+    validate(MODULE_CONFIG_SCHEMA, entries, source=str(source or ''), what='module config')
+    return normalised
 
 
 def load_module_config(path, include_supermodules=False):
@@ -578,11 +588,18 @@ def normalise_vessel_record(record, source=None, index=None, what='module array'
 
 
 def normalise_vessel_records(records, source=None):
-    '''A list of vessel records (one JSON file), each normalised on its own.'''
+    '''A list of vessel records (one JSON file, or a CSV's rows), each normalised on its own.
+    The list is then checked against ``module_array.schema.json``, which refuses what the
+    checks here do not look for (they come first for their more specific messages).'''
+    from libcuflynx.schemas import MODULE_ARRAY_SCHEMA
+    from libcuflynx.schemas.validation import validate
     if not isinstance(records, list):
         raise ValueError(f'module array {source or ""} must be a JSON list of records, not a '
                          f'{type(records).__name__}.')
-    return [normalise_vessel_record(r, source=source, index=i) for i, r in enumerate(records)]
+    normalised = [normalise_vessel_record(r, source=source, index=i)
+                  for i, r in enumerate(records)]
+    validate(MODULE_ARRAY_SCHEMA, records, source=str(source or ''), what='module array')
+    return normalised
 
 
 def _first_token(cell):

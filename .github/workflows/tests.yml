@@ -522,6 +522,20 @@ jobs:
         ref: ${{ steps.module-library.outputs.ref }}
         path: _module_library
         sparse-checkout: modules
+
+    # tests/test_phlynx_consistency.py reads PhLynx's CA-format files and its value lists with
+    # CA's readers and schemas. main, not a pin: the point is to hear when the two drift.
+    - name: Check out PhLynx
+      uses: actions/checkout@v4
+      with:
+        repository: physiomelinks/phlynx
+        ref: main
+        path: _phlynx
+        sparse-checkout: |
+          src/assets/module_configs
+          src/utils
+          src/services/export
+          tests/resources
     
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v5
@@ -543,6 +557,8 @@ jobs:
         CUFLYNX_MODULE_LIBRARY: ${{ github.workspace }}/_module_library/modules
         # a missing library fails these tests rather than skipping them green
         CUFLYNX_REQUIRE_MODULE_LIBRARY: "1"
+        PHLYNX_DIR: ${{ github.workspace }}/_phlynx
+        CUFLYNX_REQUIRE_PHLYNX: "1"
       run: |
         # Run non-MPI suite, excluding OpenCOR-specific tests.
         pytest tests/ -v -m "not need_opencor and not mpi" --ci-shard "main:${{ matrix.shard }}" \

@@ -85,11 +85,6 @@
           "minLength": 1,
           "description": "Modifier entries only: the registered modifier function (built-in, funcs_user, or modifier_funcs_external_path). Default: \"scale\", one multiplier on every modified parameter's default value."
         },
-        "operation": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Deprecated name of modifier (read as it, with a warning). Do not give both."
-        },
         "inputs": {
           "type": "object",
           "additionalProperties": {
@@ -297,15 +292,6 @@
           "description": "An entry is a parameter (targets) or a modifier (modifies), not both."
         },
         {
-          "not": {
-            "required": [
-              "modifier",
-              "operation"
-            ]
-          },
-          "description": "operation is the deprecated name of modifier: give one."
-        },
-        {
           "if": {
             "required": [
               "targets"
@@ -317,11 +303,6 @@
                 {
                   "required": [
                     "modifier"
-                  ]
-                },
-                {
-                  "required": [
-                    "operation"
                   ]
                 },
                 {

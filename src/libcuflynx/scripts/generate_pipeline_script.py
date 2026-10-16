@@ -1009,9 +1009,7 @@ def observed(doc=None):
                 "variable": variable,
                 "series": series or (variable,),
                 "label": (item.get("trace_name_for_plotting")
-                          or item.get("name_for_plotting")
-                          or item.get("data_item_name")
-                          or item.get("variable") or variable),
+                          or item.get("data_item_name") or variable),
                 "operation": item.get("operation") or "",
                 "value": item.get("value"),
                 "experiment": int(item.get("experiment_idx", 0) or 0),
@@ -1884,11 +1882,8 @@ def _panel_functions(obs_data):
             group = {
                 "variable": variable,
                 "label": (item.get("trace_name_for_plotting")
-                          or item.get("name_for_plotting")
-                          or item.get("data_item_name")
-                          or variable),
-                "described": (item.get("data_item_name")
-                              or item.get("variable") or ""),
+                          or item.get("data_item_name") or variable),
+                "described": item.get("data_item_name") or "",
                 "targets": [],
             }
             index[key] = group

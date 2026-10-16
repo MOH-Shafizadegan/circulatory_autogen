@@ -205,7 +205,7 @@ def protocol_text(obs):
 
 
 def _feature(item, symbols):
-    operands = item.get('operands') or ([item['variable']] if item.get('variable') else [])
+    operands = item.get('operands') or []
     shown = ', '.join(symbols.variable(o) for o in operands)
     op = item.get('operation')
     if op:
@@ -230,7 +230,7 @@ def _observed(item):
 
 
 def observables_text(obs, symbols, default_cost):
-    items = obs.get('data_items') or obs.get('data_item') or (obs if isinstance(obs, list) else [])
+    items = obs if isinstance(obs, list) else (obs.get('data_items') or [])
     if not items:
         return 'No data items.'
     lines = [r'\begin{center}', r'\small', r'\begin{tabular}{lllll}', r'\toprule',
@@ -243,7 +243,7 @@ def observables_text(obs, symbols, default_cost):
         if unit and unit != 'dimensionless':
             observed += ' ' + format_units(unit)
         where = f'{item.get("experiment_idx", 0)}/{item.get("subexperiment_idx", "--")}'
-        lines.append(f'{escape(item.get("data_item_name") or item.get("variable") or "")} & '
+        lines.append(f'{escape(item.get("data_item_name") or "")} & '
                      f'{_feature(item, symbols)} & {observed} & '
                      f'{format_number(item.get("weight", 1.0))} & {where} \\\\')
     lines += [r'\bottomrule', r'\end{tabular}', r'\end{center}']

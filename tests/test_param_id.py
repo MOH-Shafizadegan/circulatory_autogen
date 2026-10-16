@@ -3245,7 +3245,7 @@ def test_parse_obs_data_json_rejects_value_and_npy_paths(tmp_path):
     }
 
     parser = ObsAndParamDataParser()
-    with pytest.raises(ValueError, match="both embedded 'value'"):
+    with pytest.raises(ValueError, match=r"(?s)not allowed.*not both"):
         parser.parse_obs_data_json(obs_data_dict=obs_data_dict, pre_time=0.0, sim_time=1.0)
 
 
@@ -3317,7 +3317,7 @@ def test_parse_obs_data_json_series_std_required_for_npy_paths(tmp_path):
     }
 
     parser = ObsAndParamDataParser()
-    with pytest.raises(ValueError, match="requires 'std'"):
+    with pytest.raises(ValueError, match=r"'std' is a required property"):
         parser.parse_obs_data_json(obs_data_dict=obs_data_dict, pre_time=0.0, sim_time=1.0)
 
 

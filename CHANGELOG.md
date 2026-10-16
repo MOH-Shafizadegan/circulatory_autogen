@@ -5,6 +5,50 @@ next release; add to that section as you land a change.
 
 ## Unreleased
 
+### Removed — old obs_data and params_for_id spellings, and `cuflynx-migrate-obs-data`
+
+No shipped or library file used them, so they are no longer read; the schema refuses them by name
+("'variable' was unexpected"):
+- obs_data items: `variable` (use `data_item_name` and `operands`), `name_for_plotting` (use
+  `trace_name_for_plotting` / `item_name_for_plotting`), `obs_type` (use `operation`),
+  `vm_path` / `im_path` and paths inside a `source` object (use `t_path` and `value_path`), and
+  `data_type: "timeseries"` (use `"series"`); the top-level `data_item` key (use `data_items`).
+- params_for_id: `operation` on a modifier entry (use `modifier`), and on a saved modifiers
+  record.
+
+- obs_data's `data_type: "prob_dist"` no longer gets its own advice: it is refused like any
+  other unknown data_type. An observable scored against a distribution is a `constant` with a
+  distribution `cost_type` and `prob_dist_params`.
+
+`cuflynx-migrate-obs-data`, which rewrote those spellings, is removed with them. A bare list of
+data items is still read as an obs_data.
+
+### Changed — input files are checked against their JSON Schemas on read
+
+obs_data, params_for_id, module config, module array and calibration workflow files are
+validated against the schemas shipped in `libcuflynx/schemas/` whenever libcuflynx reads them,
+so what an editor, PhLynx or CUFLynx validates is what libcuflynx accepts. `jsonschema` is a
+core dependency.
+
+- An error lists every problem, each with where it is (an item by its name) and what the field
+  is for: `at data_items[2] ('systolic').value: [1.0, 2.0] is not of type 'number' (A
+  constant's value and std are single numbers.)`.
+- obs_data and params_for_id: the schema replaces the readers' own key and type checks, which
+  are gone. Errors about unknown keys, types and missing settings read differently. Unknown
+  `prior_params` keys, which were ignored, are refused, and prior names are still read in any
+  case.
+- Calibration workflows: schema first too. `spec.py` keeps only what spans keys and steps
+  (which kinds use which sources, an emulator step's own values, where a model sits).
+- Module configs and module arrays: their readers' checks run first, then the schema.
+  The schema refuses what the readers did not check, for example `variables_and_units` access
+  other than `access`/`no_access`, a variable kind other than `constant`, `global_constant`,
+  `boundary_condition` or `variable`, and a port with no `variables`.
+- Enums are generated from libcuflynx's registries: `python -m libcuflynx.schemas.registries
+  --write`. The variable kind is now an enum, and `module_config_user/BVC_Kidney_module_config.json`
+  had two `"variable "` (trailing space) fixed.
+- PhLynx main's CA-format files and value lists are tested against the readers and schemas
+  (`tests/test_phlynx_consistency.py`, `PHLYNX_DIR`; CI checks PhLynx out).
+
 ### Added — packing a calibration workflow
 
 `pack_workflow(workflow, dest_dir)` and `cuflynx-calibration-workflow <workflow> --pack DIR`
