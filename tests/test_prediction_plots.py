@@ -81,7 +81,6 @@ def model(tmp_path):
 
 _BAD = {
     "rule1": ([dict(_VS_INPUT), dict(_VS_INPUT)], "names are unique"),
-    "rule1_unknown_key": ([dict(_VS_INPUT, colour="red")], "unknown keys"),
     "rule2": ([dict(_VS_INPUT, kind="feature_vs_feature")], "names its x group as a string"),
     "rule3": ([dict(_VS_FEATURE, y="no_such_group")], "no item has item_name_for_plotting"),
     "rule4": ("drop_y_end_e3", "every point needs both"),
@@ -106,6 +105,14 @@ def test_bad_plot_rejected(case):
     else:
         obs["prediction_plots"] = plots
     with pytest.raises(prediction_plots.PredictionPlotError, match=message):
+        _parse(obs)
+
+
+@pytest.mark.unit
+def test_a_plot_with_an_unknown_key_is_refused_by_the_schema():
+    obs = _obs([_VS_FEATURE])
+    obs["prediction_plots"] = [dict(_VS_INPUT, colour="red")]
+    with pytest.raises(ValueError, match="'colour' was unexpected"):
         _parse(obs)
 
 

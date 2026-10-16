@@ -40,9 +40,8 @@ def test_every_default_cost_type_site_reads_the_constant():
     from libcuflynx.parsers import OMEXParsers, PrimitiveParsers
 
     src = inspect.getsource(PrimitiveParsers)
-    marker = '"cost_type": {"types": (str,), "default":'
-    assert marker in src
-    assert f'{marker} DEFAULT_COST_TYPE' in src, 'PrimitiveParsers restates the default'
+    # the obs_data reader's defaults (item_defaults in parse_obs_data_json)
+    assert '"cost_type": DEFAULT_COST_TYPE' in src, 'PrimitiveParsers restates the default'
     assert '"MSE"' not in src.split('PREVIOUS_DEFAULT_COST_TYPE')[-1] or True
     # OMEX aliases rather than keeping its own literal
     assert OMEXParsers.OMEXArchiveParser.DEFAULT_COST_TYPE == DEFAULT_COST_TYPE

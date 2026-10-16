@@ -41,7 +41,6 @@ EXPECTED_ENTRY_POINTS = {
     "cuflynx-train-emulator",
     "cuflynx-plot",
     "cuflynx-generate-pipeline",
-    "cuflynx-migrate-obs-data",
     "cuflynx-migrate-parameter-names",
     "cuflynx-run-predictions",
 }
@@ -350,16 +349,11 @@ def test_launcher_reports_a_missing_install_before_launching_mpi():
 #: what the command is for, and guessing it from the module path or from the parser would let
 #: the test pass for a stage that simply forgot the option.
 #:
-#: ``cuflynx-migrate-obs-data`` (arriving with #466) rewrites obs_data files given a path. A
-#: name here that is not in [project.scripts] is never reached, so this may name a command
-#: before the PR adding it lands.
-#:
 #: ``cuflynx-calibration-workflow`` is configured by the calibration_workflow.json it is
 #: given: each step's model, obs_data and params_for_id come from the module library, and its
 #: settings from the workflow file. ``cuflynx-variable-mapping`` and ``cuflynx-methods-latex``
 #: take a model (or a workflow) and its files by path.
 NON_STAGE_COMMANDS = {
-    "cuflynx-migrate-obs-data",
     "cuflynx-calibration-workflow",
     "cuflynx-variable-mapping",
     "cuflynx-methods-latex",

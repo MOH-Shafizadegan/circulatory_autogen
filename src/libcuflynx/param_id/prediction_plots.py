@@ -27,8 +27,6 @@ import re
 import numpy as np
 
 KINDS = ('feature_vs_feature', 'feature_vs_input')
-PLOT_KEYS = ('name', 'kind', 'x', 'y', 'series')
-INPUT_KEYS = ('params_to_change', 'subexperiment_idx')
 
 
 class PredictionPlotError(ValueError):
@@ -78,17 +76,11 @@ def _by_experiment(where, label, groups):
 
 def _input_value(where, ref, protocol_info, experiments):
     """``{experiment: value}`` of an input reference; raises unless it is a number in each."""
-    if not isinstance(ref, dict) or set(ref) != set(INPUT_KEYS):
-        raise PredictionPlotError(
-            f'{where}: an input reference is {{"params_to_change": <key>, '
-            f'"subexperiment_idx": <int>}}, got {ref!r}.')
     key, sub = ref['params_to_change'], ref['subexperiment_idx']
     params = (protocol_info or {}).get('params_to_change') or {}
     if key not in params:
         raise PredictionPlotError(
             f'{where}: {key!r} is not a params_to_change key ({sorted(params)}).')
-    if not isinstance(sub, int) or isinstance(sub, bool):
-        raise PredictionPlotError(f'{where}: subexperiment_idx must be an integer, got {sub!r}.')
     values = {}
     for exp in experiments:
         row = params[key][exp]
@@ -108,31 +100,16 @@ def _input_value(where, ref, protocol_info, experiments):
 def resolve_plot(plot, index, groups, protocol_info):
     """The experiments of one plot and how each is placed:
     ``(y_items, x_items_or_None, x_inputs_or_None, series_inputs_or_None)``, each by
-    experiment. Raises PredictionPlotError for a plot that breaks a structural rule."""
-    where = f'prediction_plots[{index}]'
-    if not isinstance(plot, dict):
-        raise PredictionPlotError(f'{where} must be an object, got {plot!r}.')
-    unknown = sorted(set(plot) - set(PLOT_KEYS))
-    if unknown:
-        raise PredictionPlotError(f'{where}: unknown keys {unknown}; allowed {list(PLOT_KEYS)}.')
-    name = plot.get('name')
-    if not isinstance(name, str) or not name.strip():
-        raise PredictionPlotError(f'{where}: "name" must be a non-empty string.')
-    where = f'{where} ({name!r})'
-    for key in ('kind', 'x', 'y'):
-        if key not in plot:
-            raise PredictionPlotError(f'{where}: "{key}" is required.')
+    experiment. Raises PredictionPlotError for a plot whose references do not resolve; its
+    keys and types are the obs_data schema's (``$defs/prediction_plot``)."""
+    where = f'prediction_plots[{index}] ({plot["name"]!r})'
     kind, x = plot['kind'], plot['x']
-    if kind not in KINDS:
-        raise PredictionPlotError(f'{where}: "kind" must be one of {list(KINDS)}, got {kind!r}.')
     if kind == 'feature_vs_feature' and not isinstance(x, str):
         raise PredictionPlotError(f'{where}: a feature_vs_feature plot names its x group as a '
                                   f'string, got {x!r}.')
     if kind == 'feature_vs_input' and not isinstance(x, dict):
         raise PredictionPlotError(f'{where}: a feature_vs_input plot gives x as an input '
                                   f'reference, got {x!r}.')
-    if not isinstance(plot['y'], str):
-        raise PredictionPlotError(f'{where}: "y" names a group, got {plot["y"]!r}.')
 
     y_items = _by_experiment(f'{where} y', plot['y'], groups)
     experiments = sorted(y_items)
@@ -151,11 +128,10 @@ def resolve_plot(plot, index, groups, protocol_info):
 
 
 def check_prediction_plots(plots, gt_df, prediction_info, protocol_info):
-    """The structural rules of #568 (names, kinds, groups, coverage, input references)."""
+    """The rules the schema cannot check: unique names, groups that exist and cover the same
+    experiments, and input references that resolve to numbers."""
     if plots is None:
         return []
-    if not isinstance(plots, list):
-        raise PredictionPlotError(f'prediction_plots must be a list, got {type(plots).__name__}.')
     groups = item_groups(gt_df, prediction_info)
     seen = set()
     for i, plot in enumerate(plots):

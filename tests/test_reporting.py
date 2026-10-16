@@ -433,3 +433,17 @@ def test_a_source_cites_the_keys_of_its_bibliography(tmp_path):
     assert cite('definitional; user_defined', entries) == r'definitional; user\_defined'
     out = write_bib({k: entries[k] for k in ['martin2023modelling']}, str(tmp_path / 'o.bib'))
     assert read_bib([out]).keys() == {'martin2023modelling'}
+
+
+def test_a_bare_list_obs_data_is_tabulated_like_a_document():
+    from libcuflynx.reporting.methods import observables_text
+
+    class Symbols:
+        def variable(self, name):
+            return name
+
+    item = {'data_item_name': 'mean of x', 'data_type': 'constant', 'unit': 'dimensionless',
+            'operands': ['main/x'], 'operation': 'mean', 'value': 1.0, 'std': 0.1}
+    as_list = observables_text([item], Symbols(), 'gaussian_MLE')
+    assert as_list == observables_text({'data_items': [item]}, Symbols(), 'gaussian_MLE')
+    assert 'mean of x' in as_list[0]

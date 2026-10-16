@@ -3146,11 +3146,9 @@ class ParamID():
                     if updated_weight_const_vec[obs_idx] != 0:
                         cost_func = cost_funcs_dict[self.cost_type[obs_idx]]
                         # A cost that scores against a distribution builds its density from
-                        # numbers (scipy's gaussian_kde, a mixture) and cannot take a symbol.
-                        # Before #421 these items were data_type prob_dist and were refused
-                        # below with amp/phase; now they are constants, so refuse them here --
-                        # otherwise the symbolic cost silently picks up the nan standing in for
-                        # the `value` such an item deliberately does not have.
+                        # numbers (scipy's gaussian_kde, a mixture) and cannot take a symbol;
+                        # without this refusal the symbolic cost would pick up the nan standing
+                        # in for the `value` such an item does not have.
                         if ground_truth_param_name(cost_func) == 'prob_dist_params':
                             raise NotImplementedError(
                                 f"cost_type '{self.cost_type[obs_idx]}' scores against a "
@@ -3323,9 +3321,8 @@ class ParamID():
         """What this observable is compared against: a number, or a distribution.
 
         Chosen from the cost func's signature rather than from the data_item's type. A scalar
-        scored against a KDE of measured samples is still a scalar -- ``prob_dist`` used to be a
-        fourth data_type for this, which put those observables in a parallel vector and hid them
-        from everything that works on scalar features, the emulator included (issue #421).
+        scored against a KDE of measured samples is still a scalar, so it is indexed like every
+        other scalar feature (the emulator and FD sensitivities see it).
 
         ``prob_dist_params`` is read by ``obs_idx``, the data_item row, the way ``cost_type`` and
         the weight vectors are; ``ground_truth_const`` keeps its own compacted ``const_idx``.

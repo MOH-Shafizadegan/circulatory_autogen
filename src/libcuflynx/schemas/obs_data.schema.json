@@ -19,13 +19,6 @@
           },
           "description": "The observations a model is scored against. Default: none (a protocol-only file)."
         },
-        "data_item": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/dataItem"
-          },
-          "description": "Legacy spelling of data_items (ignored when data_items is given)."
-        },
         "prediction_items": {
           "type": "array",
           "items": {
@@ -138,10 +131,9 @@
           "enum": [
             "constant",
             "series",
-            "frequency",
-            "timeseries"
+            "frequency"
           ],
-          "description": "Required. \"constant\": value and std are single numbers. \"series\": value is a list of samples obs_dt apart (from the start of the item's sub-experiment), std a number or a list as long as value. \"frequency\": value is a list of amplitudes at the item's frequencies. \"timeseries\" is the older spelling of \"series\". (\"prob_dist\" was removed: use \"constant\" with prob_dist_params.)"
+          "description": "Required. \"constant\": value and std are single numbers. \"series\": value is a list of samples obs_dt apart (from the start of the item's sub-experiment), std a number or a list as long as value. \"frequency\": value is a list of amplitudes at the item's frequencies. (\"prob_dist\" was removed: use \"constant\" with prob_dist_params.)"
         },
         "unit": {
           "type": "string",
@@ -294,7 +286,7 @@
             "string",
             "null"
           ],
-          "description": "How the ground truth is drawn: \"horizontal\", \"vertical\", \"horizontal_from_min\", \"series\" or \"frequency\" (\"timeseries\" is read as \"series\"; null or \"None\" draws no marker). Default: \"horizontal\" for a constant, \"series\" for a series, \"frequency\" for a frequency item."
+          "description": "How the ground truth is drawn: \"horizontal\", \"vertical\", \"horizontal_from_min\", \"series\" or \"frequency\" (null or \"None\" draws no marker). Default: \"horizontal\" for a constant, \"series\" for a series, \"frequency\" for a frequency item."
         },
         "plot_color": {
           "type": [
@@ -366,13 +358,6 @@
           ],
           "description": "The weight of a frequency item's phase in the cost. Default: the item's weight."
         },
-        "obs_type": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "description": "Deprecated: with no operation, \"min\", \"max\" or \"mean\" acts as the operation; \"series\" and \"frequency\" mean none. Use operation. Default: none."
-        },
         "t_path": {
           "type": [
             "string",
@@ -387,27 +372,12 @@
           ],
           "description": "A series' values as a .npy file, used with t_path instead of an embedded value (not both)."
         },
-        "vm_path": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "description": "Deprecated (series only): the older form of value_path for a voltage trace; read as value_path."
-        },
-        "im_path": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "description": "Deprecated (series only): the older form of value_path for a current trace (used when data_item_name contains I_tot); read as value_path."
-        },
         "source": {
           "type": [
             "string",
-            "object",
             "null"
           ],
-          "description": "Where the data come from: free text, or (deprecated) an object with t_path / value_path / description. Not read otherwise."
+          "description": "Where the data come from, as free text. Not read otherwise."
         },
         "comment": {
           "type": [
@@ -443,63 +413,9 @@
             "null"
           ],
           "description": "Metadata: a series' sample rate in Hz. Accepted but not read (a series' spacing is obs_dt)."
-        },
-        "variable": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "description": "Deprecated name of data_item_name (read as it, with a warning). It no longer supplies the operand: give operands. Do not give both."
-        },
-        "name_for_plotting": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "description": "Deprecated name of trace_name_for_plotting (read as it, with a warning). Do not give both."
         }
       },
       "allOf": [
-        {
-          "anyOf": [
-            {
-              "required": [
-                "data_item_name"
-              ]
-            },
-            {
-              "required": [
-                "variable"
-              ]
-            }
-          ],
-          "description": "data_item_name (or its deprecated name variable) is required."
-        },
-        {
-          "required": [
-            "data_type",
-            "unit",
-            "operands"
-          ]
-        },
-        {
-          "not": {
-            "required": [
-              "data_item_name",
-              "variable"
-            ]
-          },
-          "description": "variable is the deprecated name of data_item_name: give one."
-        },
-        {
-          "not": {
-            "required": [
-              "trace_name_for_plotting",
-              "name_for_plotting"
-            ]
-          },
-          "description": "name_for_plotting is the deprecated name of trace_name_for_plotting: give one."
-        },
         {
           "if": {
             "properties": {
@@ -533,10 +449,7 @@
           "if": {
             "properties": {
               "data_type": {
-                "enum": [
-                  "series",
-                  "timeseries"
-                ]
+                "const": "series"
               }
             },
             "required": [
@@ -663,6 +576,12 @@
           },
           "description": "Every item needs a ground truth: value and std, or prob_dist_params."
         }
+      ],
+      "required": [
+        "data_item_name",
+        "data_type",
+        "operands",
+        "unit"
       ]
     },
     "predictionItem": {
@@ -792,60 +711,9 @@
             "null"
           ],
           "description": "The spacing of a held-out series' samples, in seconds; required for a series with a value. Default: none."
-        },
-        "variable": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "description": "Deprecated: read as data_item_name, and as the single operand when operands is not given."
-        },
-        "name_for_plotting": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "description": "Deprecated name of trace_name_for_plotting."
         }
       },
       "allOf": [
-        {
-          "anyOf": [
-            {
-              "required": [
-                "data_item_name",
-                "operands"
-              ]
-            },
-            {
-              "required": [
-                "variable"
-              ]
-            }
-          ],
-          "description": "data_item_name and operands are required (the deprecated variable supplies both)."
-        },
-        {
-          "required": [
-            "unit"
-          ]
-        },
-        {
-          "not": {
-            "required": [
-              "data_item_name",
-              "variable"
-            ]
-          }
-        },
-        {
-          "not": {
-            "required": [
-              "trace_name_for_plotting",
-              "name_for_plotting"
-            ]
-          }
-        },
         {
           "if": {
             "required": [
@@ -897,7 +765,8 @@
                 ]
               }
             }
-          }
+          },
+          "description": "A held-out constant's value and std are single numbers."
         },
         {
           "if": {
@@ -938,8 +807,14 @@
             "required": [
               "obs_dt"
             ]
-          }
+          },
+          "description": "A held-out series' value is a list of numbers, and it needs obs_dt."
         }
+      ],
+      "required": [
+        "data_item_name",
+        "operands",
+        "unit"
       ]
     },
     "protocolInfo": {

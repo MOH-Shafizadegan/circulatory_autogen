@@ -38,9 +38,8 @@ Runs are launched via shell scripts in `user_run_files/`. Each one invokes a **c
 | _(no run script)_ | `cuflynx-generate-pipeline` → `generate_pipeline_script` | Write a self-contained bundle — model, resources, a `user_inputs_*.yaml` with every path relative, and a `run_pipeline.py` — that reruns the study elsewhere. Not driven by a `user_run_files/*.sh`: it takes `--user-inputs` and `--output-dir` directly. |
 | _(no run script)_ | `cuflynx-run-predictions <model> <obs_data> --dt ...` → `run_predictions_script` | An obs_data's prediction items on a model, with no calibration: `traces.npz`, `features.csv`, `validation_results.json` and the obs_data's `prediction_plots` figures. The command form of `libcuflynx.protocol_runners.run_prediction_items` (`predict_on` over an existing executor; `save_prediction_data` uses it after a calibration). Takes paths, not the yaml. |
 
-One command has no launcher and is not a pipeline stage: **`cuflynx-migrate-obs-data`** (`libcuflynx.scripts.migrate_obs_data`) rewrites obs_data files into the #466 vocabulary (`variable` → `data_item_name` + `operands`, `name_for_plotting` → `trace_name_for_plotting` + `item_name_for_plotting`) and makes `data_item_name` unique. It takes paths, not the yaml, and is the documented upgrade path in `CHANGELOG.md`.
 
-**`cuflynx-migrate-parameter-names`** (`libcuflynx.scripts.migrate_parameter_names`) is the same kind of upgrade helper: it rewrites parameter names written `{variable}_{vessel}` as `<vessel>/<variable>` -- in a host parameters file (`--module-array`) or a supermodule's parameterisation and `default_parameters` files (`--supermodule-config`) -- rewriting a name only when exactly one reading of it is a real variable of that module. The `/` form is what people write; generated models keep `{variable}_{vessel}`, as CellML names cannot contain `/` (`utilities/parameter_names.py`). Supermodule rows in the old form are read with a FutureWarning, because splitting them is a guess; host files in the old form are read silently, because the generator looks those names up rather than splitting them.
+**`cuflynx-migrate-parameter-names`** (`libcuflynx.scripts.migrate_parameter_names`) is an upgrade helper: it rewrites parameter names written `{variable}_{vessel}` as `<vessel>/<variable>` -- in a host parameters file (`--module-array`) or a supermodule's parameterisation and `default_parameters` files (`--supermodule-config`) -- rewriting a name only when exactly one reading of it is a real variable of that module. The `/` form is what people write; generated models keep `{variable}_{vessel}`, as CellML names cannot contain `/` (`utilities/parameter_names.py`). Supermodule rows in the old form are read with a FutureWarning, because splitting them is a guess; host files in the old form are read silently, because the generator looks those names up rather than splitting them.
 
 Every other command takes `--help` and no options beyond the optional `True|False` the two generation launchers pass; the configuration is the yaml. Each is a `main()` in the named module — `tests/test_console_entry_points.py` is table-driven off `[project.scripts]`, so a new entry point cannot be added without being tested.
 
@@ -90,6 +89,21 @@ Then call the same stages the scripts call, all taking that dict:
 
 - `do_emulation` / `use_emulator` + `emulator_settings` — **emulators (surrogate models, issue #333)**. The emulator maps theta (the params_for_id vector, one slot per entry) to the *scalar* features of the obs_data data_items, i.e. the value after the `operation` reduction — the same numbers the cost uses. `do_emulation` trains one against the solver named by `solver`; `use_emulator` makes calibration/SA/UQ/IA evaluate it. `solver` deliberately keeps meaning the truth solver, so an emulator run can be compared with it. Backend is the optional `autoemulate` (`pip install ".[emulation]"`, needs Python >=3.10,<3.13). Series/frequency observables, prediction traces and output plots are **refused** in emulator mode, not approximated.
 - **Prediction features**: a `prediction_item` with an `operation` (+ `operation_kwargs`) is a scalar feature -- validated as `operation(operands)` against its held-out value, and an extra SA / emulator output when `sa_options.include_prediction_items` / `emulator_settings.include_prediction_items` is true (default false = byte-for-byte unchanged). Items without an operation are skipped with a `PredictionFeatureWarning`; a non-scalar result raises. A prediction item may set `subexperiment_idx` (default: its experiment's last). An experiment no data_item belongs to is prediction/validation-only: `cost_experiment_idxs(protocol_info)` (set by `process_protocol_and_weights`) leaves it out of every cost path (numeric/casadi/FSA/AADC, the best-fit check, the all-outputs npz), and it is simulated only by `save_prediction_data` and by SA/emulator training when a feature needs it. Every data/prediction item is a scalar (`constant`: number value/std) or a series (list value, obs_dt), checked by `check_value_shape`; a series may have an operation. All the rules (segments, the scalar check, FD sensitivities, emulator checks) live in `param_id/prediction_features.py`; the emulator stores them after the data_item features, with a separate `prediction_sha256` a calibration never checks. Feature-detect with `libcuflynx.sensitivity_analysis.SUPPORTS_PREDICTION_FEATURES`.
+
+## Input-file JSON Schemas (`src/libcuflynx/schemas/`)
+
+`obs_data`, `params_for_id`, `module_config`, `module_array` and `calibration_workflow` each have
+a JSON Schema, and **every reader validates its file against it on load**
+(`schemas/validation.py`). The schema owns a file's structure. When you add or change a key,
+change the schema in the same commit, or the reader refuses the key.
+- **Registry enums:** enums kept as Python registries (prior types, step kinds, data types,
+  variable kinds and access, workflow settings, ...) are generated by
+  `python -m libcuflynx.schemas.registries --write`. `tests/test_schema_registries.py` fails when
+  a schema is out of step.
+- **Rule wording:** a conditional rule's `description` is what its error shows, so write it as
+  the rule ("A series needs obs_dt.").
+- **PhLynx:** `tests/test_phlynx_consistency.py` checks PhLynx main's files and value lists against
+  the readers and schemas (`PHLYNX_DIR`).
 
 ## Discoverable schemas (keep settings machine-readable for CUFLynx)
 

@@ -352,10 +352,8 @@ def test_uq_on_an_emulator_finds_both_modes_of_a_bimodal_target(
     (test_UQ.py::test_mcmc_bimodal_with_validation) takes ~26 minutes, which is why it is marked
     slow and does not run on a pull request.
 
-    It could not be emulated before #421: both data_items were data_type ``prob_dist``, so
-    EmulatorTrainer refused with "the emulator predicts scalar data_item features only". Now
-    that they are constants scored against a KDE, the emulator has features to predict -- and
-    only easy ones, because the bimodality lives entirely in the *likelihood*. The
+    Both data_items are constants scored against a KDE, so the emulator has features to
+    predict -- and only easy ones, because the bimodality lives entirely in the *likelihood*. The
     parameter -> steady-state map it has to learn is as smooth as the unimodal case; the two
     modes come from the KDE cost applied afterwards. That is what makes this affordable here and
     expensive against the model.
