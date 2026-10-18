@@ -5,6 +5,16 @@ next release; add to that section as you land a change.
 
 ## Unreleased
 
+### Changed — a supermodule names its submodule versions; its instances are its own module array
+
+A supermodule version's config lists the module versions it is built from, `submodule_versions:
+[{"module_type", "module_subtype"}]`. Its instances and their connections are a module array of their
+own, `<module_type>_<module_subtype>_module_array.json` beside the config, whose records name no
+`parameterisation`: a submodule's parameters come from the supermodule's parameterisation, then from
+its version's `default_parameterisation`. An inline `submodules` list is refused;
+`cuflynx-upgrade module-config <file> --module-library-dir <library>` converts it, folding a
+parameterisation a submodule named into the supermodule's.
+
 ### Removed — older module config, module array, parameter name and obs_data forms
 
 libcuflynx reads only the current forms of its input files. A file in an older form is refused
