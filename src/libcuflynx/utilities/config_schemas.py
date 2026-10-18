@@ -28,20 +28,23 @@ key                           meaning
 ``module_type``               the type an instance names in a module array
 ``module_subtype``            its variant (conventionally ``supermodule``)
 ``module_format``             ``"supermodule"``
-``submodules``                a module array (list of records, below) whose
-                              names are local to the supermodule
+``submodule_versions``        the module versions it is built from: a list of
+                              ``{"module_type", "module_subtype"}``
 ``default_parameterisation``  optional: the parameterisation used when a record
                               names none (``utilities/parameterisations.py``)
 ``description``               optional free text
 ============================  ===============================================
 
-A submodule's inp/out lists name sibling submodules only, and it may name its own
-``parameterisation``. A submodule may itself be a supermodule instance, with its own
-``per_submodule_inputs``/``per_submodule_outputs`` naming siblings. A supermodule's
-parameterisation rows are ``variable_name,units,value,data_reference``, named
-``<submodule>/<variable>`` (local to that submodule) or a global's name. Supermodule entries
-never reach the module dataframe or the (module_type, module_subtype) join: they are collected
-by ``load_supermodule_registry`` and expanded out of the module array
+A supermodule version's instances and their coupling are a module array of their own,
+``<module_type>_<module_subtype>_module_array.json`` beside the config (``supermodule_array_path``):
+records as below, whose names are local to the supermodule, inp/out lists naming sibling
+submodules only, each of one of the ``submodule_versions`` (every one of which is used). A record
+names no ``parameterisation``: a submodule's parameters come from the supermodule's
+parameterisation, rows named ``<submodule>/<variable>`` (or a global's name), then from its
+version's ``default_parameterisation``. A submodule may itself be a supermodule instance, with its
+own ``per_submodule_inputs``/``per_submodule_outputs`` naming siblings. Supermodule entries never
+reach the module dataframe or the (module_type, module_subtype) join: they are collected by
+``load_supermodule_registry``, which reads their arrays, and expanded out of the module array
 (``utilities/supermodules.py``) before anything else reads it.
 
 Module arrays
@@ -149,75 +152,126 @@ def _refuse_old_keys(obj, description, source, kind, old_keys):
 
 
 def is_supermodule_entry(entry):
-    '''Whether a module config entry (either schema) is a supermodule entry.'''
+    '''Whether a module config entry is a supermodule entry.'''
     return isinstance(entry, dict) and (entry.get('module_format') == SUPERMODULE_FORMAT
-                                        or 'submodules' in entry)
+                                        or 'submodule_versions' in entry or 'submodules' in entry)
+
+
+def supermodule_array_path(config_path, entry):
+    '''``<config dir>/<module_type>_<module_subtype>_module_array.json``: the module array of a
+    supermodule version's instances.'''
+    return os.path.join(os.path.dirname(os.path.abspath(config_path)),
+                        f'{entry["module_type"]}_{entry["module_subtype"]}_module_array.json')
+
+
+def _version(item, where):
+    if not isinstance(item, dict) or set(item) != {'module_type', 'module_subtype'} or \
+            not all(isinstance(item[k], str) and item[k].strip() for k in item):
+        raise ValueError(f'{where}: a submodule version is {{"module_type": ..., '
+                         f'"module_subtype": ...}}, not {item!r}.')
+    return item['module_type'].strip(), item['module_subtype'].strip()
 
 
 def normalise_supermodule_entry(entry, source=None):
     '''
     A supermodule config entry with ``module_type``/``module_subtype`` keys first and its
-    ``submodules`` normalised to module-array records (see ``normalise_vessel_record``).
-    ``entry`` itself is not modified.
+    ``submodule_versions`` as ``[{"module_type", "module_subtype"}]``. Its instances are read
+    from its own module array (``load_supermodule_array``). ``entry`` itself is not modified.
 
-    Raises ValueError for a key libcuflynx no longer reads, a component key (a supermodule has
-    none), a missing type/subtype, an empty or malformed ``submodules`` list, repeated
-    submodule names, or a submodule connection to something that is not a sibling submodule.
+    Raises ValueError for a key libcuflynx no longer reads (an inline ``submodules`` list among
+    them, naming the command that converts it), a component key (a supermodule has none), a
+    missing type/subtype, or an empty, malformed or repeating ``submodule_versions``.
     '''
     entry = _without_phlynx_keys(entry)
     description = 'supermodule ' + _describe(entry, source)[len('module config '):]
-    _refuse_old_keys(entry, description, source, 'module-config', OLD_MODULE_CONFIG_KEYS)
+    _refuse_old_keys(entry, description, source, 'module-config',
+                     OLD_MODULE_CONFIG_KEYS + ('submodules',))
     for component_key in ('component_file', 'component_type'):
         if component_key in entry:
             raise ValueError(f'{description} has "{component_key}": a supermodule has no '
-                             f'component of its own, only "submodules".')
+                             f'component of its own, only "submodule_versions".')
     type_key, subtype_key = 'module_type', 'module_subtype'
     for key in (type_key, subtype_key):
         if not isinstance(entry.get(key), str) or not entry.get(key):
             raise ValueError(f'{description} needs a non-empty string "{key}".')
     if entry.get('module_format', SUPERMODULE_FORMAT) != SUPERMODULE_FORMAT:
-        raise ValueError(f'{description} has submodules but module_format '
+        raise ValueError(f'{description} has submodule_versions but module_format '
                          f'"{entry.get("module_format")}"; a supermodule entry has '
                          f'module_format "{SUPERMODULE_FORMAT}".')
-    submodules = entry.get('submodules')
-    if not isinstance(submodules, list) or not submodules:
-        raise ValueError(f'{description} needs "submodules", a non-empty list of records.')
+    versions = entry.get('submodule_versions')
+    if not isinstance(versions, list) or not versions:
+        raise ValueError(f'{description} needs "submodule_versions", a non-empty list of '
+                         f'{{"module_type", "module_subtype"}}.')
+    keys = [_version(v, f'{description}, submodule_versions[{i}]') for i, v in enumerate(versions)]
+    repeated = sorted({k for k in keys if keys.count(k) > 1})
+    if repeated:
+        raise ValueError(f'{description}: submodule_versions lists {repeated} more than once.')
     if DEFAULT_PARAMETERISATION_KEY in entry:
         check_parameterisation_name(entry[DEFAULT_PARAMETERISATION_KEY], description,
                                     DEFAULT_PARAMETERISATION_KEY)
-
-    records = [normalise_vessel_record(sub, source=f'{description}, submodules', index=i, what=None)
-               for i, sub in enumerate(submodules)]
-    names = [r['name'] for r in records]
-    duplicated = sorted({n for n in names if names.count(n) > 1})
-    if duplicated:
-        raise ValueError(f'{description}: submodule names {duplicated} are repeated.')
-    for i, record in enumerate(records):
-        for key in _LIST_COLUMNS:
-            unknown = [n for n in record[key] if n not in names]
-            if unknown:
-                raise ValueError(
-                    f'{description}, submodules[{i}] ("{record["name"]}"): "{key}" names '
-                    f'{unknown}, which are not submodules of this supermodule. Submodules '
-                    f'connect only to each other; connections to the host model are made by '
-                    f'the instance\'s per_submodule_inputs/per_submodule_outputs.')
-        for key in PER_SUBMODULE_KEYS:
-            for sub, hosts in record.get(key, {}).items():
-                unknown = [h for h in hosts if h not in names]
-                if unknown:
-                    raise ValueError(
-                        f'{description}, submodules[{i}] ("{record["name"]}"): "{key}" names '
-                        f'{unknown} for "{sub}", which are not submodules of this supermodule.')
 
     normalised = {'module_type': entry[type_key], 'module_subtype': entry[subtype_key]}
     for key, value in entry.items():
         if key not in (type_key, subtype_key):
             normalised[key] = value
     normalised['module_format'] = SUPERMODULE_FORMAT
-    normalised['submodules'] = records
+    normalised['submodule_versions'] = [{'module_type': t, 'module_subtype': s} for t, s in keys]
     if DEFAULT_PARAMETERISATION_KEY in normalised:
         normalised[DEFAULT_PARAMETERISATION_KEY] = normalised[DEFAULT_PARAMETERISATION_KEY].strip()
     return normalised
+
+
+def load_supermodule_array(entry, config_path):
+    '''
+    The instance records of the supermodule version ``entry`` (normalised, from the config at
+    ``config_path``), read from its module array (``supermodule_array_path``).
+
+    Raises ValueError naming the file for a missing array, a record that names a
+    ``parameterisation``, repeated names, a connection to something that is not a sibling, a
+    record of a version not in ``submodule_versions``, or a listed version no record uses.
+    '''
+    path = supermodule_array_path(config_path, entry)
+    description = f'supermodule ({entry["module_type"]}, {entry["module_subtype"]})'
+    if not os.path.isfile(path):
+        raise ValueError(f'{description} of {config_path}: its module array {path}, which lists '
+                         f'its submodule instances and their connections, does not exist.')
+    records = read_module_array_records(path)
+    named = [r['name'] for r in records if PARAMETERISATION_KEY in r]
+    if named:
+        raise ValueError(f'{path}: {named} name a parameterisation. A submodule takes its '
+                         f'parameters from the supermodule\'s parameterisation (rows '
+                         f'<submodule>/<variable>), then from its version\'s default.')
+    names = [r['name'] for r in records]
+    duplicated = sorted({n for n in names if names.count(n) > 1})
+    if duplicated:
+        raise ValueError(f'{path}: submodule names {duplicated} are repeated.')
+    for i, record in enumerate(records):
+        for key in _LIST_COLUMNS:
+            unknown = [n for n in record[key] if n not in names]
+            if unknown:
+                raise ValueError(
+                    f'{path}, record {i} ("{record["name"]}"): "{key}" names {unknown}, which '
+                    f'are not submodules of this supermodule. Submodules connect only to each '
+                    f'other; connections to the host model are made by the instance\'s '
+                    f'per_submodule_inputs/per_submodule_outputs.')
+        for key in PER_SUBMODULE_KEYS:
+            for sub, hosts in record.get(key, {}).items():
+                unknown = [h for h in hosts if h not in names]
+                if unknown:
+                    raise ValueError(f'{path}, record {i} ("{record["name"]}"): "{key}" names '
+                                     f'{unknown} for "{sub}", which are not submodules of this '
+                                     f'supermodule.')
+    versions = [(v['module_type'], v['module_subtype']) for v in entry['submodule_versions']]
+    used = [(r['module_type'], r['module_subtype']) for r in records]
+    unlisted = sorted(set(used) - set(versions))
+    if unlisted:
+        raise ValueError(f'{path}: instances of {unlisted}, which {description}\'s '
+                         f'submodule_versions in {config_path} does not list.')
+    unused = sorted(set(versions) - set(used))
+    if unused:
+        raise ValueError(f'{config_path}: {description} lists submodule_versions {unused}, '
+                         f'which no instance in {path} uses.')
+    return records
 
 
 def normalise_module_config_entry(entry, source=None):
@@ -310,7 +364,8 @@ def load_supermodule_registry(config_files, exclude=()):
     '''
     ``{(module_type, module_subtype): supermodule entry}`` for every supermodule entry in
     ``config_files``. Each entry also gets ``config_path`` (the file it came from), against
-    whose directory its ``parameterisations/`` are resolved. Raises
+    whose directory its module array and ``parameterisations/`` are resolved, and
+    ``submodules``, its instance records (``load_supermodule_array``). Raises
     ValueError if the same (module_type, module_subtype) supermodule is defined twice. ``exclude`` is as in
     ``load_component_registry``.
     '''
@@ -330,6 +385,7 @@ def load_supermodule_registry(config_files, exclude=()):
                 raise ValueError(f'supermodule {key} is defined twice: in '
                                  f'{registry[key]["config_path"]} and in {path}.')
             entry['config_path'] = str(path)
+            entry['submodules'] = load_supermodule_array(entry, path)
             registry[key] = entry
     return registry
 

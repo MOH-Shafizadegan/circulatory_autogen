@@ -24,6 +24,7 @@ import os
 import sys
 
 from libcuflynx.utilities.config_schemas import (is_supermodule_entry, load_component_registry,
+                                                 load_supermodule_array,
                                                  load_expanded_vessel_records,
                                                  load_module_config, load_supermodule_registry,
                                                  read_module_array_records)
@@ -151,6 +152,7 @@ def supermodule_files(config_path):
         raise ValueError(f'{config_path} holds {len(entries)} supermodule entries; give a config '
                          f'with exactly one.')
     entry = dict(entries[0], config_path=os.path.abspath(config_path))
+    entry['submodules'] = load_supermodule_array(entry, config_path)
     files = [parameterisation_parameters_path(config_path, name)
              for name in available_parameterisations(config_path)]
     return entry, files

@@ -1,9 +1,10 @@
 '''
 Expands supermodule instances in a module array into their submodules.
 
-A supermodule is a module config entry with ``"module_format": "supermodule"`` and a
-``submodules`` list (see ``utilities/config_schemas.py``). An instance of it in a module
-array, e.g.::
+A supermodule is a module config entry with ``"module_format": "supermodule"`` and the
+``submodule_versions`` it is built from; its instances are its own module array, which
+``config_schemas.load_supermodule_registry`` reads into the entry's ``submodules``. An instance of
+it in a module array, e.g.::
 
     {"name": "heart", "module_type": "heart", "module_subtype": "supermodule",
      "per_submodule_inputs": {"ra": ["venous_svc"], "la": ["pvn"]},
@@ -48,11 +49,10 @@ The supermodule's parameters -- those of its *parameterisation* (the record's
 ``utilities/parameterisations.py``) -- name a submodule's parameter ``<sub>/<var>`` (one nested
 in a submodule ``<sub>/<subsub>/<var>``), and are renamed to ``{var}_{instance}__{sub}``,
 ``instance`` being the supermodule record's name; ``global/<var>`` or a plain name is a global
-and keeps its name, added only once (see ``utilities/parameter_names.py``). A submodule record may name
-its own parameterisation; it stays on the expanded record, whose parameterisation is read with
-the components' (``parameterisations.component_parameterisation_rows``), after the
-supermodule's, so the
-supermodule's values win.
+and keeps its name, added only once (see ``utilities/parameter_names.py``). A parameter the
+supermodule's parameterisation does not set comes from the submodule version's
+``default_parameterisation`` (``parameterisations.component_parameterisation_rows``, read after
+the supermodule's, so the supermodule's values win).
 
 After expansion no record is a supermodule instance.
 '''

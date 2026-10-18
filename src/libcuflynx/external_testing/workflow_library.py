@@ -212,16 +212,19 @@ def build_workflow_library(root, settings=None):
 
     def submodule(name, module_type, inp=(), out=()):
         return {'name': name, 'module_type': module_type, 'module_subtype': 'v1',
-                'parameterisation': 'default', 'inp_instances': list(inp), 'out_instances': list(out)}
+                'inp_instances': list(inp), 'out_instances': list(out)}
 
     for module_type, submodules in (
             ('twin', [submodule('A', 'lin_a'), submodule('B', 'lin_b')]),
             ('chain', [submodule('A', 'lin_a', out=['C']), submodule('C', 'lin_c', inp=['A'])])):
-        _write_json(os.path.join(modules, module_type, 'versions', 'v1',
-                                 f'{module_type}_v1_modules_config.json'),
+        version_dir = os.path.join(modules, module_type, 'versions', 'v1')
+        versions = list({(s['module_type'], s['module_subtype']): None for s in submodules})
+        _write_json(os.path.join(version_dir, f'{module_type}_v1_modules_config.json'),
                     [{'module_type': module_type, 'module_subtype': 'v1',
                       'module_format': 'supermodule', 'default_parameterisation': 'default',
-                      'submodules': submodules}])
+                      'submodule_versions': [{'module_type': t, 'module_subtype': s}
+                                             for t, s in versions]}])
+        _write_json(os.path.join(version_dir, f'{module_type}_v1_module_array.json'), submodules)
 
     paths = {'modules': modules}
     paths['lin_a/fit_a'] = _parameterisation(modules, 'lin_a', 'fit_a', [('p', 1.0)],

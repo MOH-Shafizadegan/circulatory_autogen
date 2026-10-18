@@ -4,7 +4,7 @@
 libcuflynx reads only the current forms of its input files. A reader that meets an older form
 refuses the file and names the command here that converts it::
 
-    cuflynx-upgrade module-config <*_modules_config.json>...
+    cuflynx-upgrade module-config <*_modules_config.json>... [--module-library-dir <dir>]
     cuflynx-upgrade module-array <*_module_array|_vessel_array .json|.csv>...
     cuflynx-upgrade obs-data <*_obs_data.json>... --user-inputs <user_inputs.yaml>
     cuflynx-upgrade parameter-names --module-array <array> --module-library-dir <dir> ...
@@ -20,7 +20,10 @@ What each converts:
 * ``module-config``: the older keys ``vessel_type``/``BC_type``/``module_file``/``module_type``
   (component) to ``module_type``/``module_subtype``/``component_file``/``component_type``;
   ``default_instance`` to ``default_parameterisation``; a ``multi_port`` of ``"False"`` is
-  dropped; a supermodule's ``default_parameters`` CSV becomes its ``default`` parameterisation.
+  dropped; a supermodule's ``default_parameters`` CSV becomes its ``default`` parameterisation;
+  a supermodule's inline ``submodules`` become its ``submodule_versions`` and its own module array
+  file, and a parameterisation a submodule named (other than its version's default) is folded into
+  the supermodule's (``--module-library-dir`` says where the submodule versions are).
 * ``module-array``: the keys or columns ``vessel_type``/``BC_type``/``inp_vessels``/
   ``out_vessels`` to ``module_type``/``module_subtype``/``inp_instances``/``out_instances``;
   ``<prefix>_vessel_array.*`` is renamed ``<prefix>_module_array.*``; a heart with one output
@@ -83,8 +86,11 @@ def _write(path, text, dry_run, changes):
 
 # ------------------------------------------------------------------------------ module configs
 
-def upgrade_module_config(path, dry_run=False):
-    '''Convert the module config at ``path``; returns the changes made (empty if none).'''
+def upgrade_module_config(path, dry_run=False, module_library_dirs=(), builtin_modules=True):
+    '''Convert the module config at ``path``; returns the changes made (empty if none).
+    ``module_library_dirs`` (and the built-in modules, unless ``builtin_modules`` is False) are
+    where a supermodule's submodule versions are looked for, when a submodule names a
+    parameterisation to fold into the supermodule's.'''
     text = open(path, encoding='utf-8-sig').read()
     doc = json.loads(text)
     changes = []
@@ -110,10 +116,117 @@ def upgrade_module_config(path, dry_run=False):
                     changes.append(f'multi_port "False" dropped ({port.get("port_type")})')
         if entry.get('default_parameters'):
             changes.append(_default_parameters_to_parameterisation(path, entry, dry_run))
+        if isinstance(entry.get('submodules'), list):
+            changes += _submodules_to_versions(path, entry, dry_run, module_library_dirs,
+                                               builtin_modules)
     if len(changes) > rewritten:
         text = json.dumps(doc, indent=2, ensure_ascii=False) + '\n'
     if changes:
         _write(path, text, dry_run, changes)
+    return changes
+
+
+def _version_entries(module_library_dirs, builtin_modules):
+    '''``{(module_type, module_subtype): (entry, config path)}`` of every config entry in the
+    module sources, read as written (so older supermodules are found too).'''
+    from libcuflynx.utilities.module_library import ModuleSources
+    files = ModuleSources({'module_library_dirs': list(module_library_dirs) or None,
+                           'use_builtin_modules': builtin_modules}).config_files
+    found = {}
+    for config in files:
+        try:
+            entries = json.load(open(config, encoding='utf-8-sig'))
+        except (OSError, ValueError):
+            continue
+        for e in entries if isinstance(entries, list) else []:
+            if isinstance(e, dict) and 'module_type' in e and 'module_subtype' in e:
+                found.setdefault((e['module_type'], e['module_subtype']), (e, config))
+    return found
+
+
+def _read_rows(path):
+    import csv
+    with open(path, newline='', encoding='utf-8-sig') as f:
+        reader = csv.DictReader(f)
+        return list(reader.fieldnames or []), [dict(r) for r in reader]
+
+
+def _write_rows(path, columns, rows):
+    import csv
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=columns, extrasaction='ignore')
+        writer.writeheader()
+        writer.writerows([{c: r.get(c, '') for c in columns} for r in rows])
+
+
+def _submodule_rows(sub, version, config, parameterisation):
+    '''The rows of ``parameterisation`` of the submodule version ``version`` (from ``config``),
+    named as a row of the supermodule's parameterisation: ``<sub>/<var>``, a global plainly.'''
+    from libcuflynx.utilities.parameterisations import parameterisation_parameters_path
+    _, rows = _read_rows(parameterisation_parameters_path(config, parameterisation))
+    supermodule = version.get('module_format') == 'supermodule'
+    globals_ = {v[0] for v in version.get('variables_and_units') or []
+                if len(v) > 3 and v[3] == 'global_constant'}
+    out = []
+    for row in rows:
+        name = row['variable_name'].strip()
+        if name.startswith('global/'):
+            name = name[len('global/'):]
+        elif (supermodule and '/' in name) or (not supermodule and name not in globals_):
+            name = f'{sub}/{name}'
+        out.append(dict(row, variable_name=name))
+    return out
+
+
+def _submodules_to_versions(config_path, entry, dry_run, module_library_dirs, builtin_modules):
+    '''A supermodule entry's inline ``submodules``: its instances to its own module array file,
+    ``submodule_versions`` in the entry, and each submodule's own parameterisation (other than
+    its version's default) folded into the supermodule's parameterisations.'''
+    from libcuflynx.utilities.parameterisations import (available_parameterisations,
+                                                        parameterisation_parameters_path)
+    records = entry.pop('submodules')
+    versions = list(dict.fromkeys((r['module_type'], r['module_subtype']) for r in records))
+    entry['submodule_versions'] = [{'module_type': t, 'module_subtype': s} for t, s in versions]
+    named = {r['name']: r.pop('parameterisation') for r in records if 'parameterisation' in r}
+    array = os.path.join(os.path.dirname(os.path.abspath(config_path)),
+                         f'{entry["module_type"]}_{entry["module_subtype"]}_module_array.json')
+    if os.path.exists(array):
+        raise SystemExit(f'{config_path}: {array} exists already; remove it or convert by hand.')
+    changes = [f'submodules moved to {os.path.basename(array)}, with submodule_versions']
+    if not dry_run:
+        with open(array, 'w', encoding='utf-8') as f:
+            f.write('[\n' + ',\n'.join(' ' + json.dumps(r) for r in records) + '\n]\n')
+    by_name = {r['name']: r for r in records}
+    folded = []
+    if named:
+        sources = _version_entries(module_library_dirs, builtin_modules)
+        for sub, parameterisation in named.items():
+            key = (by_name[sub]['module_type'], by_name[sub]['module_subtype'])
+            if key not in sources:
+                raise SystemExit(f'{config_path}: submodule "{sub}" names parameterisation '
+                                 f'"{parameterisation}" of {key}, which no module source given '
+                                 f'has; pass --module-library-dir for its library.')
+            version, config = sources[key]
+            if parameterisation == version.get('default_parameterisation',
+                                               version.get('default_instance')):
+                continue
+            folded += _submodule_rows(sub, version, config, parameterisation)
+            changes.append(f'"{sub}"\'s parameterisation "{parameterisation}" folded in')
+    if folded:
+        targets = available_parameterisations(config_path)
+        if not entry.get('default_parameterisation'):
+            entry['default_parameterisation'] = 'default'
+        if entry['default_parameterisation'] not in targets:
+            targets.append(entry['default_parameterisation'])
+        for name in targets:
+            path = parameterisation_parameters_path(config_path, name)
+            columns, rows = (_read_rows(path) if os.path.isfile(path) else
+                             (['variable_name', 'units', 'value', 'data_reference'], []))
+            have = {r['variable_name'].strip() for r in rows}
+            rows += [r for r in folded if r['variable_name'] not in have]
+            if not dry_run:
+                _write_rows(path, columns, rows)
     return changes
 
 
@@ -262,6 +375,14 @@ def main(argv=None):
         sub = commands.add_parser(name, help=f'convert {help_text}')
         sub.add_argument('paths', nargs='+')
         sub.add_argument('--dry-run', action='store_true', help='print, do not write')
+        if name == 'module-config':
+            sub.add_argument('--module-library-dir', dest='module_library_dirs', action='append',
+                             default=[], metavar='DIR',
+                             help="a module library (repeatable): where a supermodule's "
+                                  "submodule versions are, to fold a parameterisation a "
+                                  "submodule names into the supermodule's")
+            sub.add_argument('--no-builtin-modules', action='store_true',
+                             help="leave libcuflynx's built-in modules out")
         if name == 'obs-data':
             sub.add_argument('--user-inputs', help="the user_inputs.yaml whose pre_time and "
                                                    "sim_time the files were run with")
@@ -273,7 +394,8 @@ def main(argv=None):
     changed = 0
     for path in args.paths:
         if args.command == 'module-config':
-            changed += bool(upgrade_module_config(path, args.dry_run))
+            changed += bool(upgrade_module_config(path, args.dry_run, args.module_library_dirs,
+                                                  not args.no_builtin_modules))
         elif args.command == 'module-array':
             changed += bool(upgrade_module_array(path, args.dry_run))
         else:
