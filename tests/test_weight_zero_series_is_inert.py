@@ -67,15 +67,15 @@ def _obs_files(resources_dir, tmp_path):
     """The same obs_data twice, once with a weight-0 trace appended."""
     source = os.path.join(resources_dir, "3compartment_obs_data.json")
     with open(source, encoding="utf-8-sig") as handle:
-        items = json.load(handle)
+        doc = json.load(handle)
 
     without = os.path.join(str(tmp_path), "without_series_obs_data.json")
     with open(without, "w") as handle:
-        json.dump(items, handle)
+        json.dump(doc, handle)
 
     with_series = os.path.join(str(tmp_path), "with_series_obs_data.json")
     with open(with_series, "w") as handle:
-        json.dump(list(items) + [_recorded_trace_item()], handle)
+        json.dump(dict(doc, data_items=doc["data_items"] + [_recorded_trace_item()]), handle)
 
     return without, with_series
 

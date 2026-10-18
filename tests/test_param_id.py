@@ -2514,7 +2514,7 @@ def test_param_id_3compartment_nonstiff_casadi_succeeds(
             'min':           lambda a: float(a.min()),
             'max_minus_min': lambda a: float(a.max() - a.min()),
         }
-        for item in obs_template:
+        for item in obs_template['data_items']:
             op = item.get('operation')
             operand_name = item.get('operands', [None])[0]
             if op in _op_map and operand_name in results:
@@ -2550,7 +2550,7 @@ def test_param_id_3compartment_nonstiff_casadi_succeeds(
         assert success, "Regeneration with perturbed parameters should succeed"
 
         print("\nGT observables used for cost (from GT simulation):")
-        for item in obs_template:
+        for item in obs_template["data_items"]:
             if item.get('weight', 0) != 0:
                 print(
                     f"  {item['operation']:>14} {item['operands'][0]:<20} "
@@ -2991,7 +2991,7 @@ def test_offline_pre_time_3compartment_outputs_match(
 
     if rank == 0:
         with open(base_obs_path, "r") as f:
-            data_items = json.load(f)
+            data_items = json.load(f)["data_items"]
 
         obs_no_offline = {
             "protocol_info": {
@@ -3071,6 +3071,7 @@ def test_offline_pre_time_lotka_volterra_casadi_outputs_match(
             "input_param_file": "Lotka_Volterra_parameters.csv",
             "model_type": "casadi_python",
             "solver": "casadi_integrator",
+            "solver_info": {"method": "cvodes"},
             "resources_dir": resources_dir,
         })
         assert generate_with_new_architecture(False, generation_cfg), "CasADi model generation failed"
@@ -3172,7 +3173,7 @@ def test_offline_pre_time_3compartment_python_outputs_match(
 
     if rank == 0:
         with open(base_obs_path, "r") as f:
-            data_items = json.load(f)
+            data_items = json.load(f)["data_items"]
         obs_no = {
             "protocol_info": {
                 "pre_times": [0.5],
