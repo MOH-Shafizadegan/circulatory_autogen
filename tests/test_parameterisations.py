@@ -3,11 +3,13 @@
 A module library lays a module version out as ``<module_type>/versions/<version>/`` with its
 CellML, a one-entry ``*_modules_config.json`` (module_subtype == version) and named parameter
 sets, *parameterisations*, in ``parameterisations/<name>/<name>_parameters.csv``. A
-module-array record (or a supermodule's submodule) picks one with ``"parameterisation"``;
-without it, the entry's ``default_parameterisation`` is used when its file exists. Rows
-``{var}`` become ``{var}_{vessel}``, except the module's global constants, and are default
-parameters: the host parameters file wins, then a supermodule's parameterisation, then
-submodules'. The older ``instances/`` directory and ``default_instance`` key are refused.
+module-array record picks one with ``"parameterisation"``; without it, the entry's
+``default_parameterisation`` is used when its file exists. A supermodule's submodule names none:
+the supermodule's parameterisation sets it (rows ``<sub>/<var>``), then its version's default
+fills the rest. Rows ``{var}`` become ``{var}_{vessel}``, except the module's global constants,
+and are default parameters: the host parameters file wins, then a supermodule's
+parameterisation, then the submodules' version defaults. The older ``instances/`` directory and
+``default_instance`` key are refused.
 
 obs_data files may carry a top-level ``obs_data_name``; one filed under
 ``parameterisations/<name>/`` is warned about when the name differs.
@@ -19,7 +21,7 @@ is recalibrated there changes nothing here. The modules they use:
 
 * ``i_M`` (``Argus2026_v01``): instances ``default`` and ``davis2020_wistar`` among others, whose
   ``rho_M`` differ; ``F`` and ``T`` are global constants;
-* ``soma`` (``sympathetic``): a supermodule with an instance, whose submodules name instances;
+* ``soma`` (``sympathetic``): a supermodule with a parameterisation;
 * ``neuron`` (``sympathetic``): a supermodule with ``soma`` nested in it.
 
 A small synthetic library is kept for what a real library cannot contain -- its own structure
@@ -39,6 +41,7 @@ import warnings
 import pytest
 
 import _module_library as module_library
+from _supermodules import split_supermodule, write_supermodule
 from test_config_schemas import (_assert_same_generated_models, _prescribed, _write_library,
                                  modules_config)
 
@@ -127,17 +130,17 @@ def _pulse_entry(version, **extra):
     return entry
 
 
-def _sub(name, parameterisation=None):
+def _sub(name, **extra):
     record = {'name': name, 'module_type': 'pulse_src', 'module_subtype': 'v1',
               'inp_instances': [], 'out_instances': []}
-    if parameterisation is not None:
-        record['parameterisation'] = parameterisation
+    record.update(extra)
     return record
 
 
+# with its instance records inline; on disk, PAIR_ENTRY and its module array
 PAIR = {'module_type': 'pair', 'module_subtype': 'v1', 'module_format': 'supermodule',
-        'submodules': [_sub('a', parameterisation='other'), _sub('b')],
-        'default_parameterisation': 'base'}
+        'submodules': [_sub('a'), _sub('b')], 'default_parameterisation': 'base'}
+PAIR_ENTRY, _ = split_supermodule(PAIR)
 
 # instance -> rows (variable_name, units, value)
 PULSE_INSTANCES = {
@@ -147,7 +150,8 @@ PULSE_INSTANCES = {
               ('omega', 'per_s', '4.0')],
 }
 PAIR_INSTANCES = {
-    'base': [('a/amp', 'dimensionless', '0.9'), ('omega', 'per_s', '5.0')],
+    'base': [('a/amp', 'dimensionless', '0.9'), ('a/mean', 'm3_per_s', '2e-05'),
+             ('omega', 'per_s', '5.0')],
     'alt': [('b/amp', 'dimensionless', '0.1')],
 }
 
@@ -189,7 +193,7 @@ def library(tmp_path_factory):
     _write_instances(os.path.join(modules, 'sources', 'pulse_src', 'versions', 'v1'),
                      PULSE_INSTANCES)
     pair_dir = os.path.join(modules, 'systems', 'pair', 'versions', 'v1')
-    _write_json(os.path.join(pair_dir, 'pair_v1_modules_config.json'), [PAIR])
+    write_supermodule(pair_dir, PAIR)
     _write_instances(pair_dir, PAIR_INSTANCES)
     readers = _write_library(str(root / 'readers'),
                              {'schema_test_modules_config.json': modules_config()})
@@ -307,8 +311,8 @@ def test_parameterisations_that_agree_on_a_global_do_not_warn(tmp_path, library)
 @pytest.mark.unit
 def test_a_global_a_supermodule_parameterisation_sets_is_not_a_conflict_of_its_submodules(tmp_path,
                                                                                   library):
-    # pair's submodules' instances set omega to 4.0 (a: other) and 6.0 (b: default), but pair's
-    # own instance sets 5.0, which outranks both
+    # pair's submodules' version default sets omega to 6.0, but pair's own parameterisation
+    # sets 5.0, which outranks it
     rows, conflicts = _load_caught(tmp_path, library, _pair_host())
     assert _values(rows)['omega'][0] == '5.0'
     assert not conflicts
@@ -316,8 +320,8 @@ def test_a_global_a_supermodule_parameterisation_sets_is_not_a_conflict_of_its_s
 
 @pytest.mark.unit
 def test_a_supermodule_s_global_used_for_modules_outside_it_warns(tmp_path, library):
-    # pr1 (instance base) sets omega 5.0; pr2 (alt) sets none, so its submodules' instances
-    # chose 4.0 and 6.0 -- but a global is one value for the model, and pr2's modules run at 5.0
+    # pr1 (parameterisation base) sets omega 5.0; pr2 (alt) sets none, so its submodules' version
+    # default chose 6.0 -- but a global is one value for the model, and pr2's modules run at 5.0
     records = [_rec('pr1', 'pair', 'v1', out=['coll'], parameterisation='base',
                     per_submodule_outputs={'a': ['coll'], 'b': ['coll']}),
                _rec('pr2', 'pair', 'v1', out=['coll'], parameterisation='alt',
@@ -326,10 +330,10 @@ def test_a_supermodule_s_global_used_for_modules_outside_it_warns(tmp_path, libr
     rows, conflicts = _load_caught(tmp_path, library, records)
     assert _values(rows)['omega'][0] == '5.0'
     assert len(conflicts) == 1
-    assert [v for v, _, _ in conflicts[0].values] == ['5.0', '4.0', '6.0']
+    assert [v for v, _, _ in conflicts[0].values] == ['5.0', '6.0', '6.0']
     message = str(conflicts[0])
     assert 'supermodule "pr1" (parameterisation "base")' in message and '"pr2__a"' in message
-    # pr1's own submodules (pr1_a: 4.0, pr1_b: 6.0) are overridden on purpose: not listed
+    # pr1's own submodules (6.0 from their version default) are overridden on purpose: not listed
     assert '"pr1__a"' not in message and '"pr1__b"' not in message
 
 
@@ -405,7 +409,7 @@ def test_a_bad_parameterisation_name_is_rejected(value):
 
 @pytest.mark.unit
 @pytest.mark.parametrize('entry', [_pulse_entry('v1', default_parameterisation=''),
-                                   dict(PAIR, default_parameterisation=['base'])])
+                                   dict(PAIR_ENTRY, default_parameterisation=['base'])])
 def test_a_bad_default_parameterisation_is_rejected(entry):
     with pytest.raises(ValueError, match='default_parameterisation'):
         normalise_module_config_entry(entry, 'test')
@@ -489,14 +493,16 @@ def test_a_nested_supermodule_s_parameterisation_is_renamed_through_the_nesting(
 
 
 @pytest.mark.unit
-def test_a_supermodule_parameterisation_beats_its_submodules_parameterisations(tmp_path, library):
+def test_the_supermodule_s_parameterisation_sets_its_submodules_and_their_default_fills_the_rest(
+        tmp_path, library):
     records, rows = _load(tmp_path, library, _pair_host())
     assert [r['name'] for r in records] == ['pr__a', 'pr__b', 'coll']
+    assert all('parameterisation' not in r for r in records[:2])
     assert _values(rows) == {
-        # the supermodule's default parameterisation "base"
-        'amp_pr__a': ('0.9', 'base_ref'), 'omega': ('5.0', 'base_ref'),
-        # submodule a's own parameterisation "other", then b's default
-        'mean_pr__a': ('2e-05', 'other_ref'),
+        # the supermodule's default parameterisation "base", rows a/amp, a/mean and omega
+        'amp_pr__a': ('0.9', 'base_ref'), 'mean_pr__a': ('2e-05', 'base_ref'),
+        'omega': ('5.0', 'base_ref'),
+        # what base leaves unset: the submodule version's default parameterisation
         'mean_pr__b': ('1e-05', 'default_ref'), 'amp_pr__b': ('0.5', 'default_ref'),
     }
 
@@ -507,8 +513,9 @@ def test_a_named_supermodule_parameterisation_replaces_its_default(tmp_path, lib
     _, rows = _load(tmp_path, library, _pair_host(parameterisation='alt'))
     assert _values(rows) == {
         'amp_pr__b': ('0.1', 'alt_ref'),
-        'amp_pr__a': ('0.3', 'other_ref'), 'mean_pr__a': ('2e-05', 'other_ref'),
-        'omega': ('4.0', 'other_ref'), 'mean_pr__b': ('1e-05', 'default_ref'),
+        # nothing of base: a takes its version's default
+        'amp_pr__a': ('0.5', 'default_ref'), 'mean_pr__a': ('1e-05', 'default_ref'),
+        'omega': ('6.0', 'default_ref'), 'mean_pr__b': ('1e-05', 'default_ref'),
     }
 
 
@@ -532,21 +539,18 @@ def test_an_unknown_supermodule_parameterisation_lists_its_parameterisations(tmp
 
 
 @pytest.mark.unit
-def test_an_unknown_submodule_parameterisation_is_an_error(tmp_path, real_library):
-    lib = real_library
-    # a supermodule config of its own whose one submodule is the real i_M, naming an instance
-    # i_M does not have
-    config = tmp_path / 'probe' / 'probe_v1_modules_config.json'
-    _write_json(str(config), [{
-        'module_type': 'probe', 'module_subtype': 'v1', 'module_format': 'supermodule',
-        'submodules': [{'name': 'm', 'module_type': I_M[0], 'module_subtype': I_M[1],
-                        'parameterisation': 'nope', 'inp_instances': [], 'out_instances': []}]}])
-    files = lib.files + [str(config)]
-    path = str(tmp_path / 'm_module_array.json')
-    _write_json(path, [_rec('pr', 'probe', 'v1')])
-    with pytest.raises(ValueError, match=r'"pr__m".*unknown parameterisation "nope"'):
-        load_expanded_vessel_records(path, load_supermodule_registry(files),
-                                     load_component_registry(files))
+@pytest.mark.parametrize('parameterisation', ['other', 'default'])
+def test_a_submodule_naming_a_parameterisation_is_refused(tmp_path, parameterisation):
+    """Even its version's own default: a submodule's parameters come from the supermodule."""
+    config = write_supermodule(str(tmp_path / 'probe'), dict(
+        PAIR, module_type='probe', submodules=[_sub('a', parameterisation=parameterisation),
+                                               _sub('b')]))
+    with pytest.raises(ValueError, match=r"probe_v1_module_array\.json: \['a'\] name a "
+                                         r"parameterisation\. A submodule takes its parameters "
+                                         r"from the supermodule's parameterisation \(rows "
+                                         r"<submodule>/<variable>\), then from its version's "
+                                         r"default"):
+        load_supermodule_registry([config])
 
 
 # --------------------------------------------------------------------------------------------
@@ -623,7 +627,7 @@ def test_the_json_schemas_accept_parameterisations_and_obs_data_names(real_libra
         assert not arrays.is_valid([_rec('s', *I_M, parameterisation=bad)]), bad
     assert not configs.is_valid([_pulse_entry('v1', default_parameterisation='a/b')])
     assert not configs.is_valid([_pulse_entry('v1', default_instance='p')])
-    assert not configs.is_valid([dict(PAIR, submodules=[_sub('a', parameterisation='')])])
+    assert not configs.is_valid([PAIR])
 
     protocol = {'pre_times': [0.0], 'sim_times': [[1.0]]}
     obs.validate({'obs_data_name': 'other', 'data_items': [], 'protocol_info': protocol})
@@ -735,8 +739,11 @@ def test_a_record_names_its_parameterisation_with_parameterisation_only(tmp_path
                    _rec('s', 'pulse_src', 'v1', instance='other', parameterisation='other')):
         with pytest.raises(ValueError, match=r'has "instance".*"parameterisation"; rename'):
             normalise_vessel_record(record, 'test', 0)
-    with pytest.raises(ValueError, match=r'submodules.*has "instance"'):
-        normalise_module_config_entry(dict(PAIR, submodules=[dict(_sub('a'), instance='x')]))
+    config = write_supermodule(str(tmp_path / 'probe'),
+                               dict(PAIR, submodules=[_sub('a', instance='x'), _sub('b')]))
+    with pytest.raises(ValueError, match=r'pair_v1_module_array\.json, record 0 \("a"\) has '
+                                         r'"instance"'):
+        load_supermodule_registry([config])
     records = _two_sources(None, None)
     records[0]['instance'] = 'other'
     with pytest.raises(ValueError, match=r'"s1".*has "instance"'):
@@ -746,13 +753,13 @@ def test_a_record_names_its_parameterisation_with_parameterisation_only(tmp_path
 @pytest.mark.unit
 def test_default_instance_is_refused():
     for entry in (_pulse_entry('v1', default_instance='default'),
-                  dict(PAIR, default_instance='base')):
+                  dict(PAIR_ENTRY, default_instance='base')):
         with pytest.raises(ValueError, match=r"\['default_instance'\].*cuflynx-upgrade "
                                              r"module-config"):
             normalise_module_config_entry(entry, 'lib.json')
-    pair = normalise_module_config_entry(PAIR)
+    pair = normalise_module_config_entry(PAIR_ENTRY)
     assert pair['default_parameterisation'] == 'base'
-    assert pair['submodules'][0]['parameterisation'] == 'other'
+    assert pair['submodule_versions'] == [{'module_type': 'pulse_src', 'module_subtype': 'v1'}]
     # a bad name is reported under the key it was given as
     with pytest.raises(ValueError, match=r'"parameterisation" is "a/b"'):
         normalise_vessel_record(_rec('s', 'pulse_src', 'v1', parameterisation='a/b'), 'test', 0)
@@ -767,14 +774,13 @@ def test_the_json_schemas_require_parameterisation_on_records():
     arrays = jsonschema.Draft202012Validator(load_schema(MODULE_ARRAY_SCHEMA))
     configs = jsonschema.Draft202012Validator(load_schema(MODULE_CONFIG_SCHEMA))
     arrays.validate([_rec('s1', 'pulse_src', 'v1', parameterisation='other')])
-    configs.validate([_pulse_entry('v1', default_parameterisation='default'), PAIR])
+    configs.validate([_pulse_entry('v1', default_parameterisation='default'), PAIR_ENTRY])
     assert not arrays.is_valid([_rec('s2', 'pulse_src', 'v1', instance='other')])
-    assert not configs.is_valid([dict(PAIR, submodules=[dict(_sub('a'), instance='x')])])
+    assert not configs.is_valid([PAIR])
     for bad in ('', ' ', 'a/b', '..', 3):
         assert not arrays.is_valid([_rec('s', 'pulse_src', 'v1', parameterisation=bad)]), bad
     assert not configs.is_valid([_pulse_entry('v1', default_parameterisation='a/b')])
-    assert not configs.is_valid([dict(PAIR,
-                                      submodules=[_sub('a', parameterisation='')])])
+    assert not configs.is_valid([dict(PAIR_ENTRY, default_parameterisation='')])
 
 
 # --------------------------------------------------------------------------------------------

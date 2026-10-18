@@ -15,15 +15,24 @@ import os
 import myokit
 import pytest
 
+from _supermodules import write_supermodule
 from libcuflynx.solver_wrappers.name_resolver import VariableNameResolver
 from libcuflynx.utilities.config_schemas import (load_component_registry,
-                                                 normalise_module_config_entry,
+                                                 load_supermodule_registry,
                                                  normalise_vessel_record)
 from libcuflynx.utilities.parameter_names import flat_name, host_model_names
 from test_json_module_arrays import (_expand, _flowpair_host, _links, _rec, registry,  # noqa: F401
                                      super_library_dir)
 
 pytestmark = pytest.mark.unit
+
+
+def _load_supermodule(directory, records, **entry):
+    """The registry of one supermodule ``x`` (version ``supermodule``) with ``records`` as its
+    instances, written to ``directory``."""
+    entry = dict({'module_type': 'x', 'module_subtype': 'supermodule',
+                  'module_format': 'supermodule', 'submodules': records}, **entry)
+    return load_supermodule_registry([write_supermodule(directory, entry)])
 
 
 def _host_by_path(order=('pair/coll',)):
@@ -94,11 +103,10 @@ def test_a_bad_path_is_an_error(registry, host, message):
         _expand(host, registry)
 
 
-def test_a_path_in_a_supermodule_s_own_submodules_is_an_error():
-    with pytest.raises(ValueError, match='not submodules of this supermodule'):
-        normalise_module_config_entry({
-            'module_type': 'x', 'module_subtype': 'supermodule', 'module_format': 'supermodule',
-            'submodules': [_rec('a', 'flow_src', out=['b/c']), _rec('b', 'collector')]})
+def test_a_path_in_a_supermodule_s_own_submodules_is_an_error(tmp_path):
+    with pytest.raises(ValueError, match=r"names \['b/c'\], which are not submodules of this "
+                                         r"supermodule"):
+        _load_supermodule(tmp_path, [_rec('a', 'flow_src', out=['b/c']), _rec('b', 'collector')])
 
 
 # --------------------------------------------------------------------------------------------
@@ -113,15 +121,13 @@ def test_flat_names_are_injective():
 
 @pytest.mark.parametrize('name', ['a__b', '_a', 'a_'])
 @pytest.mark.parametrize('where', ['submodule', 'top-level'])
-def test_bad_names_are_rejected(name, where):
+def test_bad_names_are_rejected(tmp_path, name, where):
     record = _rec(name, 'flow_src')
     with pytest.raises(ValueError, match=f'name "{name}" cannot be used'):
         if where == 'top-level':
             normalise_vessel_record(record, source='m_module_array.json', index=0)
         else:
-            normalise_module_config_entry({
-                'module_type': 'x', 'module_subtype': 'supermodule',
-                'module_format': 'supermodule', 'submodules': [record]})
+            _load_supermodule(tmp_path, [record])
 
 
 _VESSELS = {'pair__g': {'mean': 'constant'}, 'src_a': {'mean': 'constant'}}
@@ -226,14 +232,12 @@ def test_an_interface_is_validated(registry, interface, message):
 # PhLynx's own keys
 # --------------------------------------------------------------------------------------------
 
-def test_phlynx_keys_are_ignored():
+def test_phlynx_keys_are_ignored(tmp_path):
     record = normalise_vessel_record(_rec('a', 'flow_src', phlynx_position={'x': 1},
                                           phlynx_label='A'), source='m.json', index=0)
     assert not any(k.startswith('phlynx_') for k in record)
-    entry = normalise_module_config_entry({
-        'module_type': 'x', 'module_subtype': 'supermodule', 'module_format': 'supermodule',
-        'phlynx_layout': {'nodes': []},
-        'submodules': [_rec('a', 'flow_src', phlynx_position={'x': 1})]})
+    entry = _load_supermodule(tmp_path, [_rec('a', 'flow_src', phlynx_position={'x': 1})],
+                              phlynx_layout={'nodes': []})[('x', 'supermodule')]
     assert 'phlynx_layout' not in entry and 'phlynx_position' not in entry['submodules'][0]
 
 
@@ -255,8 +259,11 @@ def test_the_example_files_pass_the_schemas_and_expand(components):
     array = os.path.join(_TEST_INPUTS, 'nested_paths_module_array.json')
     with open(config) as f:
         jsonschema.validate(json.load(f), load_schema(MODULE_CONFIG_SCHEMA))
-    with open(array) as f:
-        jsonschema.validate(json.load(f), load_schema(MODULE_ARRAY_SCHEMA))
+    # the module array, and each supermodule version's own module array beside the config
+    for path in (array, os.path.join(_TEST_INPUTS, 'flowpair_supermodule_module_array.json'),
+                 os.path.join(_TEST_INPUTS, 'outer_supermodule_module_array.json')):
+        with open(path) as f:
+            jsonschema.validate(json.load(f), load_schema(MODULE_ARRAY_SCHEMA))
     expanded, _ = expand_supermodules(read_module_array_records(array),
                                       load_supermodule_registry([config]), array,
                                       components=components)
@@ -275,9 +282,7 @@ def test_the_example_files_pass_the_schemas_and_expand(components):
     ('array', [_rec('a_', 'flow_src')]),
     ('config', [{'module_type': 'x', 'module_subtype': 'supermodule',
                  'module_format': 'supermodule',
-                 'submodules': [_rec('a', 'flow_src', out=['b/c']), _rec('b', 'reader')]}]),
-    ('config', [{'module_type': 'x', 'module_subtype': 'supermodule',
-                 'module_format': 'supermodule', 'submodules': [_rec('a', 'flow_src')],
+                 'submodule_versions': [{'module_type': 'flow_src', 'module_subtype': 'nn'}],
                  'interface': [{'name': 'i', 'port_type': 'flow_port'}]}]),
 ])
 def test_the_schemas_refuse_what_the_readers_refuse(schema, document):

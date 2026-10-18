@@ -319,8 +319,14 @@ def test_entries_come_back_with_module_type_and_subtype_first():
      "module-config"),
     (normalise_module_config_entry,
      {"module_type": "pair", "module_subtype": "supermodule", "module_format": "supermodule",
-      "default_parameters": "p.csv", "submodules": [
-          {"name": "a", "module_type": "flow_src", "module_subtype": "nn"}]}, "module-config"),
+      "default_parameters": "p.csv",
+      "submodule_versions": [{"module_type": "flow_src", "module_subtype": "nn"}]},
+     "module-config"),
+    # inline instance records: a supermodule's instances are its own module array now
+    (normalise_module_config_entry,
+     {"module_type": "pair", "module_subtype": "supermodule", "module_format": "supermodule",
+      "submodules": [{"name": "a", "module_type": "flow_src", "module_subtype": "nn"}]},
+     "module-config"),
     (normalise_module_config_entry,
      dict(_module("a", "a_type", [], [], []), default_instance="p"), "module-config"),
     (normalise_vessel_record,

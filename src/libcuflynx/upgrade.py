@@ -129,9 +129,17 @@ def upgrade_module_config(path, dry_run=False, module_library_dirs=(), builtin_m
 def _version_entries(module_library_dirs, builtin_modules):
     '''``{(module_type, module_subtype): (entry, config path)}`` of every config entry in the
     module sources, read as written (so older supermodules are found too).'''
-    from libcuflynx.utilities.module_library import ModuleSources
-    files = ModuleSources({'module_library_dirs': list(module_library_dirs) or None,
-                           'use_builtin_modules': builtin_modules}).config_files
+    # listed, not read through ModuleSources, which refuses the older forms being converted
+    from libcuflynx.utilities.module_library import (_is_any_json, _is_library_config_json,
+                                                     _list_flat, _list_recursive)
+    from libcuflynx.utilities.package_resources import builtin_modules_dir
+    from libcuflynx.utilities.paths import default_module_config_user_dir
+    files = []
+    for directory in module_library_dirs:
+        files += _list_recursive(directory, _is_library_config_json)
+    if builtin_modules:
+        files += (_list_flat(default_module_config_user_dir(), _is_any_json)
+                  + _list_flat(builtin_modules_dir(), _is_any_json))
     found = {}
     for config in files:
         try:
@@ -194,9 +202,6 @@ def _submodules_to_versions(config_path, entry, dry_run, module_library_dirs, bu
     if os.path.exists(array):
         raise SystemExit(f'{config_path}: {array} exists already; remove it or convert by hand.')
     changes = [f'submodules moved to {os.path.basename(array)}, with submodule_versions']
-    if not dry_run:
-        with open(array, 'w', encoding='utf-8') as f:
-            f.write('[\n' + ',\n'.join(' ' + json.dumps(r) for r in records) + '\n]\n')
     by_name = {r['name']: r for r in records}
     folded = []
     if named:
@@ -213,6 +218,10 @@ def _submodules_to_versions(config_path, entry, dry_run, module_library_dirs, bu
                 continue
             folded += _submodule_rows(sub, version, config, parameterisation)
             changes.append(f'"{sub}"\'s parameterisation "{parameterisation}" folded in')
+    # written once every named parameterisation is found, so a refusal leaves nothing behind
+    if not dry_run:
+        with open(array, 'w', encoding='utf-8') as f:
+            f.write('[\n' + ',\n'.join(' ' + json.dumps(r) for r in records) + '\n]\n')
     if folded:
         targets = available_parameterisations(config_path)
         if not entry.get('default_parameterisation'):

@@ -25,6 +25,7 @@ import os
 import numpy as np
 import pytest
 
+from _supermodules import write_supermodule
 from libcuflynx.calibration_workflow import (StoredDistribution, WorkflowError,
                                              generate_parameterisation, load_workflow,
                                              load_workflow_run, plan_workflow, resolve_workflow,
@@ -278,12 +279,11 @@ def test_a_step_must_land_in_the_target(library):
 def test_an_ambiguous_submodule_must_be_named(library):
     version_dir = os.path.join(library['modules'], 'double', 'versions', 'v1')
     os.makedirs(os.path.join(version_dir, 'parameterisations', 'default'))
-    sub = {'module_type': 'lin_a', 'module_subtype': 'v1', 'parameterisation': 'default',
-           'inp_instances': [], 'out_instances': []}
-    _write_json(os.path.join(version_dir, 'double_v1_modules_config.json'), [{
+    sub = {'module_type': 'lin_a', 'module_subtype': 'v1', 'inp_instances': [], 'out_instances': []}
+    write_supermodule(version_dir, {
         'module_type': 'double', 'module_subtype': 'v1', 'module_format': 'supermodule',
         'default_parameterisation': 'default',
-        'submodules': [dict(sub, name='A1'), dict(sub, name='A2')]}])
+        'submodules': [dict(sub, name='A1'), dict(sub, name='A2')]})
     with open(os.path.join(version_dir, 'parameterisations', 'default', 'default_parameters.csv'),
               'w') as f:
         f.write('variable_name,units,value,data_reference\n')

@@ -7,7 +7,8 @@ Modules come from up to four places, in this order:
 1. the shipped (built-in) module library, which is package data;
 2. the checkout's ``module_config_user/`` directory;
 3. ``external_modules_dir``: one flat directory of ``*modules.cellml``, ``*.json`` and
-   ``*units.cellml`` files;
+   ``*units.cellml`` files (a ``*_module_array.json`` there is a supermodule's instances, not a
+   config);
 4. ``module_library_dirs``: one or more directories searched recursively, laid out one module
    per subdirectory, e.g. ``modules/<name>/<name>_modules.cellml``,
    ``<name>_modules_config.json`` and ``<name>_units.cellml``. Only JSON files named
@@ -69,7 +70,9 @@ def _is_module_cellml(filename):
 
 
 def _is_any_json(filename):
-    return filename.endswith('.json')
+    # a supermodule version's module array (config_schemas.supermodule_array_path) sits beside
+    # its config and is not a config
+    return filename.endswith('.json') and not filename.endswith('_module_array.json')
 
 
 def _is_library_config_json(filename):

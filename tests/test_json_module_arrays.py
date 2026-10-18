@@ -4,10 +4,11 @@ A module array may be ``<prefix>_module_array.json`` -- a list of records (``nam
 module_subtype, inp_instances, out_instances``) -- and a CSV array is read by converting each row
 to the same record (utilities/config_schemas.py).
 
-A supermodule is a module config entry with ``"module_format": "supermodule"`` and a list of
-``submodules``; an instance of it in a module array expands into ``<instance>__<sub>`` records
-before anything else sees the array (utilities/supermodules.py). Its hosts are linked to
-submodules by ``per_submodule_inputs`` / ``per_submodule_outputs``.
+A supermodule is a module config entry with ``"module_format": "supermodule"`` and the
+``submodule_versions`` it is built from; its instances are its own module array beside the config
+(tests/_supermodules.py writes both from one dict). An instance of it in a module array expands
+into ``<instance>__<sub>`` records before anything else sees the array (utilities/supermodules.py).
+Its hosts are linked to submodules by ``per_submodule_inputs`` / ``per_submodule_outputs``.
 
 The fixture modules are those of test_config_schemas.py.
 """
@@ -24,6 +25,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from _supermodules import split_supermodule, write_supermodule, write_supermodules
 from test_config_schemas import (FULL_PARAMS, FULL_ROWS, _assert_same_generated_models,
                                  _prescribed_params, _simulate, _write_library, modules_config)
 
@@ -50,6 +52,9 @@ def _rec(name, module_type, inp=(), out=(), subtype='nn', **extra):
     record.update(extra)
     return record
 
+
+# supermodules are written with their instance records inline, as "submodules"; on disk they
+# are a config entry with submodule_versions and a module array (tests/_supermodules.py)
 
 # "flowpair": a collector fed by the host, and a Multiply gain feeding a host reader
 FLOWPAIR = {
@@ -82,14 +87,15 @@ LOOP_B = {'module_type': 'loop_b', 'module_subtype': 'supermodule', 'module_form
           'submodules': [_rec('a', 'loop_a', subtype='supermodule')]}
 
 SUPERMODULES = [FLOWPAIR, INNER, OUTER, LOOP_A, LOOP_B]
+FLOWPAIR_ENTRY, FLOWPAIR_RECORDS = split_supermodule(FLOWPAIR)
 
 
 @pytest.fixture(scope='module')
 def super_library_dir(tmp_path_factory):
     directory = _write_library(tmp_path_factory.mktemp('super_modules'), {
         'schema_test_modules_config.json': modules_config(),
-        'super_modules_config.json': SUPERMODULES,
     })
+    write_supermodules(directory, SUPERMODULES, 'super_modules_config.json')
     os.makedirs(os.path.join(directory, 'parameterisations', 'default'))
     with open(os.path.join(directory, 'parameterisations', 'default', 'default_parameters.csv'),
               'w') as f:
@@ -335,10 +341,16 @@ def test_to_json_command_line(tmp_path):
 def test_supermodule_entries_are_normalised_and_kept_out_of_the_module_dataframe(
         super_library_dir, registry):
     from libcuflynx.parsers.PrimitiveParsers import JSONFileParser
-    entry = normalise_module_config_entry(FLOWPAIR)
+    entry = normalise_module_config_entry(FLOWPAIR_ENTRY)
     assert (entry['module_type'], entry['module_subtype']) == ('flowpair', 'supermodule')
-    assert entry['submodules'][0]['module_type'] == 'collector'
-    assert normalise_module_config_entry(INNER)['module_type'] == 'inner'
+    assert entry['submodule_versions'] == [{'module_type': 'collector', 'module_subtype': 'nn'},
+                                           {'module_type': 'gain', 'module_subtype': 'nn'}]
+    assert 'submodules' not in entry
+    assert normalise_module_config_entry(split_supermodule(INNER)[0])['module_type'] == 'inner'
+    # the registry reads each version's instances from its module array
+    flowpair = registry[('flowpair', 'supermodule')]
+    assert [s['name'] for s in flowpair['submodules']] == ['coll', 'g']
+    assert flowpair['submodules'][0]['module_type'] == 'collector'
     assert set(registry) == {('flowpair', 'supermodule'), ('inner', 'supermodule'),
                              ('outer', 'supermodule'), ('loop_a', 'supermodule'),
                              ('loop_b', 'supermodule')}
@@ -351,15 +363,91 @@ def test_supermodule_entries_are_normalised_and_kept_out_of_the_module_dataframe
 
 @pytest.mark.unit
 @pytest.mark.parametrize('entry, message', [
-    (dict(FLOWPAIR, component_file='x.cellml'), 'has "component_file"'),
-    (dict(FLOWPAIR, BC_type='supermodule'), 'no longer reads'),
-    (dict(FLOWPAIR, submodules=[]), 'needs "submodules"'),
-    (dict(FLOWPAIR, submodules=[_rec('a', 'gain', out=['nowhere'])]), 'not submodules of this'),
-    (dict(FLOWPAIR, submodules=[_rec('a', 'gain'), _rec('a', 'reader')]), 'repeated'),
+    (dict(FLOWPAIR_ENTRY, component_file='x.cellml'), 'has "component_file"'),
+    (dict(FLOWPAIR_ENTRY, BC_type='supermodule'), 'no longer reads'),
+    # inline instance records: the converter is named
+    (FLOWPAIR, r"has \['submodules'\], keys libcuflynx no longer reads.*"
+               r"cuflynx-upgrade module-config lib\.json"),
+    (dict(FLOWPAIR_ENTRY, submodule_versions=[]), 'needs "submodule_versions"'),
+    (dict(FLOWPAIR_ENTRY, submodule_versions='gain'), 'needs "submodule_versions"'),
+    ({k: v for k, v in FLOWPAIR_ENTRY.items() if k != 'submodule_versions'},
+     'needs "submodule_versions"'),
+    (dict(FLOWPAIR_ENTRY, submodule_versions=['gain']), 'a submodule version is'),
+    (dict(FLOWPAIR_ENTRY, submodule_versions=[{'module_type': 'gain'}]), 'a submodule version is'),
+    (dict(FLOWPAIR_ENTRY, submodule_versions=[{'module_type': 'gain', 'module_subtype': 'nn',
+                                               'name': 'g'}]), 'a submodule version is'),
+    (dict(FLOWPAIR_ENTRY, submodule_versions=[{'module_type': 'gain', 'module_subtype': ' '}]),
+     'a submodule version is'),
+    (dict(FLOWPAIR_ENTRY, submodule_versions=[{'module_type': 'gain', 'module_subtype': 'nn'}] * 2),
+     r"lists \[\('gain', 'nn'\)\] more than once"),
 ])
 def test_bad_supermodule_entries(entry, message):
     with pytest.raises(ValueError, match=message):
-        normalise_module_config_entry(entry)
+        normalise_module_config_entry(entry, source='lib.json')
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('records, versions, message', [
+    ([dict(_rec('coll', 'collector'), parameterisation='p'), _rec('g', 'gain')], None,
+     r"\['coll'\] name a parameterisation.*supermodule's parameterisation.*version's default"),
+    ([_rec('coll', 'collector'), _rec('g', 'gain'), _rec('rd', 'reader')], None,
+     r"instances of \[\('reader', 'nn'\)\].*does not list"),
+    ([_rec('coll', 'collector')], None,
+     r"lists submodule_versions \[\('gain', 'nn'\)\], which no instance"),
+    ([_rec('coll', 'collector'), _rec('coll', 'gain')], None, r"names \['coll'\] are repeated"),
+    ([_rec('coll', 'collector', inp=['nowhere']), _rec('g', 'gain')], None,
+     r'record 0 \("coll"\): "inp_instances" names \[\'nowhere\'\], which are not submodules'),
+    ([_rec('coll', 'collector'), _rec('g', 'gain', out=['host'])], None,
+     r'"out_instances" names \[\'host\'\], which are not submodules'),
+    ([_rec('coll', 'collector'), _rec('in', 'inner', subtype='supermodule',
+                                      per_submodule_inputs={'rd': ['outside']})],
+     [('collector', 'nn'), ('inner', 'supermodule')],
+     r'"per_submodule_inputs" names \[\'outside\'\] for "rd", which are not submodules'),
+])
+def test_bad_supermodule_arrays(tmp_path, records, versions, message):
+    """A supermodule version's module array is checked when the registry reads it, against
+    the versions its config lists."""
+    entry, _ = split_supermodule(dict(FLOWPAIR, submodules=records))
+    if versions is None:
+        versions = [('collector', 'nn'), ('gain', 'nn')]
+    entry['submodule_versions'] = [{'module_type': t, 'module_subtype': s} for t, s in versions]
+    config = tmp_path / 'flowpair_supermodule_modules_config.json'
+    config.write_text(json.dumps([entry]))
+    (tmp_path / 'flowpair_supermodule_module_array.json').write_text(json.dumps(records))
+    with pytest.raises(ValueError, match=message) as error:
+        load_supermodule_registry([str(config)])
+    assert 'flowpair_supermodule_' in str(error.value)
+
+
+@pytest.mark.unit
+def test_a_supermodule_without_its_module_array_is_an_error(tmp_path):
+    config = tmp_path / 'flowpair_supermodule_modules_config.json'
+    config.write_text(json.dumps([FLOWPAIR_ENTRY]))
+    with pytest.raises(ValueError, match=r'its module array .*flowpair_supermodule_module_array'
+                                         r'\.json, which lists its submodule instances.*does not '
+                                         r'exist'):
+        load_supermodule_registry([str(config)])
+
+
+@pytest.mark.unit
+def test_a_supermodule_s_module_array_is_not_read_as_a_module_config(super_library_dir):
+    """external_modules_dir reads every JSON file in it as a config, but the module arrays
+    beside a supermodule's config."""
+    from libcuflynx.utilities.module_library import ModuleSources
+    files = ModuleSources({'external_modules_dir': super_library_dir,
+                           'use_builtin_modules': False}).config_files
+    assert sorted(os.path.basename(f) for f in files) == ['schema_test_modules_config.json',
+                                                          'super_modules_config.json']
+
+
+@pytest.mark.unit
+def test_the_module_array_is_found_beside_the_config_by_type_and_subtype(tmp_path):
+    from libcuflynx.utilities.config_schemas import supermodule_array_path
+    config = write_supermodule(tmp_path / 'lib', FLOWPAIR, 'anything_modules_config.json')
+    assert supermodule_array_path(config, FLOWPAIR_ENTRY) == \
+        str(tmp_path / 'lib' / 'flowpair_supermodule_module_array.json')
+    entry = load_supermodule_registry([config])[('flowpair', 'supermodule')]
+    assert entry['submodules'] == read_records(FLOWPAIR_RECORDS)
 
 
 @pytest.mark.unit
@@ -624,12 +712,10 @@ def test_a_heart_inside_a_supermodule_is_still_the_heart(tmp_path):
     component "heart_module" that did not exist, and generation still reported success. It is
     now found by its module_type, and simulates exactly as the plain model."""
     library = tmp_path / 'lib'
-    library.mkdir()
-    with open(library / 'cardio_modules_config.json', 'w') as f:
-        json.dump([{'module_type': 'cardio', 'module_subtype': 'supermodule',
-                    'module_format': 'supermodule',
-                    'submodules': [{'name': 'heart', 'module_type': 'heart', 'module_subtype': 'vp_Ca',
-                                    'inp_instances': [], 'out_instances': []}]}], f)
+    write_supermodule(library, {
+        'module_type': 'cardio', 'module_subtype': 'supermodule', 'module_format': 'supermodule',
+        'submodules': [{'name': 'heart', 'module_type': 'heart', 'module_subtype': 'vp_Ca',
+                        'inp_instances': [], 'out_instances': []}]}, 'cardio_modules_config.json')
     from libcuflynx.utilities.config_schemas import module_array_csv_to_records
     plain = module_array_csv_to_records(os.path.join(RESOURCES_DIR, '3compartment_module_array.csv'))
     params = [tuple(r) for r in pd.read_csv(os.path.join(RESOURCES_DIR, '3compartment_parameters.csv'),
@@ -737,16 +823,18 @@ def test_a_host_linked_twice_is_an_error(registry):
 
 
 @pytest.mark.unit
-def test_a_bad_submodule_record_is_reported_in_its_module_config():
+def test_a_bad_submodule_record_is_reported_in_its_module_array(tmp_path):
+    config = tmp_path / 'x_s_modules_config.json'
+    config.write_text(json.dumps([{'module_type': 'x', 'module_subtype': 's',
+                                   'module_format': 'supermodule',
+                                   'submodule_versions': [{'module_type': 'inertance',
+                                                           'module_subtype': 'nn'}]}]))
+    array = tmp_path / 'x_s_module_array.json'
+    array.write_text(json.dumps([{'name': 'I_p', 'module_type': 'inertance'}]))
     with pytest.raises(ValueError) as error:
-        normalise_module_config_entry({
-            'module_type': 'x', 'module_subtype': 's', 'module_format': 'supermodule',
-            'submodules': [{'name': 'I_p', 'module_type': 'inertance'}]},
-            source='lib/x_modules_config.json')
+        load_supermodule_registry([str(config)])
     message = str(error.value)
-    assert message.startswith('supermodule entry (x, s) in lib/x_modules_config.json, submodules, '
-                              'record 0 ("I_p")')
-    assert 'module array' not in message
+    assert f'{array}, record 0 ("I_p")' in message and 'module_subtype' in message
 
 
 def _component_entry(**port):
@@ -830,7 +918,7 @@ def test_two_supermodule_instances_link_to_each_other_in_either_order(registry, 
 @pytest.mark.unit
 def test_two_sibling_supermodule_instances_inside_a_supermodule_link(registry):
     """The same, one level down: two flowpairs as submodules of another supermodule."""
-    chain = normalise_module_config_entry({
+    entry, records = split_supermodule({
         'module_type': 'chain', 'module_subtype': 'supermodule', 'module_format': 'supermodule',
         'submodules': [
             _rec('src', 'flow_src', out=['p']),
@@ -840,6 +928,7 @@ def test_two_sibling_supermodule_instances_inside_a_supermodule_link(registry):
                  per_submodule_inputs={'coll': ['p']}, per_submodule_outputs={'g': ['rd']}),
             _rec('rd', 'reader', inp=['q']),
         ]})
+    chain = dict(normalise_module_config_entry(entry), submodules=read_records(records))
     expanded, _ = _expand([_rec('c', 'chain', subtype='supermodule')],
                           {**registry, ('chain', 'supermodule'): chain})
     links = _links(expanded)
@@ -931,11 +1020,17 @@ def test_resources_module_arrays_and_module_configs_validate_against_the_json_sc
 
     config_files = (glob.glob(os.path.join(builtin_modules_dir(), '*.json')) +
                     glob.glob(os.path.join(REPO_ROOT, 'module_config_user', '*.json')) +
-                    glob.glob(os.path.join(super_library_dir, '*.json')))
+                    glob.glob(os.path.join(super_library_dir, '*_modules_config.json')))
     assert len(config_files) > 20
     for path in config_files:
         with open(path, encoding='utf-8-sig') as f:
             module_validator.validate(json.load(f))
+    # a supermodule version's instances are a module array
+    supermodule_arrays = glob.glob(os.path.join(super_library_dir, '*_module_array.json'))
+    assert len(supermodule_arrays) == len(SUPERMODULES)
+    for path in supermodule_arrays:
+        with open(path) as f:
+            vessel_validator.validate(json.load(f))
     phlynx_component = {'module_type': 'a', 'module_subtype': 'nn', 'component_file': 'f.cellml',
                         'component_type': 'a_type', 'entrance_ports': [], 'exit_ports': [],
                         'variables_and_units': []}
@@ -948,6 +1043,12 @@ def test_resources_module_arrays_and_module_configs_validate_against_the_json_sc
     assert not vessel_validator.is_valid([{'name': 'a', 'vessel_type': 'x', 'BC_type': 'nn',
                                            'out_instances': []}])
     assert not vessel_validator.is_valid([{'name': 'a', 'module_type': 'x'}])
-    assert not module_validator.is_valid([dict(FLOWPAIR, component_file='x.cellml')])
+    assert not module_validator.is_valid([dict(FLOWPAIR_ENTRY, component_file='x.cellml')])
     assert not module_validator.is_valid([dict(phlynx_component, BC_type='nn')])
-    assert not module_validator.is_valid([dict(FLOWPAIR, submodules=[])])
+    module_validator.validate([FLOWPAIR_ENTRY])
+    assert not module_validator.is_valid([dict(FLOWPAIR_ENTRY, submodules=FLOWPAIR_RECORDS)])
+    assert not module_validator.is_valid([dict(FLOWPAIR_ENTRY, submodule_versions=[])])
+    assert not module_validator.is_valid([{k: v for k, v in FLOWPAIR_ENTRY.items()
+                                           if k != 'submodule_versions'}])
+    assert not module_validator.is_valid([dict(FLOWPAIR_ENTRY, submodule_versions=[
+        {'module_type': 'gain', 'module_subtype': 'nn', 'name': 'g'}])])
