@@ -90,6 +90,18 @@ def check_instance_name(name, where=''):
     return name
 
 
+def output_model_name(name):
+    '''The model's name ``<vessel>/<variable>`` of an output written with its vessel's path:
+    ``SN/soma/membrane/V`` -> ``SN__soma__membrane/V``. The path form is the one to write; a
+    name with one ``/`` (``aortic_root/u``, or the flat ``SN__soma__membrane/V``) is returned
+    unchanged.'''
+    name = str(name).strip()
+    path, _, variable = name.rpartition(SEPARATOR)
+    if SEPARATOR not in path:
+        return name
+    return f'{flat_name(p.strip() for p in path.split(SEPARATOR))}{SEPARATOR}{variable.strip()}'
+
+
 def is_path_name(name):
     '''Whether ``name`` is written in the ``/`` form.'''
     return SEPARATOR in str(name)

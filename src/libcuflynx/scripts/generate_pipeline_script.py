@@ -579,6 +579,11 @@ def resolve_name(names, wanted):
     if wanted in names:
         return wanted
     text = str(wanted)
+    if text.count("/") > 1:  # a nested vessel by its path: SN/soma/membrane/V -> SN__soma__membrane/V
+        head, _, var = text.rpartition("/")
+        text = head.replace("/", "__") + "/" + var
+        if text in names:
+            return text
     for sep in ("/", "."):
         if sep not in text:
             continue

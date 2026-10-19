@@ -415,8 +415,10 @@ def test_supermodule_generates_the_same_model_as_the_flattened_array_and_runs(
     expanded = _generate(tmp_path / 'super', super_library_dir, 'jv_pair', _flowpair_host(),
                          HOST_PARAMS)
     _assert_same_up_to_level_joins(flattened, expanded)
-    results = _simulate(expanded, ['pair__coll/v_seen', 'rd/v_seen'])
+    results = _simulate(expanded, ['pair__coll/v_seen', 'rd/v_seen', 'pair/coll/v_seen'])
     assert results['pair__coll/v_seen'].size > 0 and results['rd/v_seen'].size > 0
+    # the submodule's output by its path, the form to write
+    assert np.array_equal(results['pair/coll/v_seen'], results['pair__coll/v_seen'])
 
 
 @pytest.mark.integration
