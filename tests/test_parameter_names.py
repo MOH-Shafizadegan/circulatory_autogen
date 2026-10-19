@@ -82,13 +82,13 @@ def test_a_supermodule_row_naming_no_submodule_is_an_error():
 
 
 VESSELS = {'aortic_root': {'C': 'constant', 'T': 'global_constant'},
-           'heart__lv': {'E': 'constant'}}
+           'heart__lv': {'E': 'constant', 'R': 'global_constant'}}
 
 
 @pytest.mark.unit
 def test_host_names_are_checked_against_the_model():
-    names = host_model_names(['aortic_root/C', 'heart/lv/E', 'global/R', 'C_x'], VESSELS, 'p.csv')
-    assert names == ['C_aortic_root', 'E_heart__lv', 'R', 'C_x']
+    names = host_model_names(['aortic_root/C', 'heart/lv/E', 'global/R', 'T'], VESSELS, 'p.csv')
+    assert names == ['C_aortic_root', 'E_heart__lv', 'R', 'T']
 
     with pytest.raises(ValueError) as raised:
         host_model_names(['aortc_root/C', 'aortic_root/Cx', 'aortic_root/T'], VESSELS, 'p.csv')
@@ -97,6 +97,19 @@ def test_host_names_are_checked_against_the_model():
     assert 'aortc_root/C (no vessel "aortc_root"' in message
     assert 'has no variable "Cx"' in message
     assert 'aortic_root/T ("T" is a global constant: write global/T or T)' in message
+
+
+@pytest.mark.unit
+def test_a_global_name_no_module_declares_is_refused():
+    # r_0_par: par's module has no r_0, so it is neither a global nor the older form of a row
+    with pytest.raises(ValueError) as raised:
+        host_model_names(['r_0_par', 'global/Q', 'T'], VESSELS, 'p.csv')
+    message = str(raised.value)
+    assert '2 parameter(s) name something the model does not have' in message
+    assert 'r_0_par (no module in the model has a global constant "r_0_par")' in message
+    assert 'global/Q (no module in the model has a global constant "Q")' in message
+    # a model with 1D vessels: the 1D generator reads rows such as rho by name
+    assert host_model_names(['r_0_par', 'T'], VESSELS, 'p.csv', check_globals=False) == ['r_0_par', 'T']
 
 
 @pytest.mark.unit

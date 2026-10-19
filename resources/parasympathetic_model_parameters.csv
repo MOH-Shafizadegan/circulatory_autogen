@@ -2,8 +2,6 @@ variable_name,units,value,data_reference
 lung_stretch/tau_lung,second,2.0,Gee2023
 lung_stretch/q_str,m3,0.0,0.0
 lung_stretch/G_al,per_m3_s,23.291e6,Gee2023
-q_A_lung_stretch,m3,4e-3,user_defined_BC
-q_b_lung_stretch,m3,0.3e-3,user_defined_BC
 baroreceptor/P_baro_init,J_per_m3,39990,Gee2023
 baroreceptor/P_nom,J_per_m3,12263.6,Gee2023
 baroreceptor/tau_zb,second,6.37,Gee2023
@@ -58,7 +56,6 @@ NA/f_max_NA,Hz,15.78,Gee2023
 NA/f_mid_NA,Hz,59.83,Gee2023
 NA/k_RSA,dimensionless,0.5,Gee2023
 NA/k_NA,dimensionless,23,Gee2023
-s_NA,dimensionless,0.2,TEMP_BC
 NActr/f_min_NActr,Hz,0.61,Gee2023
 NActr/f_max_NActr,Hz,11,Gee2023
 NActr/f_mid_NActr,Hz,12.81,Gee2023
