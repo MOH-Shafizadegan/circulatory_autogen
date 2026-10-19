@@ -17,7 +17,8 @@ import _module_library as module_library
 from libcuflynx.utilities.config_schemas import (load_component_registry,
                                                  load_expanded_vessel_records,
                                                  load_supermodule_registry)
-from libcuflynx.utilities.parameter_names import (host_model_names, model_name, split_path_name,
+from libcuflynx.utilities.parameter_names import (host_model_names, model_name, output_model_name,
+                                                  split_path_name,
                                                   supermodule_row_name)
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -38,6 +39,31 @@ RESOURCES_DIR = os.path.join(REPO_ROOT, 'resources')
 ])
 def test_a_written_name_becomes_the_model_name(written, expected):
     assert model_name(written) == expected
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('written, expected', [
+    ('SN/soma/membrane/V', 'SN__soma__membrane/V'),
+    (' heart / lv / q ', 'heart__lv/q'),
+    ('heart__lv/q', 'heart__lv/q'),
+    ('aortic_root/u', 'aortic_root/u'),
+    ('t', 't'),
+])
+def test_an_output_written_by_its_path_becomes_the_model_name(written, expected):
+    assert output_model_name(written) == expected
+
+
+@pytest.mark.unit
+def test_the_resolver_and_candidates_take_an_output_by_its_path():
+    from libcuflynx.parsers.PrimitiveParsers import model_qname_candidates
+    from libcuflynx.solver_wrappers.name_resolver import VariableNameResolver
+    resolver = VariableNameResolver([{'component': 'SN__soma__membrane_module', 'name': 'V'}], [])
+    assert resolver.resolve('SN/soma/membrane/V') == resolver.resolve('SN__soma__membrane/V') == ('state', 0)
+    keyed = [('state', {'SN__soma__membrane_module.V': 0})]
+    assert VariableNameResolver.resolve_key('SN/soma/membrane/V', keyed, separator='.') == \
+        ('state', 'SN__soma__membrane_module.V')
+    assert model_qname_candidates('heart/lv/E') == model_qname_candidates('heart__lv/E')
+    assert 'parameters/E_heart__lv' in model_qname_candidates('heart/lv/E')
 
 
 @pytest.mark.unit
