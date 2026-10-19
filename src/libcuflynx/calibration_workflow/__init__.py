@@ -28,7 +28,8 @@ from libcuflynx.calibration_workflow.resolve import resolve_workflow
 from libcuflynx.calibration_workflow.runner import (TARGET_VIEW, WorkflowStepError,
                                                     load_workflow_run, plan_workflow,
                                                     run_calibration_workflow, workflow_model,
-                                                    workflow_status)
+                                                    workflow_status,
+                                                    write_calibrated_parameters_to)
 from libcuflynx.calibration_workflow.select import UnsetParametersError
 from libcuflynx.calibration_workflow.spec import (ALLOWED_SETTINGS, PRIOR_KINDS,
                                                   WORKFLOW_FILE_NAME, ModuleArray, Selection,
@@ -41,4 +42,4 @@ __all__ = ['ALLOWED_SETTINGS', 'PRIOR_KINDS', 'WORKFLOW_FILE_NAME', 'ModuleArray
            'load_workflow', 'load_workflow_run', 'pack_workflow', 'plan_workflow',
            'resolve_workflow',
            'run_calibration_workflow', 'TARGET_VIEW', 'workflow_model',
-           'workflow_status']
+           'workflow_status', 'write_calibrated_parameters_to']

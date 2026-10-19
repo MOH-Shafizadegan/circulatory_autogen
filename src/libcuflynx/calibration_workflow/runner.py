@@ -762,11 +762,34 @@ def emulator_dir(output_dir, step_id):
     return os.path.join(output_dir, step_id, EMULATOR_DIR)
 
 
-def write_calibrated_parameters(target, merged_parameters, workflow_name):
-    '''``<name>_calibrated_parameters.csv`` beside the target's parameters file (``<name>`` its
-    parameterisation, or its module array's prefix): its parameters with the merged values in
-    place, and rows it lacks added, written ``<vessel or submodule>/<variable>``. A row is
-    matched by the model parameter it names.'''
+def write_calibrated_parameters_to(source, output_dir, path, module_library_dirs=None):
+    '''Write the target's parameters with the merged values of the workflow run in
+    ``output_dir`` to ``path``, as :func:`write_calibrated_parameters` does; returns ``path``.
+
+    Reads the run's ``workflow_result.json``, so a run made one step at a time (``only``,
+    ``from_step``) can be written once every step has a result. WorkflowError when there is no
+    result, or a step has not run or is stale (its inputs changed since it ran).'''
+    workflow = source if hasattr(source, 'steps') else load_workflow(source, module_library_dirs)
+    result_path = os.path.join(output_dir, WORKFLOW_RESULT)
+    if not os.path.isfile(result_path):
+        raise WorkflowError(f'{output_dir} holds no run of workflow "{workflow.name}" '
+                            f'({WORKFLOW_RESULT} is missing).')
+    status = workflow_status(workflow, output_dir)
+    waiting = [s for s, v in status['steps'].items() if v['status'] != 'done' or v['stale']]
+    if waiting:
+        raise WorkflowError(f'workflow "{workflow.name}": steps {waiting} have no current result '
+                            f'in {output_dir} (not run, or their inputs changed since); run '
+                            f'them before writing the calibrated parameters.')
+    merged = _read_json(result_path)['merged_parameters']
+    return write_calibrated_parameters(resolve_workflow(workflow).target, merged, workflow.name,
+                                       path=path)
+
+
+def write_calibrated_parameters(target, merged_parameters, workflow_name, path=None):
+    '''``path`` (default ``<name>_calibrated_parameters.csv`` beside the target's parameters
+    file, ``<name>`` its parameterisation, or its module array's prefix): the target's
+    parameters with the merged values in place, and rows it lacks added, written
+    ``<vessel or submodule>/<variable>``. A row is matched by the model parameter it names.'''
     rows = read_parameter_rows(target.parameters_path)
     columns = list(rows[0].keys()) if rows else ['variable_name', 'units', 'value',
                                                   'data_reference']
@@ -792,7 +815,8 @@ def write_calibrated_parameters(target, merged_parameters, workflow_name):
         row['data_reference'] = reference
         if 'sourced' in columns:
             row['sourced'] = 'no'
-    path = target.file('calibrated_parameters.csv')
+    path = path or target.file('calibrated_parameters.csv')
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     import csv
     with open(path, 'w', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=columns, extrasaction='ignore')
