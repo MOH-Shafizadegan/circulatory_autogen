@@ -140,6 +140,16 @@ def test_obs_data_needs_the_times(tmp_path):
         upgrade(['obs-data', path])
 
 
+def test_explicit_times_win_over_user_inputs(tmp_path):
+    path = _write(tmp_path / 'm_obs_data.json', [])
+    inputs = tmp_path / 'user_inputs.yaml'
+    inputs.write_text('pre_time: 20\nsim_time: 2\n')
+    assert upgrade(['obs-data', path, '--user-inputs', str(inputs), '--pre-time', '5']) == 0
+    protocol_info = json.load(open(path))['protocol_info']
+    assert protocol_info['pre_times'] == [5.0]
+    assert protocol_info['sim_times'] == [[2.0]]
+
+
 def test_a_heart_with_no_outputs_is_left_alone(tmp_path):
     """A heart module tested on its own has no neighbours; only a one-output heart lacks its
     pulmonary circuit."""
