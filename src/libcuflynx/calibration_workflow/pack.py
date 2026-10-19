@@ -117,8 +117,8 @@ def pack_workflow(source, dest_dir, module_library_dirs=None):
     raw = copy.deepcopy(workflow.raw)
 
     def model(spec_model, owner):
-        if spec_model.kind == 'library':
-            return spec_model.as_dict()
+        if spec_model.kind in ('library', 'selection'):
+            return spec_model.as_dict()    # a selection's files are the target's
         packed = {'module_array': packer.file(spec_model.module_array, owner),
                   'parameters': packer.file(spec_model.parameters, owner)}
         return packed

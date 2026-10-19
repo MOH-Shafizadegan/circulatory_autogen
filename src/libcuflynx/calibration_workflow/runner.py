@@ -44,10 +44,13 @@ from libcuflynx.utilities import cuflynx_study
 from libcuflynx.calibration_workflow.distributions import (DISTRIBUTION_DIR,
                                                            StoredDistribution,
                                                            parameters_from_info)
-from libcuflynx.calibration_workflow.generate import generate_model, read_parameter_rows
+from libcuflynx.calibration_workflow.generate import (UnsetModelParameters, generate_model,
+                                                      read_parameter_rows)
 from libcuflynx.calibration_workflow.resolve import (CalibratedParameter,
                                                      read_calibrated_parameters,
                                                      resolve_workflow)
+from libcuflynx.calibration_workflow.select import (UnsetParametersError, protocol_values,
+                                                    step_input_paths, write_step_inputs)
 from libcuflynx.sensitivity_analysis.parameter_reduction import SobolReduction
 from libcuflynx.utilities.parameter_names import (is_path_name, split_path_name,
                                                   supermodule_row_name)
@@ -178,6 +181,10 @@ class _Run:
             files['parameters'] = rs.model.parameters_path
         if rs.model.kind == 'array':
             files['module_array'] = rs.model.model.module_array
+        if rs.selection is not None:
+            # a selection starts from the target's values
+            files['target_parameters'] = self.workflow.target.parameters
+            files['target_module_array'] = self.workflow.target.module_array
         return {key: {'path': path, 'sha256': sha256(path)} for key, path in files.items()}
 
     def require_current(self, step_id, needed_by):
@@ -291,7 +298,11 @@ class _Run:
         params_for_id = self.params_for_id_of(step)
         if step.params_for_id_from:
             self.require_current(step.params_for_id_from, step.id)
-        own = {p.model_name for p in read_calibrated_parameters(params_for_id, step.id)}
+        own = read_calibrated_parameters(params_for_id, step.id)
+        if resolved.renames_inputs:
+            own = [CalibratedParameter(resolved.vessel_map.from_target(p.vessel) or p.vessel,
+                                       p.param) for p in own]
+        own = {p.model_name for p in own}
         # a parameter the step calibrates itself is not fixed: the later calibration wins
         fixed = {n: row for n, row in self.fixed_values(step, step.fixed_from).items()
                  if n not in own}
@@ -306,6 +317,10 @@ class _Run:
         if os.path.isdir(step_dir):
             shutil.rmtree(step_dir)
         os.makedirs(step_dir)
+        obs_data = resolved.obs_data_path
+        if resolved.renames_inputs:
+            obs_data, params_for_id = write_step_inputs(
+                step_dir, step, params_for_id, resolved.vessel_map, self.resolved.target.vessels)
         if step.emulator_from:
             source = self.require_current(step.emulator_from, step.id)
             source_dir = self.step_dir(step.emulator_from)
@@ -318,11 +333,10 @@ class _Run:
                           'data_reference': f'fixed by calibration workflow '
                                             f'{self.workflow.name}, step {row["from_step"]}'}
                          for name, row in sorted(fixed.items())]
-            generated = generate_model(
-                step.model, os.path.join(step_dir, 'model'), step.id, overrides,
-                library_inputs=self.resolved.library_inputs,
-                model_type=settings.get('model_type', STEP_DEFAULTS['model_type']),
-                solver=settings.get('solver'))
+            generated = generate_step_model(
+                resolved, os.path.join(step_dir, 'model'), step.id,
+                under(resolved.base_rows, overrides), obs_data, self.resolved.library_inputs,
+                settings)
         model_rows = {r['variable_name']: r
                       for r in read_parameter_rows(generated['parameters_path'])}
         for name, row in fixed.items():
@@ -343,6 +357,9 @@ class _Run:
         model (its files carry that step's prefix) with its emulator.'''
         step_dir = self.step_dir(step.id)
         prefix = step.emulator_from or step.id
+        resolved = self.resolved.steps[step.id]
+        obs_data = (step_input_paths(step_dir, step)[0] if resolved.renames_inputs
+                    else resolved.obs_data_path)
         inp = copy.deepcopy(STEP_DEFAULTS)
         inp.update(copy.deepcopy(settings))
         inp.update({
@@ -351,7 +368,7 @@ class _Run:
             'resources_dir': generated['resources_dir'],
             'generated_models_dir': generated['generated_models_dir'],
             'input_param_file': f'{prefix}_parameters.csv',
-            'param_id_obs_path': self.resolved.steps[step.id].obs_data_path,
+            'param_id_obs_path': obs_data,
             'params_for_id_file': params_for_id,
             'param_id_output_dir': os.path.join(step_dir, 'param_id'),
             'do_uq': step.store_distribution,
@@ -698,6 +715,37 @@ class _Run:
         return workflow_result
 
 
+def under(base_rows, overrides):
+    '''``base_rows`` without those ``overrides`` set again, then ``overrides``: the rows a step
+    model is generated with.'''
+    replaced = {naming.host_model_name(r['variable_name']) for r in overrides}
+    return [r for r in base_rows
+            if naming.host_model_name(r['variable_name']) not in replaced] + list(overrides)
+
+
+def generate_step_model(resolved_step, work_dir, prefix, rows, obs_data, library_inputs,
+                        settings):
+    '''Generate the model of ``resolved_step`` with parameter ``rows``; the step's protocol
+    (``obs_data``) gives the parameters nothing else does. Parameters still without a value are
+    an UnsetParametersError naming them as the target's parameters file does.'''
+    try:
+        return generate_model(
+            resolved_step.model.model, work_dir, prefix, rows, library_inputs=library_inputs,
+            model_type=settings.get('model_type', STEP_DEFAULTS['model_type']),
+            solver=settings.get('solver'), protocol=protocol_values(obs_data))
+    except UnsetModelParameters as exc:
+        vessels = sorted(resolved_step.model.vessels, key=len, reverse=True)
+        names = []
+        for name in exc.model_names:
+            vessel = next((v for v in vessels if name.endswith('_' + v)), None)
+            if vessel is None:
+                names.append(name)      # a global
+                continue
+            names.append(naming.host_row_name(resolved_step.to_target(vessel),
+                                              name[:-len(vessel) - 1]))
+        raise UnsetParametersError(resolved_step.step.id, names) from exc
+
+
 def _model_files(model):
     '''A step's or target's model as the manifest records it: a module array's files, or a
     library module's ``{module_type, version, parameterisation}``; None for a reduction.'''
@@ -835,6 +883,13 @@ def plan_workflow(source, module_library_dirs=None):
         for key in ('emulator_from', 'result_from', 'sensitivity_from', 'params_for_id_from'):
             if getattr(step, key):
                 entry[key] = getattr(step, key)
+        if rs.selection is not None:
+            # what the selection runs as: its library module at one instance, or the cut array
+            entry['selection'] = (
+                {'runs_as': 'library_module', 'module': rs.selection.model.as_dict(),
+                 'vessel': rs.selection.vessel} if rs.selection.vessel else
+                {'runs_as': 'module_array',
+                 'records': [r['name'] for r in rs.selection.model.records]})
         if step.kind == 'reduction':
             entry['reduction'] = dict(step.reduction)
         steps.append(entry)
@@ -988,7 +1043,7 @@ def workflow_model(source, view, *, output_dir, work_dir, module_library_dirs=No
         return result
 
     # overrides: {host parameters file name: (record, step id)}
-    overrides, fixed, calibrated = {}, [], []
+    overrides, fixed, calibrated, base_rows = {}, [], [], []
     if view == TARGET_VIEW:
         kind, model = 'target', workflow.target
         latest = {}
@@ -1010,6 +1065,7 @@ def workflow_model(source, view, *, output_dir, work_dir, module_library_dirs=No
         kind, model = 'step', step.model
         rs = resolved.steps[step.id]
         place = rs.place
+        base_rows = rs.base_rows
         for source_id in step.fixed_from:
             result = available(source_id)
             if result is None:
@@ -1043,15 +1099,25 @@ def workflow_model(source, view, *, output_dir, work_dir, module_library_dirs=No
     if os.path.isdir(view_dir):
         shutil.rmtree(view_dir)
     settings = workflow.step_settings(own_step) if kind == 'step' else workflow.settings
-    generated = generate_model(
-        model, view_dir, view, rows, library_inputs=resolved.library_inputs,
-        model_type=settings.get('model_type', STEP_DEFAULTS['model_type']),
-        solver=settings.get('solver'))
+    has_own = own_step is not None
+    obs_data = own_step.obs_data if has_own else None
+    params_for_id = run.params_for_id_of(own_step) if has_own else None
+    if kind == 'step':
+        if rs.renames_inputs and os.path.isfile(params_for_id):
+            os.makedirs(view_dir)
+            obs_data, params_for_id = write_step_inputs(view_dir, own_step, params_for_id,
+                                                        rs.vessel_map, resolved.target.vessels)
+        generated = generate_step_model(rs, view_dir, view, under(base_rows, rows), obs_data,
+                                        resolved.library_inputs, settings)
+    else:
+        generated = generate_model(
+            model, view_dir, view, rows, library_inputs=resolved.library_inputs,
+            model_type=settings.get('model_type', STEP_DEFAULTS['model_type']),
+            solver=settings.get('solver'))
 
     def existing(path):
         return path if path and os.path.isfile(path) else None
 
-    has_own = own_step is not None
     return {
         'view': view, 'kind': kind, 'model': model.as_dict(),
         'step_id': own_step.id if has_own else None,
@@ -1059,8 +1125,8 @@ def workflow_model(source, view, *, output_dir, work_dir, module_library_dirs=No
         'model_path': generated['model_path'],
         'flat_model_path': generated['flat_model_path'],
         'parameters_path': generated['parameters_path'],
-        'obs_data_path': existing(own_step.obs_data) if has_own else None,
-        'params_for_id_path': existing(run.params_for_id_of(own_step)) if has_own else None,
+        'obs_data_path': existing(obs_data),
+        'params_for_id_path': existing(params_for_id),
         'fixed': fixed, 'calibrated': calibrated,
         'waiting_for': sorted(set(waiting)), 'stale': sorted(set(stale)),
         'result': own_result,

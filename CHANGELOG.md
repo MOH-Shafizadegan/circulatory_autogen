@@ -5,6 +5,16 @@ next release; add to that section as you land a change.
 
 ## Unreleased
 
+### Added — calibration workflow steps that select instances of the target
+
+A step's model may be `{"select": ["C"]}` (or `["heart/lv"]`, or several records) against a
+module-array target. One instance runs as its library module placed at that instance; several run
+as the module array they form, cut from the target. The step starts from the target's values for
+them, and its obs_data and params_for_id name vessels as the target does. A boundary condition
+the selection leaves open takes its value from the step's protocol (`params_to_change`), and one
+with no value anywhere raises `UnsetParametersError`, which lists them. Any workflow step's
+protocol now gives the parameters its model would otherwise leave unset.
+
 ### Changed — a supermodule names its submodule versions; its instances are its own module array
 
 A supermodule version's config lists the module versions it is built from, `submodule_versions:
