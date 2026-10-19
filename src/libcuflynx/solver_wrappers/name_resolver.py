@@ -2,7 +2,9 @@
 Unified variable name resolver for all simulation helpers.
 
 All helpers accept names in CellML canonical form: 'component/variable'
-(with '_module' stripped from the component, e.g. 'Lotka_Volterra/x').
+(with '_module' stripped from the component, e.g. 'Lotka_Volterra/x'). A nested vessel may
+be written by its path, 'SN/soma/membrane/V' for 'SN__soma__membrane/V'
+(parameter_names.output_model_name).
 
 Two resolution modes:
 
@@ -44,7 +46,7 @@ For key mode with separator='.', every '/'-candidate is also tried with '/' → 
 (so Myokit qnames like 'Lotka_Volterra_module.x' are matched automatically).
 """
 
-from libcuflynx.utilities.parameter_names import hoisted_names
+from libcuflynx.utilities.parameter_names import hoisted_names, output_model_name
 
 
 class VariableNameResolver:
@@ -88,7 +90,7 @@ class VariableNameResolver:
 
     def resolve(self, name: str):
         """Return (kind, index) or (None, None)."""
-        name = str(name).strip()
+        name = output_model_name(name)
 
         if name in self._map:
             return self._map[name]
@@ -142,7 +144,7 @@ class VariableNameResolver:
         -------
         (kind_label, matched_key) or (None, None)
         """
-        name = str(name).strip()
+        name = output_model_name(name)
         keyed_dicts = list(keyed_dicts)
 
         def _check(candidate):

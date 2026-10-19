@@ -14,8 +14,6 @@ par/I,Js2_per_m6,10,temp
 systemic_T/I_T,Js2_per_m6,10,temp
 par/u_0,J_per_m3,1463,Mynard&Smolich_2015_assumedRefOf11mmHg
 par/q_0,m3,0,user_defined_TO_DO
-r_0_par,metre,0.0135,Mynard&Smolich_2015_mainPA_NOT_USED
-l_par,metre,10,Mynard&Smolich_2015_mainPA_NOT_USED
 rho,Js2_per_m5,1050,known
 T,second,1,Liang_2009_Table_2
 T_min,second,0.4,heart_nonstiff_no_control
@@ -76,8 +74,6 @@ aortic_root/u_ext,J_per_m3,0,user_defined
 aortic_root/I,Js2_per_m6,10000,to_be_identified
 aortic_root/u_0,J_per_m3,13300,Mynard&Smolich_2015_assumedRefOf100mmHg
 aortic_root/q_0,m3,0.00000694,Mynard&Smolich_2015
-r_0_aortic_root,metre,0.014865,Mynard&Smolich_2015_NOT_USED
-l_aortic_root,metre,0.01,Mynard&Smolich_2015_NOT_USED
 systemic_T/R_T,Js_per_m6,110000000,calculated_from_mean_P_and_v
 systemic_T/C_T,m6_per_J,0.0000001,calculated_from_approx_P_and_q
 systemic_T/u_ext,J_per_m3,0,user_defined

@@ -17,7 +17,8 @@ import _module_library as module_library
 from libcuflynx.utilities.config_schemas import (load_component_registry,
                                                  load_expanded_vessel_records,
                                                  load_supermodule_registry)
-from libcuflynx.utilities.parameter_names import (host_model_names, model_name, split_path_name,
+from libcuflynx.utilities.parameter_names import (host_model_names, model_name, output_model_name,
+                                                  split_path_name,
                                                   supermodule_row_name)
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -38,6 +39,31 @@ RESOURCES_DIR = os.path.join(REPO_ROOT, 'resources')
 ])
 def test_a_written_name_becomes_the_model_name(written, expected):
     assert model_name(written) == expected
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('written, expected', [
+    ('SN/soma/membrane/V', 'SN__soma__membrane/V'),
+    (' heart / lv / q ', 'heart__lv/q'),
+    ('heart__lv/q', 'heart__lv/q'),
+    ('aortic_root/u', 'aortic_root/u'),
+    ('t', 't'),
+])
+def test_an_output_written_by_its_path_becomes_the_model_name(written, expected):
+    assert output_model_name(written) == expected
+
+
+@pytest.mark.unit
+def test_the_resolver_and_candidates_take_an_output_by_its_path():
+    from libcuflynx.parsers.PrimitiveParsers import model_qname_candidates
+    from libcuflynx.solver_wrappers.name_resolver import VariableNameResolver
+    resolver = VariableNameResolver([{'component': 'SN__soma__membrane_module', 'name': 'V'}], [])
+    assert resolver.resolve('SN/soma/membrane/V') == resolver.resolve('SN__soma__membrane/V') == ('state', 0)
+    keyed = [('state', {'SN__soma__membrane_module.V': 0})]
+    assert VariableNameResolver.resolve_key('SN/soma/membrane/V', keyed, separator='.') == \
+        ('state', 'SN__soma__membrane_module.V')
+    assert model_qname_candidates('heart/lv/E') == model_qname_candidates('heart__lv/E')
+    assert 'parameters/E_heart__lv' in model_qname_candidates('heart/lv/E')
 
 
 @pytest.mark.unit
@@ -82,13 +108,13 @@ def test_a_supermodule_row_naming_no_submodule_is_an_error():
 
 
 VESSELS = {'aortic_root': {'C': 'constant', 'T': 'global_constant'},
-           'heart__lv': {'E': 'constant'}}
+           'heart__lv': {'E': 'constant', 'R': 'global_constant'}}
 
 
 @pytest.mark.unit
 def test_host_names_are_checked_against_the_model():
-    names = host_model_names(['aortic_root/C', 'heart/lv/E', 'global/R', 'C_x'], VESSELS, 'p.csv')
-    assert names == ['C_aortic_root', 'E_heart__lv', 'R', 'C_x']
+    names = host_model_names(['aortic_root/C', 'heart/lv/E', 'global/R', 'T'], VESSELS, 'p.csv')
+    assert names == ['C_aortic_root', 'E_heart__lv', 'R', 'T']
 
     with pytest.raises(ValueError) as raised:
         host_model_names(['aortc_root/C', 'aortic_root/Cx', 'aortic_root/T'], VESSELS, 'p.csv')
@@ -97,6 +123,19 @@ def test_host_names_are_checked_against_the_model():
     assert 'aortc_root/C (no vessel "aortc_root"' in message
     assert 'has no variable "Cx"' in message
     assert 'aortic_root/T ("T" is a global constant: write global/T or T)' in message
+
+
+@pytest.mark.unit
+def test_a_global_name_no_module_declares_is_refused():
+    # r_0_par: par's module has no r_0, so it is neither a global nor the older form of a row
+    with pytest.raises(ValueError) as raised:
+        host_model_names(['r_0_par', 'global/Q', 'T'], VESSELS, 'p.csv')
+    message = str(raised.value)
+    assert '2 parameter(s) name something the model does not have' in message
+    assert 'r_0_par (no module in the model has a global constant "r_0_par")' in message
+    assert 'global/Q (no module in the model has a global constant "Q")' in message
+    # a model with 1D vessels: the 1D generator reads rows such as rho by name
+    assert host_model_names(['r_0_par', 'T'], VESSELS, 'p.csv', check_globals=False) == ['r_0_par', 'T']
 
 
 @pytest.mark.unit

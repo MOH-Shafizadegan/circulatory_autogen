@@ -43,12 +43,16 @@ def _vessel_variables(vessels_df):
 
 def _with_model_names(parameters_array, vessels_df, source):
     '''``parameters_array`` with its ``<vessel>/<variable>`` names turned into model names
-    (``parameter_names.host_model_names``, which refuses the older forms).'''
+    (``parameter_names.host_model_names``, which refuses the older forms). Global names are
+    checked only in a model without 1D vessels: the 1D generator reads its own rows (``rho``,
+    ``mu``, vessel geometry) from the parameters file by name.'''
     fields = parameters_array.dtype.names or ()
     if 'variable_name' not in fields or not len(parameters_array):
         return parameters_array
     names = parameters_array['variable_name'].tolist()
-    model_names = host_model_names(names, _vessel_variables(vessels_df), source)
+    has_1d = 'module_type' in vessels_df and (vessels_df['module_type'] == 'FV1D_vessel').any()
+    model_names = host_model_names(names, _vessel_variables(vessels_df), source,
+                                   check_globals=not has_1d)
     width = max(len(n) for n in model_names)
     dtype = [(f, f'<U{max(width, parameters_array.dtype[f].itemsize // 4)}')
              if f == 'variable_name' else (f, parameters_array.dtype[f]) for f in fields]

@@ -25,6 +25,15 @@ its version's `default_parameterisation`. An inline `submodules` list is refused
 `cuflynx-upgrade module-config <file> --module-library-dir <library>` converts it, folding a
 parameterisation a submodule named into the supermodule's.
 
+### Changed — a nested vessel is written by its path
+
+An output or obs_data operand names a nested vessel by its path, as a host parameter already
+does: `SN/soma/membrane/V` (everything before the last `/` is the vessel's path) for the
+model's `SN__soma__membrane/V`. The flat `__` form is still accepted. A host parameter without
+a vessel (`R`, `global/R`) that no module of the model declares as a global constant is
+refused, as `<vessel>/<variable>` names the model doesn't have already are; models with 1D
+vessels are not checked.
+
 ### Removed — older module config, module array, parameter name and obs_data forms
 
 libcuflynx reads only the current forms of its input files. A file in an older form is refused
@@ -47,7 +56,8 @@ model's module configs and module array before its parameter names.
   are refused (`__` is the join).
 - Parameterisations: a version with an `instances/` directory and no `parameterisations/` is
   refused; rename the directory.
-- obs_data (`cuflynx-upgrade obs-data FILE --user-inputs user_inputs.yaml`): an obs_data must
+- obs_data (`cuflynx-upgrade obs-data FILE --user-inputs user_inputs.yaml`, or `--pre-time T
+  --sim-time T`, which win over the yaml's values): an obs_data must
   have a `protocol_info` with `pre_times` and `sim_times`. A bare list of data items, or an
   object without `protocol_info` timed by user_inputs.yaml's `pre_time`/`sim_time`, is refused.
   `parse_obs_data_json` no longer takes `pre_time` / `sim_time`.

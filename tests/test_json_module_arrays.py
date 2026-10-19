@@ -227,9 +227,11 @@ HOST_PARAMS = (_prescribed_params('src_a', 1.0e-5, 0.5, 6.0) +
 
 
 def _flowpair_defaults(instance, join='_'):
-    '''The flowpair parameterisation's rows as host rows of the vessel ``<instance><join>g``.'''
-    return [(f'{instance}{join}{name}' if '/' in name else name, units, value, 'flowpair_default')
-            for name, units, value in FLOWPAIR_DEFAULTS]
+    '''The flowpair parameterisation's rows as host rows of the vessel ``<instance><join>g``.
+    Its global ``some_global`` is left out: no module of the flattened model declares it, so a
+    host file may not set it.'''
+    return [(f'{instance}{join}{name}', units, value, 'flowpair_default')
+            for name, units, value in FLOWPAIR_DEFAULTS if '/' in name]
 
 
 # --------------------------------------------------------------------------------------------
@@ -501,8 +503,10 @@ def test_supermodule_generates_the_same_model_as_the_flattened_array_and_runs(
     expanded = _generate(tmp_path / 'super', super_library_dir, 'jv_pair', _flowpair_host(),
                          HOST_PARAMS)
     _assert_same_up_to_level_joins(flattened, expanded)
-    results = _simulate(expanded, ['pair__coll/v_seen', 'rd/v_seen'])
+    results = _simulate(expanded, ['pair__coll/v_seen', 'rd/v_seen', 'pair/coll/v_seen'])
     assert results['pair__coll/v_seen'].size > 0 and results['rd/v_seen'].size > 0
+    # the submodule's output by its path, the form to write
+    assert np.array_equal(results['pair/coll/v_seen'], results['pair__coll/v_seen'])
 
 
 @pytest.mark.integration
@@ -764,6 +768,23 @@ def test_convert_0d_to_1d_keeps_a_json_arrays_supermodule_links(tmp_path, regist
     assert converted['pair']['per_submodule_outputs'] == {'g': ['rd']}
     expanded, _ = expand_supermodules(list(converted.values()), registry, 'test')
     assert 'pair__coll' in {r['name'] for r in expanded}
+
+
+@pytest.mark.unit
+def test_convert_0d_to_1d_writes_its_coupling_rows_as_vessel_slash_variable(tmp_path):
+    """The rows for the 0D neighbours' coupling variables are host rows, so they are
+    written <vessel>/<variable>, the only form libcuflynx reads."""
+    import pandas as pd
+    from libcuflynx.scripts.convert_0d_to_1d import convert_0d_to_1d
+    from libcuflynx.utilities.config_schemas import dump_vessel_records
+    records = read_records([_rec('up', 'arterial', out=['A'], subtype='vp'),
+                            _rec('A', 'arterial', inp=['up'], out=['down'], subtype='vp'),
+                            _rec('down', 'venous', inp=['A'], subtype='pv')])
+    (tmp_path / 'm_0d_module_array.json').write_text(dump_vessel_records(records))
+    (tmp_path / 'm_0d_parameters.csv').write_text('variable_name,units,value,data_reference\n')
+    convert_0d_to_1d('m', str(tmp_path), 'm_0d_parameters.csv', vess_1d_list=['A'])
+    rows = pd.read_csv(tmp_path / 'm_hybrid_parameters.csv')['variable_name'].tolist()
+    assert rows == ['up/u_out', 'down/u_in']
 
 
 @pytest.mark.unit

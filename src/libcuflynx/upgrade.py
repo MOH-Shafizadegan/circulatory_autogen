@@ -351,13 +351,14 @@ def upgrade_obs_data(path, pre_time, sim_time, dry_run=False):
 
 
 def _times(args):
+    '''pre_time and sim_time for obs-data: --pre-time/--sim-time win over --user-inputs.'''
+    pre, sim = args.pre_time, args.sim_time
     if args.user_inputs:
         import yaml
         with open(args.user_inputs) as f:
             inputs = yaml.safe_load(f) or {}
-        pre, sim = inputs.get('pre_time', args.pre_time), inputs.get('sim_time', args.sim_time)
-    else:
-        pre, sim = args.pre_time, args.sim_time
+        pre = inputs.get('pre_time') if pre is None else pre
+        sim = inputs.get('sim_time') if sim is None else sim
     if pre is None or sim is None:
         raise SystemExit('obs-data needs pre_time and sim_time: give --user-inputs '
                          '<user_inputs.yaml> (its pre_time and sim_time), or --pre-time and '

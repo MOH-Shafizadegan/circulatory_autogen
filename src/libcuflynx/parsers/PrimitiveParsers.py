@@ -39,7 +39,7 @@ from libcuflynx.param_id.modifier_funcs import (BUILTIN_MODIFIER_FUNCS, get_modi
 # answers without opening MPI when nothing launched this process.
 from libcuflynx.utilities import mpi_utils as _mpi_utils
 from libcuflynx.utilities.module_library import as_dir_list
-from libcuflynx.utilities.parameter_names import hoisted_names
+from libcuflynx.utilities.parameter_names import hoisted_names, output_model_name
 from libcuflynx.utilities.config_schemas import (load_module_config, load_module_array,
                                                  module_array_path)
 from libcuflynx.utilities.paths import (default_generated_models_dir, default_funcs_user_dir,
@@ -1010,6 +1010,8 @@ def model_qname_candidates(qname):
     ``'aortic_root/C' -> ['aortic_root/C', 'parameters/C_aortic_root',
     'parameters_global/C_aortic_root', 'C_aortic_root']``
 
+    A nested vessel may be given by its path: ``heart/lv/E`` is ``heart__lv/E``.
+
     CA answers the *rule*; the caller decides which candidate exists, because only it has the
     uploaded model's variable set. Ordering is meaningful: the first hit wins, so the
     component-qualified name is offered before any flattened alias and the bare name last.
@@ -1018,7 +1020,7 @@ def model_qname_candidates(qname):
     cannot be imported without pulling in ``solver_wrappers/__init__`` (and thus scipy); both
     take the hoisted names from ``utilities.parameter_names.hoisted_names``.
     """
-    text = str(qname).strip()
+    text = output_model_name(qname)
     if '/' not in text:
         return [text] if text else []
     vessel, param = text.rsplit('/', 1)

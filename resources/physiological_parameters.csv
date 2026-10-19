@@ -548,9 +548,5 @@ leg_R_T/q_us,m3,0,user_defined_TO_DO
 leg_R_T/q_init,m3,0,user_defined_TO_DO
 par/u_0,J_per_m3,1463,Mynard&Smolich_2015_assumedRefOf11mmHg
 par/q_0,m3,0,user_defined_TO_DO
-r_0_par,metre,0.0135,Mynard&Smolich_2015_mainPA_NOT_USED
-l_par,metre,0.043,Mynard&Smolich_2015_mainPA_NOT_USED
 pvn/u_0,J_per_m3,1330,Mynard&Smolich_2015_assumedRefOf10mmHg
 pvn/q_0,m3,0,user_defined_TO_DO
-r_0_pvn,metre,0.00864,Mynard&Smolich_2015_rightInfPV_NOT_USED
-l_pvn,metre,0.0235237,Mynard&Smolich_2015_rightInfPV_NOT_USED

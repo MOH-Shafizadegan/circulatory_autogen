@@ -90,6 +90,18 @@ def check_instance_name(name, where=''):
     return name
 
 
+def output_model_name(name):
+    '''The model's name ``<vessel>/<variable>`` of an output written with its vessel's path:
+    ``SN/soma/membrane/V`` -> ``SN__soma__membrane/V``. The path form is the one to write; a
+    name with one ``/`` (``aortic_root/u``, or the flat ``SN__soma__membrane/V``) is returned
+    unchanged.'''
+    name = str(name).strip()
+    path, _, variable = name.rpartition(SEPARATOR)
+    if SEPARATOR not in path:
+        return name
+    return f'{flat_name(p.strip() for p in path.split(SEPARATOR))}{SEPARATOR}{variable.strip()}'
+
+
 def is_path_name(name):
     '''Whether ``name`` is written in the ``/`` form.'''
     return SEPARATOR in str(name)
@@ -151,18 +163,20 @@ def supermodule_row_name(name, instance, submodule_paths, where=''):
     return name
 
 
-def host_model_names(names, vessels, where):
+def host_model_names(names, vessels, where, check_globals=True):
     '''The model names of a host parameters file's ``names``, checked against the model.
 
     ``vessels`` is ``{vessel name: {variable name: kind}}`` for the model's (expanded) module
     array, ``kind`` as in a module config's ``variables_and_units`` (``constant``,
     ``global_constant`` ...). A ``/`` name whose vessel is not in the model, whose variable its
     module does not have, or that addresses a global constant through a vessel would not be
-    used: all of them are reported in one ValueError. A name without ``/`` is a global's; one
-    written ``{variable}_{vessel}`` (``C_aortic_root``), as before, is a ValueError naming the
-    converter.
+    used, nor would a global's name (``R``, ``global/R``) that is no module's global constant
+    (checked unless ``check_globals`` is false): all of them are reported in one ValueError. One written ``{variable}_{vessel}``
+    (``C_aortic_root``), as before, is a ValueError naming the converter.
     '''
     model_names, seen, unused, old = [], {}, [], []
+    globals_ = {var for variables in vessels.values() for var, kind in variables.items()
+                if kind == 'global_constant'}
     for name in names:
         name = str(name)
         path = vessel = None
@@ -186,6 +200,8 @@ def host_model_names(names, vessels, where):
         seen.setdefault(translated, name)
         model_names.append(translated)
         if not path:
+            if check_globals and name not in old and translated not in globals_:
+                unused.append(f'{name} (no module in the model has a global constant "{translated}")')
             continue
         if vessel not in vessels:
             unused.append(f'{name} (no vessel "{vessel}" in the module array)')

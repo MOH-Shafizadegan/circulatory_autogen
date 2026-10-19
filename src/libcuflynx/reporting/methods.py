@@ -110,8 +110,9 @@ class Symbols:
             return vessel
 
     def variable(self, name):
-        '''An obs_data operand ``vessel/variable``.'''
-        vessel, sep, variable = str(name).partition('/')
+        '''An obs_data operand ``vessel/variable``, the vessel maybe written by its path.'''
+        from libcuflynx.utilities.parameter_names import output_model_name
+        vessel, sep, variable = output_model_name(name).partition('/')
         if not sep:
             return _tt(name)
         from libcuflynx.parsers.PrimitiveParsers import model_qname_candidates

@@ -100,13 +100,13 @@ def convert_0d_to_1d(model, folder_0d, param_file_0d, folder_hyb=None, vess_1d_l
                     if df_vess.at[idxV, 'module_subtype'].startswith(('vp', 'pp')):
                         if vess=='heart':
                             if vess1d=='par':
-                                df_params.loc[df_params.shape[0]] = ['u_par_'+vess, 'J_per_m3', 0.0, 'WONT_BE_USED']
+                                df_params.loc[df_params.shape[0]] = [vess+'/u_par', 'J_per_m3', 0.0, 'WONT_BE_USED']
                             else: # aortic root
-                                df_params.loc[df_params.shape[0]] = ['u_root_'+vess, 'J_per_m3', 0.0, 'WONT_BE_USED']
+                                df_params.loc[df_params.shape[0]] = [vess+'/u_root', 'J_per_m3', 0.0, 'WONT_BE_USED']
                         else:
-                            df_params.loc[df_params.shape[0]] = ['u_out_'+vess, 'J_per_m3', 0.0, 'WONT_BE_USED']
+                            df_params.loc[df_params.shape[0]] = [vess+'/u_out', 'J_per_m3', 0.0, 'WONT_BE_USED']
                     elif df_vess.at[idxV, 'module_subtype'].startswith(('pv', 'vv')):
-                        df_params.loc[df_params.shape[0]] = ['v_out_'+vess, 'm3_per_s', 0.0, 'WONT_BE_USED']
+                        df_params.loc[df_params.shape[0]] = [vess+'/v_out', 'm3_per_s', 0.0, 'WONT_BE_USED']
 
             for vess in out_vess:
                 idxs = df_vess.index[df_vess['name'] == vess].tolist()
@@ -116,17 +116,17 @@ def convert_0d_to_1d(model, folder_0d, param_file_0d, folder_hyb=None, vess_1d_l
                 idxV = idxs[0]
                 if df_vess.at[idxV, 'module_type'] != 'FV1D_vessel':
                     if df_vess.at[idxV, 'module_subtype'].startswith(('pv', 'pp')):
-                        df_params.loc[df_params.shape[0]] = ['u_in_'+vess, 'J_per_m3', 0.0, 'WONT_BE_USED']
+                        df_params.loc[df_params.shape[0]] = [vess+'/u_in', 'J_per_m3', 0.0, 'WONT_BE_USED']
                     elif df_vess.at[idxV, 'module_subtype'].startswith(('vp', 'vv')):
                         if vess=='heart':
                             if vess1d=='pvn':
-                                df_params.loc[df_params.shape[0]] = ['v_pvn_'+vess, 'm3_per_s', 0.0, 'WONT_BE_USED']
+                                df_params.loc[df_params.shape[0]] = [vess+'/v_pvn', 'm3_per_s', 0.0, 'WONT_BE_USED']
                             elif 'ivc' in vess1d:
-                                df_params.loc[df_params.shape[0]] = ['v_ivc_'+vess, 'm3_per_s', 0.0, 'WONT_BE_USED']
+                                df_params.loc[df_params.shape[0]] = [vess+'/v_ivc', 'm3_per_s', 0.0, 'WONT_BE_USED']
                             elif 'svc' in vess1d:
-                                df_params.loc[df_params.shape[0]] = ['v_svc_'+vess, 'm3_per_s', 0.0, 'WONT_BE_USED']
+                                df_params.loc[df_params.shape[0]] = [vess+'/v_svc', 'm3_per_s', 0.0, 'WONT_BE_USED']
                         else:
-                            df_params.loc[df_params.shape[0]] = ['v_in_'+vess, 'm3_per_s', 0.0, 'WONT_BE_USED']
+                            df_params.loc[df_params.shape[0]] = [vess+'/v_in', 'm3_per_s', 0.0, 'WONT_BE_USED']
 
     if str(source_path).endswith('.json'):
         # JSON in, JSON out: a CSV cannot hold a supermodule instance's per_submodule_* links
