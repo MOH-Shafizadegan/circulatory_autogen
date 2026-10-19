@@ -147,6 +147,9 @@ def test_several_instances_run_as_the_array_they_form(library):
     plan = plan_workflow(parse_workflow(_workflow(library, [step], 'abc_module_array.json'),
                                         path=os.path.join(arrays, 'w.json')))
     assert plan['steps'][0]['selection'] == {'runs_as': 'module_array', 'records': ['A', 'B']}
+    # CUFLynx finds a bare-path target's files here, to send them back to PhLynx
+    assert plan['target'] == {'module_array': os.path.join(arrays, 'abc_module_array.json'),
+                              'parameters': os.path.join(arrays, 'abc_parameters.csv')}
 
 
 @pytest.mark.unit
