@@ -144,15 +144,11 @@ def cost_and_grad(pid, param_vals):
             f'and sub-experiment counts {list(num_sub_per_exp)}: it records a single '
             f'straight-line integration. Use a single-experiment obs_data, or turn off do_ad.')
 
-    # The tape cost (cost_on_tape below) can only reproduce observables whose operand is a
-    # STATE and whose operation the tape re-implements (max/min/mean, or a plain final
-    # value; series). An operand that is an *algebraic* variable (not a state) resolves to
-    # no state index and cannot be put on the tape, and operations such as max_minus_min are
-    # not reproduced either. Such an observable would be silently dropped from the tape cost,
-    # making the tape cost -- and therefore its gradient -- a different function than the one
-    # being minimised, so the optimiser would descend the wrong cost. Refuse rather than
-    # silently mislead. (Fully supporting algebraic observables needs the algebraic variables
-    # recomputed on the tape from the state trajectory, tracked in issue #258.)
+    # The tape cost (cost_on_tape below) reproduces observables whose operand is a state or an
+    # algebraic variable (recomputed on the tape from the states), as a constant with operation
+    # max/min/mean/max_minus_min or a final value, or as a series. Any other observable would
+    # drop out of the tape cost, making its gradient that of a different function than the one
+    # being minimised, so it is refused below.
     def _operand_is_tapeable(op):
         """Check if an operand can be represented on the AADC tape.
 
