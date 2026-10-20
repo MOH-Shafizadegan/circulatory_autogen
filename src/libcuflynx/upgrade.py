@@ -21,9 +21,10 @@ What each converts:
   (component) to ``module_type``/``module_subtype``/``component_file``/``component_type``;
   ``default_instance`` to ``default_parameterisation``; a ``multi_port`` of ``"False"`` is
   dropped; a supermodule's ``default_parameters`` CSV becomes its ``default`` parameterisation;
-  a supermodule's inline ``submodules`` become its ``submodule_versions`` and its own module array
-  file, and a parameterisation a submodule named (other than its version's default) is folded into
-  the supermodule's (``--module-library-dir`` says where the submodule versions are).
+  a supermodule's inline ``submodules`` become its ``submodule_versions``, its own module array
+  file and its parameters file: each instance's values from the parameterisation it named (else
+  its version's default), with the supermodule's ``<instance>/<variable>`` rows over them
+  (``--module-library-dir`` says where the submodule versions are).
 * ``module-array``: the keys or columns ``vessel_type``/``BC_type``/``inp_vessels``/
   ``out_vessels`` to ``module_type``/``module_subtype``/``inp_instances``/``out_instances``;
   ``<prefix>_vessel_array.*`` is renamed ``<prefix>_module_array.*``; a heart with one output
@@ -89,8 +90,8 @@ def _write(path, text, dry_run, changes):
 def upgrade_module_config(path, dry_run=False, module_library_dirs=(), builtin_modules=True):
     '''Convert the module config at ``path``; returns the changes made (empty if none).
     ``module_library_dirs`` (and the built-in modules, unless ``builtin_modules`` is False) are
-    where a supermodule's submodule versions are looked for, when a submodule names a
-    parameterisation to fold into the supermodule's.'''
+    where a supermodule's submodule versions, whose parameterisations give its instances' values,
+    are looked for.'''
     text = open(path, encoding='utf-8-sig').read()
     doc = json.loads(text)
     changes = []
@@ -118,7 +119,7 @@ def upgrade_module_config(path, dry_run=False, module_library_dirs=(), builtin_m
             changes.append(_default_parameters_to_parameterisation(path, entry, dry_run))
         if isinstance(entry.get('submodules'), list):
             changes += _submodules_to_versions(path, entry, dry_run, module_library_dirs,
-                                               builtin_modules)
+                                               builtin_modules, doc)
     if len(changes) > rewritten:
         text = json.dumps(doc, indent=2, ensure_ascii=False) + '\n'
     if changes:
@@ -168,60 +169,120 @@ def _write_rows(path, columns, rows):
         writer.writerows([{c: r.get(c, '') for c in columns} for r in rows])
 
 
-def _submodule_rows(sub, version, config, parameterisation):
-    '''The rows of ``parameterisation`` of the submodule version ``version`` (from ``config``),
-    named as a row of the supermodule's parameterisation: ``<sub>/<var>``, a global plainly.'''
-    from libcuflynx.utilities.parameterisations import parameterisation_parameters_path
-    _, rows = _read_rows(parameterisation_parameters_path(config, parameterisation))
-    supermodule = version.get('module_format') == 'supermodule'
-    globals_ = {v[0] for v in version.get('variables_and_units') or []
-                if len(v) > 3 and v[3] == 'global_constant'}
-    out = []
-    for row in rows:
-        name = row['variable_name'].strip()
-        if name.startswith('global/'):
-            name = name[len('global/'):]
-        elif (supermodule and '/' in name) or (not supermodule and name not in globals_):
-            name = f'{sub}/{name}'
-        out.append(dict(row, variable_name=name))
+def _json_value(text):
+    '''A parameters CSV value as a parameters file holds it: a number when it is one.'''
+    text = str(text).strip()
+    try:
+        return int(text)
+    except ValueError:
+        pass
+    try:
+        value = float(text)
+    except ValueError:
+        return text
+    return value if value == value and abs(value) != float('inf') else text
+
+
+def _parameter(row):
+    '''A parameters CSV row as a parameters file's parameter: value, units, data_reference and
+    any other column that is set.'''
+    out = {'value': _json_value(row.get('value', '')), 'units': (row.get('units') or '').strip(),
+           'data_reference': (row.get('data_reference') or '').strip()}
+    for column, value in row.items():
+        if column not in ('variable_name', 'value', 'units', 'data_reference') and \
+                column and (value or '').strip():
+            out[column] = value.strip()
     return out
 
 
-def _submodules_to_versions(config_path, entry, dry_run, module_library_dirs, builtin_modules):
+def _submodules_to_versions(config_path, entry, dry_run, module_library_dirs, builtin_modules,
+                            siblings=()):
     '''A supermodule entry's inline ``submodules``: its instances to its own module array file,
-    ``submodule_versions`` in the entry, and each submodule's own parameterisation (other than
-    its version's default) folded into the supermodule's parameterisations.'''
+    ``submodule_versions`` in the entry, and its parameters file. Each instance's values there
+    come from the parameterisation it named (its version's default if none), with the rows
+    ``<instance>/<variable>`` of the supermodule's default parameterisation over them; those rows
+    leave that parameterisation. A global a named parameterisation sets is added to the
+    supermodule's parameterisations that lack it. The versions are looked for in the module
+    sources and in ``siblings``, the (converted) entries of the same config.'''
+    from libcuflynx.utilities.config_schemas import (dump_supermodule_parameters,
+                                                     supermodule_array_path,
+                                                     supermodule_parameters_path)
     from libcuflynx.utilities.parameterisations import (available_parameterisations,
                                                         parameterisation_parameters_path)
     records = entry.pop('submodules')
     versions = list(dict.fromkeys((r['module_type'], r['module_subtype']) for r in records))
     entry['submodule_versions'] = [{'module_type': t, 'module_subtype': s} for t, s in versions]
     named = {r['name']: r.pop('parameterisation') for r in records if 'parameterisation' in r}
-    array = os.path.join(os.path.dirname(os.path.abspath(config_path)),
-                         f'{entry["module_type"]}_{entry["module_subtype"]}_module_array.json')
-    if os.path.exists(array):
-        raise SystemExit(f'{config_path}: {array} exists already; remove it or convert by hand.')
-    changes = [f'submodules moved to {os.path.basename(array)}, with submodule_versions']
-    by_name = {r['name']: r for r in records}
-    folded = []
-    if named:
-        sources = _version_entries(module_library_dirs, builtin_modules)
-        for sub, parameterisation in named.items():
-            key = (by_name[sub]['module_type'], by_name[sub]['module_subtype'])
-            if key not in sources:
-                raise SystemExit(f'{config_path}: submodule "{sub}" names parameterisation '
-                                 f'"{parameterisation}" of {key}, which no module source given '
-                                 f'has; pass --module-library-dir for its library.')
-            version, config = sources[key]
-            if parameterisation == version.get('default_parameterisation',
-                                               version.get('default_instance')):
-                continue
-            folded += _submodule_rows(sub, version, config, parameterisation)
-            changes.append(f'"{sub}"\'s parameterisation "{parameterisation}" folded in')
-    # written once every named parameterisation is found, so a refusal leaves nothing behind
-    if not dry_run:
-        with open(array, 'w', encoding='utf-8') as f:
-            f.write('[\n' + ',\n'.join(' ' + json.dumps(r) for r in records) + '\n]\n')
+    array = supermodule_array_path(config_path, entry)
+    parameters_file = supermodule_parameters_path(config_path, entry)
+    for path in (array, parameters_file):
+        if os.path.exists(path):
+            raise SystemExit(f'{config_path}: {path} exists already; remove it or convert by '
+                             f'hand.')
+    changes = [f'submodules moved to {os.path.basename(array)}, with submodule_versions',
+               f'their parameter values written to {os.path.basename(parameters_file)}']
+    sources = _version_entries(module_library_dirs, builtin_modules)
+    sources.update({(e['module_type'], e['module_subtype']): (e, config_path) for e in siblings
+                    if isinstance(e, dict) and 'module_type' in e and 'module_subtype' in e})
+    instances, folded = {}, []
+    for record in records:
+        sub, key = record['name'], (record['module_type'], record['module_subtype'])
+        if key not in sources:
+            raise SystemExit(f'{config_path}: submodule "{sub}" is of {key}, which no module '
+                             f'source given has; pass --module-library-dir for its library.')
+        version, config = sources[key]
+        default = version.get('default_parameterisation', version.get('default_instance'))
+        used = named.get(sub) or default
+        nested = version.get('module_format') == 'supermodule' or 'submodules' in version \
+            or 'submodule_versions' in version
+        parameters = {}
+        # a supermodule instance at its default takes its values from its own parameters file
+        if used and not (nested and used == default):
+            path = parameterisation_parameters_path(config, used)
+            if not os.path.isfile(path) and used == default:
+                path = None             # a default with no file gives nothing, as when generating
+            elif not os.path.isfile(path):
+                raise SystemExit(f'{config_path}: submodule "{sub}" uses parameterisation '
+                                 f'"{used}" of {key}, but {path} does not exist.')
+            globals_ = {v[0] for v in version.get('variables_and_units') or []
+                        if len(v) > 3 and v[3] == 'global_constant'}
+            for row in _read_rows(path)[1] if path else []:
+                name = row['variable_name'].strip()
+                if name.startswith('global/'):
+                    is_global = True
+                elif nested:
+                    is_global = '/' not in name     # a supermodule's other rows are paths
+                else:
+                    is_global = name in globals_
+                if is_global:
+                    if used != default:
+                        # a global of the named parameterisation, as the supermodule's
+                        folded.append(dict(row, variable_name=name.split('/')[-1]))
+                    continue
+                parameters[name] = _parameter(row)
+        instances[sub] = {'parameterisation': 'default' if used == default else used,
+                          'parameters': parameters}
+        if used != default:
+            changes.append(f'"{sub}" starts from its parameterisation "{used}"')
+
+    # the supermodule's default parameterisation's <instance>/<variable> rows go over them
+    own = entry.get('default_parameterisation')
+    own_path = parameterisation_parameters_path(config_path, own) if own else None
+    if own_path and os.path.isfile(own_path):
+        columns, rows = _read_rows(own_path)
+        kept, moved = [], 0
+        for row in rows:
+            head, _, rest = row['variable_name'].strip().partition('/')
+            if rest and head in instances:
+                instances[head]['parameters'][rest] = _parameter(row)
+                moved += 1
+            else:
+                kept.append(row)
+        if moved:
+            changes.append(f'{moved} <instance>/<variable> rows of parameterisation "{own}" '
+                           f'moved to {os.path.basename(parameters_file)}')
+            if not dry_run:
+                _write_rows(own_path, columns, kept)
     if folded:
         targets = available_parameterisations(config_path)
         if not entry.get('default_parameterisation'):
@@ -233,9 +294,18 @@ def _submodules_to_versions(config_path, entry, dry_run, module_library_dirs, bu
             columns, rows = (_read_rows(path) if os.path.isfile(path) else
                              (['variable_name', 'units', 'value', 'data_reference'], []))
             have = {r['variable_name'].strip() for r in rows}
-            rows += [r for r in folded if r['variable_name'] not in have]
+            added = [r for r in folded if r['variable_name'] not in have]
+            if added:
+                changes.append(f'globals {[r["variable_name"] for r in added]} added to '
+                               f'parameterisation "{name}"')
             if not dry_run:
-                _write_rows(path, columns, rows)
+                _write_rows(path, columns, rows + added)
+    # written last, once everything is found, so a refusal leaves nothing behind
+    if not dry_run:
+        with open(array, 'w', encoding='utf-8') as f:
+            f.write('[\n' + ',\n'.join(' ' + json.dumps(r) for r in records) + '\n]\n')
+        with open(parameters_file, 'w', encoding='utf-8') as f:
+            f.write(dump_supermodule_parameters({'schema_version': 1, 'instances': instances}))
     return changes
 
 
@@ -389,8 +459,8 @@ def main(argv=None):
             sub.add_argument('--module-library-dir', dest='module_library_dirs', action='append',
                              default=[], metavar='DIR',
                              help="a module library (repeatable): where a supermodule's "
-                                  "submodule versions are, to fold a parameterisation a "
-                                  "submodule names into the supermodule's")
+                                  "submodule versions are, whose parameterisations give its "
+                                  "instances' values")
             sub.add_argument('--no-builtin-modules', action='store_true',
                              help="leave libcuflynx's built-in modules out")
         if name == 'obs-data':

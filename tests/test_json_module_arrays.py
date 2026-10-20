@@ -87,7 +87,7 @@ LOOP_B = {'module_type': 'loop_b', 'module_subtype': 'supermodule', 'module_form
           'submodules': [_rec('a', 'loop_a', subtype='supermodule')]}
 
 SUPERMODULES = [FLOWPAIR, INNER, OUTER, LOOP_A, LOOP_B]
-FLOWPAIR_ENTRY, FLOWPAIR_RECORDS = split_supermodule(FLOWPAIR)
+FLOWPAIR_ENTRY, FLOWPAIR_RECORDS, _ = split_supermodule(FLOWPAIR)
 
 
 @pytest.fixture(scope='module')
@@ -391,7 +391,8 @@ def test_bad_supermodule_entries(entry, message):
 @pytest.mark.unit
 @pytest.mark.parametrize('records, versions, message', [
     ([dict(_rec('coll', 'collector'), parameterisation='p'), _rec('g', 'gain')], None,
-     r"\['coll'\] name a parameterisation.*supermodule's parameterisation.*version's default"),
+     r"\['coll'\] name a parameterisation\. A submodule's values are in the supermodule's "
+     r"parameters file"),
     ([_rec('coll', 'collector'), _rec('g', 'gain'), _rec('rd', 'reader')], None,
      r"instances of \[\('reader', 'nn'\)\].*does not list"),
     ([_rec('coll', 'collector')], None,
@@ -409,7 +410,7 @@ def test_bad_supermodule_entries(entry, message):
 def test_bad_supermodule_arrays(tmp_path, records, versions, message):
     """A supermodule version's module array is checked when the registry reads it, against
     the versions its config lists."""
-    entry, _ = split_supermodule(dict(FLOWPAIR, submodules=records))
+    entry, _, _ = split_supermodule(dict(FLOWPAIR, submodules=records))
     if versions is None:
         versions = [('collector', 'nn'), ('gain', 'nn')]
     entry['submodule_versions'] = [{'module_type': t, 'module_subtype': s} for t, s in versions]
@@ -939,7 +940,7 @@ def test_two_supermodule_instances_link_to_each_other_in_either_order(registry, 
 @pytest.mark.unit
 def test_two_sibling_supermodule_instances_inside_a_supermodule_link(registry):
     """The same, one level down: two flowpairs as submodules of another supermodule."""
-    entry, records = split_supermodule({
+    entry, records, _ = split_supermodule({
         'module_type': 'chain', 'module_subtype': 'supermodule', 'module_format': 'supermodule',
         'submodules': [
             _rec('src', 'flow_src', out=['p']),

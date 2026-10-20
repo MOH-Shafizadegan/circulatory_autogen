@@ -68,6 +68,7 @@ I_M = ('i_M', 'Argus2026_v01')
 I_M_NAMED = 'davis2020_wistar'
 SOMA = ('soma', 'sympathetic')
 NEURON = ('neuron', 'sympathetic')
+HEART = ('heart', 'Argus2026_v01')
 
 
 @pytest.fixture(scope='module')
@@ -139,8 +140,11 @@ def _sub(name, **extra):
 
 # with its instance records inline; on disk, PAIR_ENTRY and its module array
 PAIR = {'module_type': 'pair', 'module_subtype': 'v1', 'module_format': 'supermodule',
-        'submodules': [_sub('a'), _sub('b')], 'default_parameterisation': 'base'}
-PAIR_ENTRY, _ = split_supermodule(PAIR)
+        'submodules': [_sub('a'), _sub('b')], 'default_parameterisation': 'base',
+        # its parameters file: between its parameterisation and the submodules' defaults
+        'instance_parameters': {'a': {'amp': (0.7, 'dimensionless', 'file_ref')},
+                                'b': {'amp': (0.2, 'dimensionless', 'file_ref')}}}
+PAIR_ENTRY, _, _ = split_supermodule(PAIR)
 
 # instance -> rows (variable_name, units, value)
 PULSE_INSTANCES = {
@@ -432,44 +436,69 @@ def test_merge_default_parameters_uses_the_first_of_repeated_extra_rows():
 # supermodules
 # --------------------------------------------------------------------------------------------
 
+def _file_values(supermodule, instance):
+    """``{model name: value}`` of the real ``supermodule``'s parameters file, for the record
+    ``instance``: each instance's parameter <var> (or nested <path>/<var>) renamed."""
+    out = {}
+    for sub, entry in supermodule['instance_parameters'].items():
+        for var, parameter in entry['parameters'].items():
+            *path, leaf = var.split('/')
+            out[f'{leaf}_{"__".join([instance, sub] + path)}'] = float(parameter['value'])
+    return out
+
+
 @pytest.mark.unit
-def test_a_supermodule_s_parameterisation_beats_its_submodules(tmp_path, real_library):
+def test_a_supermodule_s_parameters_file_beats_its_submodules_defaults(tmp_path, real_library):
     lib = real_library
     soma = lib.supermodules[SOMA]
     subs = [s['name'] for s in soma['submodules']]
     records, rows = _real_load(tmp_path, lib, [_rec('soma', *SOMA)])
     assert [r['name'] for r in records] == [f'soma__{s}' for s in subs]
-    values = _values(rows)
+    values = {name: float(value) for name, (value, _) in _values(rows).items()}
 
     paths = submodule_path_parts(soma, lib.supermodules)
-    own = {supermodule_row_name(name, 'soma', paths): value for name, value in
+    # the supermodule's own parameterisation: its globals (and any <submodule>/<var> rows)
+    own = {supermodule_row_name(name, 'soma', paths): float(value) for name, (value, _) in
            _parameterisation_values(lib, SOMA, soma['default_parameterisation']).items()}
     for name, value in own.items():
         assert values[name] == value, name
+    in_file = _file_values(soma, 'soma')
+    assert in_file, 'soma\'s parameters file sets nothing'
+    for name, value in in_file.items():
+        assert values[name] == own.get(name, value), name
 
-    overridden = 0
+    # a submodule's version's default fills only what the file leaves unset
     for sub in soma['submodules']:
         key = (sub['module_type'], sub['module_subtype'])
         globals_ = global_constants(_entry(lib, key))
-        instance = sub.get('parameterisation') or _entry(lib, key).get('default_parameterisation')
-        for name, value in _parameterisation_values(lib, key, instance).items():
-            if name in globals_:
-                continue
+        for name, (value, _) in _parameterisation_values(
+                lib, key, _entry(lib, key).get('default_parameterisation')).items():
             model_name = f'{name}_soma__{sub["name"]}'
-            if model_name in own:
-                overridden += 1          # the supermodule's instance wins
-                assert values[model_name] == own[model_name]
-            else:
-                assert values[model_name] == value, model_name
-    assert overridden, 'soma\'s instance sets nothing its submodules\' instances set'
+            if name not in globals_ and model_name not in in_file and model_name not in own:
+                assert values[model_name] == float(value), model_name
 
 
 @pytest.mark.unit
-def test_a_nested_supermodule_s_parameterisation_is_renamed_through_the_nesting(tmp_path, real_library):
+def test_the_heart_s_chambers_keep_their_own_values(tmp_path, real_library):
+    """The heart's parameters file: lv started from the chamber's default with its own E_A, and
+    ra from the chamber's parameterisation "ra"; the generated rows are the file's."""
+    lib = real_library
+    heart = lib.supermodules[HEART]
+    instances = heart['instance_parameters']
+    assert instances['lv']['parameterisation'] == 'default'
+    assert instances['ra']['parameterisation'] == 'ra'
+    assert instances['lv']['parameters']['E_A']['value'] == 366575000
+    _, rows = _real_load(tmp_path, lib, [_rec('heart', *HEART)])
+    values = _values(rows)
+    assert float(values['E_A_heart__lv'][0]) == 366575000
+    assert float(values['E_A_heart__ra'][0]) == instances['ra']['parameters']['E_A']['value']
+
+
+@pytest.mark.unit
+def test_a_nested_supermodule_s_parameters_file_is_renamed_through_the_nesting(tmp_path, real_library):
     lib = real_library
     soma = lib.supermodules[SOMA]
     subs = [s['name'] for s in soma['submodules']]
-    soma_paths = submodule_path_parts(soma, lib.supermodules)
     neuron = lib.supermodules[NEURON]
     soma_path = next(s['name'] for s in neuron['submodules']
                      if (s['module_type'], s['module_subtype']) == SOMA)
@@ -477,17 +506,12 @@ def test_a_nested_supermodule_s_parameterisation_is_renamed_through_the_nesting(
     names = [r['name'] for r in records]
     assert f'neuron__{soma_path}__{subs[0]}' in names
     values = _values(rows)
-    neuron_own = {supermodule_row_name(n, 'neuron', submodule_path_parts(neuron, lib.supermodules))
-                  for n in _parameterisation_values(lib, NEURON, neuron['default_parameterisation'])}
+    neuron_own = set(_file_values(neuron, 'neuron'))
     checked = 0
-    for name, value in _parameterisation_values(lib, SOMA, soma['default_parameterisation']).items():
-        renamed = supermodule_row_name(name, 'soma', soma_paths)
-        if renamed == name:
-            continue                     # a global
-        nested = supermodule_row_name(name, f'neuron__{soma_path}', soma_paths)
+    for nested, value in _file_values(soma, f'neuron__{soma_path}').items():
         if nested in neuron_own:
             continue                     # the outer supermodule sets it
-        assert values[nested] == value, nested
+        assert float(values[nested][0]) == value, nested
         checked += 1
     assert checked
 
@@ -502,8 +526,10 @@ def test_the_supermodule_s_parameterisation_sets_its_submodules_and_their_defaul
         # the supermodule's default parameterisation "base", rows a/amp, a/mean and omega
         'amp_pr__a': ('0.9', 'base_ref'), 'mean_pr__a': ('2e-05', 'base_ref'),
         'omega': ('5.0', 'base_ref'),
-        # what base leaves unset: the submodule version's default parameterisation
-        'mean_pr__b': ('1e-05', 'default_ref'), 'amp_pr__b': ('0.5', 'default_ref'),
+        # what base leaves unset: the supermodule's parameters file
+        'amp_pr__b': ('0.2', 'file_ref'),
+        # what that leaves unset: the submodule version's default parameterisation
+        'mean_pr__b': ('1e-05', 'default_ref'),
     }
 
 
@@ -513,8 +539,8 @@ def test_a_named_supermodule_parameterisation_replaces_its_default(tmp_path, lib
     _, rows = _load(tmp_path, library, _pair_host(parameterisation='alt'))
     assert _values(rows) == {
         'amp_pr__b': ('0.1', 'alt_ref'),
-        # nothing of base: a takes its version's default
-        'amp_pr__a': ('0.5', 'default_ref'), 'mean_pr__a': ('1e-05', 'default_ref'),
+        # nothing of base: a takes the parameters file's amp and its version's default mean
+        'amp_pr__a': ('0.7', 'file_ref'), 'mean_pr__a': ('1e-05', 'default_ref'),
         'omega': ('6.0', 'default_ref'), 'mean_pr__b': ('1e-05', 'default_ref'),
     }
 
@@ -546,11 +572,95 @@ def test_a_submodule_naming_a_parameterisation_is_refused(tmp_path, parameterisa
         PAIR, module_type='probe', submodules=[_sub('a', parameterisation=parameterisation),
                                                _sub('b')]))
     with pytest.raises(ValueError, match=r"probe_v1_module_array\.json: \['a'\] name a "
-                                         r"parameterisation\. A submodule takes its parameters "
-                                         r"from the supermodule's parameterisation \(rows "
-                                         r"<submodule>/<variable>\), then from its version's "
-                                         r"default"):
+                                         r"parameterisation\. A submodule's values are in the "
+                                         r"supermodule's parameters file .*probe_v1_parameters"
+                                         r"\.json"):
         load_supermodule_registry([config])
+
+
+# --------------------------------------------------------------------------------------------
+# a supermodule's parameters file
+# --------------------------------------------------------------------------------------------
+
+def _probe(tmp_path, **entry):
+    """A copy of PAIR named ``probe``, written to ``tmp_path/probe``; returns (config, dir)."""
+    directory = str(tmp_path / 'probe')
+    return write_supermodule(directory, dict(PAIR, module_type='probe', **entry)), directory
+
+
+def _rewrite_parameters(directory, edit):
+    path = os.path.join(directory, 'probe_v1_parameters.json')
+    with open(path) as f:
+        doc = json.load(f)
+    edit(doc)
+    with open(path, 'w') as f:
+        json.dump(doc, f)
+
+
+@pytest.mark.unit
+def test_a_supermodule_without_its_parameters_file_is_an_error(tmp_path):
+    config, directory = _probe(tmp_path)
+    os.remove(os.path.join(directory, 'probe_v1_parameters.json'))
+    with pytest.raises(ValueError, match=r'its parameters file .*probe_v1_parameters\.json, which '
+                                         r'holds the parameter values of its instances, does '
+                                         r'not exist'):
+        load_supermodule_registry([config])
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('edit, message', [
+    (lambda d: d['instances'].pop('b'), r"it has no entry for \['b'\]"),
+    (lambda d: d['instances'].update(c={'parameterisation': 'default', 'parameters': {}}),
+     r"\['c'\] are not instances there"),
+], ids=['missing', 'unknown'])
+def test_a_parameters_file_names_the_module_array_s_instances(tmp_path, edit, message):
+    config, directory = _probe(tmp_path)
+    _rewrite_parameters(directory, edit)
+    with pytest.raises(ValueError, match=r'probe_v1_parameters\.json: its instances must be those '
+                                         r'of the module array .*probe_v1_module_array\.json; '
+                                         + message):
+        load_supermodule_registry([config])
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('edit, where', [
+    (lambda d: d['instances']['a']['parameters']['amp'].pop('units'), r'instances\.a\.parameters'),
+    (lambda d: d['instances']['a'].pop('parameterisation'), r'instances\.a'),
+    (lambda d: d.pop('schema_version'), r'\(the top level\)'),
+], ids=['units', 'parameterisation', 'schema_version'])
+def test_a_parameters_file_is_checked_against_its_schema(tmp_path, edit, where):
+    pytest.importorskip('jsonschema')
+    config, directory = _probe(tmp_path)
+    _rewrite_parameters(directory, edit)
+    with pytest.raises(ValueError, match=r'probe_v1_parameters\.json: 1 problem with the '
+                                         r'supermodule parameters file\n  at ' + where):
+        load_supermodule_registry([config])
+
+
+@pytest.mark.unit
+def test_a_supermodule_instance_s_values_are_paths_into_it(tmp_path, library):
+    """An outer supermodule over PAIR: its parameters file sets pair's submodule a through the
+    path a/amp, over PAIR's own file and its parameterisation."""
+    outer = {'module_type': 'outer', 'module_subtype': 'v1', 'module_format': 'supermodule',
+             'submodules': [_rec('p', 'pair', 'v1')],
+             'instance_parameters': {'p': {'a/amp': (0.3, 'dimensionless', 'outer_ref')}}}
+    config = write_supermodule(str(tmp_path / 'outer'), outer)
+    files = _config_files(library) + [config]
+    path = str(tmp_path / 'm_module_array.json')
+    _write_json(path, [_rec('o', 'outer', 'v1')])
+    _, rows = load_expanded_vessel_records(path, load_supermodule_registry(files),
+                                           load_component_registry(files))
+    assert _values(rows)['amp_o__p__a'] == ('0.3', 'outer_ref')
+    assert _values(rows)['amp_o__p__b'] == ('0.2', 'file_ref')
+
+    outer['instance_parameters'] = {'p': {'amp': (0.3, 'dimensionless')}}
+    config = write_supermodule(str(tmp_path / 'outer2'), outer)
+    with pytest.raises(ValueError, match=r'instance "p" of its parameters file is a supermodule '
+                                         r'instance, so its parameter "amp" must be a path into '
+                                         r'it'):
+        load_expanded_vessel_records(path, load_supermodule_registry(_config_files(library)
+                                                                     + [config]),
+                                     load_component_registry(files))
 
 
 # --------------------------------------------------------------------------------------------

@@ -56,8 +56,13 @@ def test_a_module_config_is_converted(tmp_path):
                                                        ('b', 'src', 'nn', ['a'], [])]
     registered = load_supermodule_registry([path])[('pair', 'supermodule')]
     assert [s['name'] for s in registered['submodules']] == ['a', 'b']
+    # the default_parameters row a/v is a's value in the parameters file
+    assert registered['instance_parameters'] == {
+        'a': {'parameterisation': 'default',
+              'parameters': {'v': {'value': 1, 'units': 'm3_per_s', 'data_reference': 'r'}}},
+        'b': {'parameterisation': 'default', 'parameters': {}}}
     moved = tmp_path / 'parameterisations' / 'default' / 'default_parameters.csv'
-    assert moved.read_text().endswith('a/v,m3_per_s,1,r\n')
+    assert moved.read_text() == 'variable_name,units,value,data_reference\n'
     assert not (tmp_path / 'pair_defaults.csv').exists()
     before = open(path).read()
     assert upgrade(['module-config', path]) == 0
@@ -221,7 +226,17 @@ def _supermodule(tmp_path, submodules, **entry):
          'submodules': submodules}, **entry)]), directory
 
 
-def test_a_named_parameterisation_is_folded_into_every_supermodule_parameterisation(tmp_path):
+def _instances(directory):
+    """``{instance: (parameterisation, {variable: value})}`` of the converted supermodule's
+    parameters file."""
+    with open(directory / 'sup_v1_parameters.json') as f:
+        doc = json.load(f)
+    assert doc['schema_version'] == 1
+    return {name: (i['parameterisation'], {v: p['value'] for v, p in i['parameters'].items()})
+            for name, i in doc['instances'].items()}
+
+
+def test_each_instance_s_values_are_written_to_the_parameters_file(tmp_path):
     library = _library(tmp_path / 'lib')
     path, directory = _supermodule(
         tmp_path, [_sub('a', parameterisation='fast', out_instances=['b']),
@@ -239,10 +254,14 @@ def test_a_named_parameterisation_is_folded_into_every_supermodule_parameterisat
     assert [r['name'] for r in records] == ['a', 'b', 'c']
     assert not any('parameterisation' in r for r in records)
     assert records[0]['out_instances'] == ['b']
-    # a's "fast" rows, as <sub>/<var> (a global plainly), after the rows each already had;
-    # b named its version's default, which it gets anyway: nothing of it is folded
+    # a's values from "fast", b's and c's from src's default, c/k of the supermodule's default
+    # parameterisation over c's; the globals stay with the parameterisations
+    assert _instances(directory) == {'a': ('fast', {'k': 5}), 'b': ('default', {'k': 1}),
+                                     'c': ('default', {'k': 9})}
+    # c/k left "base"; a's globals from "fast" are added where they are missing
     assert _rows(directory / 'parameterisations' / 'base' / 'base_parameters.csv') == [
-        ('c/k', '9'), ('T', '305'), ('a/k', '5'), ('G', '2')]
+        ('T', '305'), ('G', '2')]
+    # another parameterisation's rows stay: they are read over the parameters file
     assert _rows(directory / 'parameterisations' / 'alt' / 'alt_parameters.csv') == [
         ('a/k', '8'), ('T', '310'), ('G', '2')]
     load_supermodule_registry([path])
@@ -255,11 +274,12 @@ def test_a_supermodule_without_parameterisations_gets_a_default_one(tmp_path):
                     '--no-builtin-modules']) == 0
     entry = json.loads(open(path).read())[0]
     assert entry['default_parameterisation'] == 'default'
+    assert _instances(directory) == {'a': ('fast', {'k': 5})}
     assert _rows(directory / 'parameterisations' / 'default' / 'default_parameters.csv') == [
-        ('a/k', '5'), ('T', '310'), ('G', '2')]
+        ('T', '310'), ('G', '2')]
 
 
-def test_only_a_default_named_folds_nothing(tmp_path):
+def test_only_a_default_named_adds_no_parameterisation(tmp_path):
     library = _library(tmp_path / 'lib')
     path, directory = _supermodule(tmp_path, [_sub('a', parameterisation='default')])
     assert upgrade(['module-config', path, '--module-library-dir', library,
@@ -269,9 +289,10 @@ def test_only_a_default_named_folds_nothing(tmp_path):
     assert not (directory / 'parameterisations').exists()
     assert 'parameterisation' not in read_module_array_records(
         str(directory / 'sup_v1_module_array.json'))[0]
+    assert _instances(directory) == {'a': ('default', {'k': 1})}
 
 
-def test_a_nested_supermodule_s_rows_are_prefixed_with_the_submodule(tmp_path):
+def test_a_nested_supermodule_s_values_are_paths_into_it(tmp_path):
     library = _library(tmp_path / 'lib')
     path, directory = _supermodule(
         tmp_path, [_sub('in', module_type='inner', parameterisation='p'), _sub('s')])
@@ -280,19 +301,28 @@ def test_a_nested_supermodule_s_rows_are_prefixed_with_the_submodule(tmp_path):
     assert json.loads(open(path).read())[0]['submodule_versions'] == [
         {'module_type': 'inner', 'module_subtype': 'v1'},
         {'module_type': 'src', 'module_subtype': 'v1'}]
-    # g/k is inner's submodule g: in/g/k; T is a global and keeps its name
+    # g/k is inner's submodule g; T is a global and goes to the supermodule's parameterisation
+    assert _instances(directory) == {'in': ('p', {'g/k': 7}), 's': ('default', {'k': 1})}
     assert _rows(directory / 'parameterisations' / 'default' / 'default_parameters.csv') == [
-        ('in/g/k', '7'), ('T', '320')]
+        ('T', '320')]
 
 
-def test_a_named_parameterisation_without_its_library_is_refused_and_nothing_written(tmp_path):
+def test_a_submodule_version_without_its_library_is_refused_and_nothing_written(tmp_path):
     path, directory = _supermodule(tmp_path, [_sub('a', parameterisation='fast')])
     before = open(path).read()
-    with pytest.raises(SystemExit, match=r'submodule "a" names parameterisation "fast" of '
+    with pytest.raises(SystemExit, match=r'submodule "a" is of '
                                          r"\('src', 'v1'\).*pass --module-library-dir"):
         upgrade(['module-config', path, '--no-builtin-modules'])
     assert open(path).read() == before
-    assert not (directory / 'sup_v1_module_array.json').exists()
+    assert sorted(os.listdir(directory)) == ['sup_v1_modules_config.json']
+
+
+def test_an_existing_parameters_file_is_not_overwritten(tmp_path):
+    path, directory = _supermodule(tmp_path, [_sub('a')])
+    (directory / 'sup_v1_parameters.json').write_text('{}')
+    with pytest.raises(SystemExit, match='exists already'):
+        upgrade(['module-config', path])
+    assert (directory / 'sup_v1_parameters.json').read_text() == '{}'
 
 
 def test_an_existing_module_array_is_not_overwritten(tmp_path):

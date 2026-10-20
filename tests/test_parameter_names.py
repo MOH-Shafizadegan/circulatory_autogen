@@ -263,10 +263,20 @@ def test_a_supermodule_parameterisation_in_the_older_form_is_refused_and_convert
     shutil.copytree(os.path.dirname(original), copy)
     config = str(copy / os.path.basename(original))
     parameterisation = str(copy / 'parameterisations' / 'default' / 'default_parameters.csv')
-    if not any('/' in r['variable_name'] for r in _read(parameterisation)):
-        # the library is not converted yet: convert the copy to have a reference
-        assert upgrade(['parameter-names', '--supermodule-config', config,
-                        '--module-library-dir', modules, '--no-builtin-modules']) == 0
+    # rows <submodule>/<variable> of the parameterisation: membrane's values from the soma's
+    # parameters file, so the model stays the same
+    import json
+    with open(copy / 'soma_sympathetic_parameters.json') as f:
+        membrane = json.load(f)['instances']['membrane']['parameters']
+    rows = _read(parameterisation)
+    columns = list(rows[0])
+    rows += [{'variable_name': f'membrane/{v}', 'units': q['units'], 'value': repr(q['value']),
+              'data_reference': q.get('data_reference', ''), 'sourced': q.get('sourced', '')}
+             for v, q in membrane.items()]
+    with open(parameterisation, 'w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=columns, extrasaction='ignore')
+        writer.writeheader()
+        writer.writerows(rows)
     current = _read(parameterisation)
     assert any(r['variable_name'].startswith('membrane/') for r in current)
     files_with_copy = [f for f in files if f != original] + [config]

@@ -239,10 +239,26 @@ Its instances and their connections are a module array of their own, `[module_ty
 - **module_type / module_subtype**: the type that instances name in a module array.
 - **module_format**: `"supermodule"`. A supermodule has no `component_file`/`component_type`; it is never a component module, and its type may not also be a component module's type.
 - **submodule_versions**: the versions its module array's records use. Each record uses one of them, and each is used.
-- The module array's names are local to the supermodule, and their input and output lists name other submodules only. A record names no `"parameterisation"`: a submodule's parameters come from the supermodule's parameterisation, then from its version's `default_parameterisation`.
-- **default_parameterisation** (optional): the [parameterisation](#module-versions-and-parameterisations) used when a module-array record names none. A supermodule parameterisation's parameters file has the usual `variable_name,units,value,data_reference` columns. A row named `[submodule]/[variable]` is a parameter of that submodule, `[submodule]/[its submodule]/[variable]` one of a nested submodule, and any other row is a global.
-- An inline `submodules` list or a `default_parameters` CSV is refused. `cuflynx-upgrade module-config [file] --module-library-dir [library]` converts them: the submodule records to the module array file, `submodule_versions` into the entry, a parameterisation a submodule named into the supermodule's, and a `default_parameters` CSV to the parameterisation `parameterisations/default/`.
+- The module array's names are local to the supermodule, and their input and output lists name other submodules only. A record names no `"parameterisation"`.
+- **default_parameterisation** (optional): the [parameterisation](#module-versions-and-parameterisations) used when a module-array record names none. A supermodule parameterisation's parameters file has the usual `variable_name,units,value,data_reference` columns. A row named `[submodule]/[variable]` is a parameter of that submodule, `[submodule]/[its submodule]/[variable]` one of a nested submodule, and any other row is a global. A supermodule's parameterisation usually holds only its globals: its instances' values are in its parameters file.
+- An inline `submodules` list or a `default_parameters` CSV is refused. `cuflynx-upgrade module-config [file] --module-library-dir [library]` converts them: the submodule records to the module array file, `submodule_versions` into the entry, each instance's values to the parameters file, and a `default_parameters` CSV to the parameterisation `parameterisations/default/`.
 - **description** (optional).
+
+The parameter values of its instances are its parameters file, `[module_type]_[module_subtype]_parameters.json` beside the module array (`heart_supermodule_parameters.json`), with one entry per instance:
+
+```json
+{"schema_version": 1,
+ "instances": {
+  "clock": {"parameterisation": "default", "parameters": {}},
+  "ra": {"parameterisation": "ra", "parameters": {
+   "E_A": {"value": 7998000, "units": "J_per_m6", "data_reference": "Liang_2009_Table_2"}}},
+  "lv": {"parameterisation": "default", "parameters": {
+   "E_A": {"value": 366575000, "units": "J_per_m6", "data_reference": "Liang_2009_Table_2"}}}}}
+```
+
+- **parameterisation**: the parameterisation of the instance's version its values started from, `"default"` (the version's `default_parameterisation`) or another of its parameterisations. It records where the values came from; the values used are those under `parameters`.
+- **parameters**: `{variable: {"value", "units", "data_reference"}}`, the columns of a parameters CSV row. An instance that is itself a supermodule names paths into it (`"i_M/g_M"`), which override its own parameters file. Globals are not set here but in the supermodule's parameterisation.
+- `cuflynx-upgrade module-config` writes the file when it converts a supermodule, from the parameterisation each instance named (else its version's default). After that the file is what you edit, and what a calibration of a submodule version updates (in a module library, `calibrate apply` writes every instance of the calibrated version).
 
 An instance in a module array names the supermodule's type and links its hosts, the modules outside it, to individual submodules:
 
@@ -323,7 +339,8 @@ Parameterisation parameters are defaults. A name that `[file_prefix]_parameters.
 
 1. your `[file_prefix]_parameters.csv`;
 2. a supermodule's parameterisation;
-3. the parameterisation of an ordinary module: the one its record names, or its version's `default_parameterisation` (for a submodule, always the default).
+3. a supermodule's parameters file;
+4. the parameterisation of an ordinary module: the one its record names, or its version's `default_parameterisation` (for a submodule, always the default).
 
 Within one level, the first record in the (expanded) module array wins, so a global set by several parameterisations is added once. A global is one value for the whole model, so if parameterisations set it to different values you get a `ConflictingGlobalWarning` naming each value, its units and the record that set it: the modules after the first run at a value their parameterisation did not choose. Set the global in `[file_prefix]_parameters.csv` to choose it, which also silences the warning. A supermodule parameterisation overriding the parameterisations inside it is not warned about. If the units differ too, the modules most likely mean different quantities by one name, and one of them needs renaming.
 

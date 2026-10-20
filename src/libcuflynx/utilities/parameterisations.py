@@ -20,8 +20,8 @@ A parameterisation only changes parameters, never the math. Its parameter names 
 suffix: a row ``C`` becomes ``C_<vessel>`` for the module-array record that uses it, except a
 row naming one of the module's ``global_constant`` variables, which keeps its plain name.
 
-A module-array record (or a supermodule's submodule) picks a parameterisation with
-``"parameterisation": "<name>"``; without one, the config entry's
+A module-array record picks a parameterisation with ``"parameterisation": "<name>"``; without
+one, the config entry's
 ``"default_parameterisation"`` is used if that parameterisation's parameters file exists, and
 otherwise nothing is loaded. The directory is looked for next to the config file the
 (module_type, module_subtype) entry came from:
@@ -30,7 +30,8 @@ otherwise nothing is loaded. The directory is looked for next to the config file
 Parameterisation parameters are *default* parameters: the host model's parameters file wins
 over them (``ModelParsers.merge_default_parameters``). The order of precedence is
 
-    host parameters file > supermodule parameterisation > submodule / component parameterisation
+    host parameters file > supermodule parameterisation > supermodule parameters file
+        > submodule / component parameterisation
 
 and within one tier the first record in the (expanded) module array wins, so a global set by
 several parameterisations is added once. A global is one value for the whole model, so a
@@ -42,7 +43,8 @@ parameterisation is for, and a global the host parameters file sets.
 A supermodule entry may also live in a version directory with parameterisations. Its
 parameterisation's rows are named ``<submodule>/<variable>`` (local) or are globals, and are
 renamed to ``{variable}_{instance}__{submodule}``, ``instance`` being the supermodule record's
-name (``supermodules.read_supermodule_parameters``).
+name (``supermodules.read_supermodule_parameters``). Its instances' values are its parameters
+file (``config_schemas.load_supermodule_parameters``), read after its parameterisation.
 '''
 
 import os
