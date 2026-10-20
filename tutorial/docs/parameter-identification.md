@@ -1144,14 +1144,14 @@ file of its own:
 A selection runs as one of the other models:
 
 - **one instance** -- a record, or `heart/lv` inside a super instance -- is its library module,
-  the record's version and parameterisation (a submodule's: its version's default), placed at
-  that instance as `"vessel"` would place it;
+  the record's version and parameterisation (a submodule's: the one its supermodule's parameters
+  file records it started from), placed at that instance as `"vessel"` would place it;
 - **several records** are the module array they form, cut from the target. A link to a record
   outside the selection is dropped, which leaves that port open.
 
 The step starts from the target's values for its instances: their rows of the target's
-parameters file and, for a nested instance, the rows its super instances' parameterisations give
-it. Values fixed from earlier steps go over those. Its obs_data and params_for_id name vessels as
+parameters file and, for a nested instance, the values its super instances' parameters files and
+parameterisations give it. Values fixed from earlier steps go over those. Its obs_data and params_for_id name vessels as
 the target does (`C/z`, `heart__lv/E`). For one instance, whose model is generated as `mod`,
 renamed copies are written to `<step_id>/inputs/` and run from there.
 
@@ -1167,7 +1167,11 @@ Without one, it takes the parameterisation's value or the target's row. A parame
 of these stops the step with an `UnsetParametersError`, whose `names` list them as the target's
 parameters file does (`C/x`), so a front end can ask for their protocols. The results merge
 into the target like any step's: in `<prefix>_calibrated_parameters.csv` (`write_calibrated`)
-only the rows the step calibrated change.
+only the rows the step calibrated change. A value inside a super instance (`heart/lv/E`) is
+written to that supermodule version's parameters file instead (instance `lv`, parameter `E`, in
+`heart_<version>_parameters.json`, in place), and to the CSV only where the target's parameters
+file has a row for it, which would win over the file. Every model using that supermodule version
+then has the calibrated value.
 
 ### Step kinds
 

@@ -785,11 +785,61 @@ def write_calibrated_parameters_to(source, output_dir, path, module_library_dirs
                                        path=path)
 
 
+def _write_instance_values(target, merged_parameters, reference):
+    '''Write each merged value of a module-array ``target`` at a vessel inside a super instance
+    (``sys__C/q``) into the parameters file of the innermost supermodule holding it (instance
+    ``C`` of ``sys``'s supermodule version, parameter ``q``), in place. That changes every model
+    using that supermodule version. Returns the model names written.'''
+    from libcuflynx.utilities.config_schemas import (dump_supermodule_parameters,
+                                                     supermodule_parameters_path)
+    from libcuflynx.utilities.parameter_names import LEVEL_SEPARATOR
+    by_name = {r['name']: r for r in target.records}
+    docs, written = {}, set()
+    for record in merged_parameters:
+        vessel, separator, variable = record['parameterisation_name'].rpartition('/')
+        if not separator or LEVEL_SEPARATOR not in vessel:
+            continue
+        parts = vessel.split(LEVEL_SEPARATOR)
+        container = by_name.get(parts[0])
+        entry = target.supermodules.get((container['module_type'], container['module_subtype'])) \
+            if container else None
+        for part in parts[1:-1]:
+            if entry is None:
+                break
+            sub = next((s for s in entry['submodules'] if s['name'] == part), None)
+            entry = target.supermodules.get((sub['module_type'], sub['module_subtype'])) \
+                if sub else None
+        if entry is None:
+            continue
+        path = supermodule_parameters_path(entry['config_path'], entry)
+        if path not in docs:
+            with open(path, encoding='utf-8-sig') as f:
+                docs[path] = json.load(f)
+        parameters = docs[path]['instances'][parts[-1]]['parameters']
+        parameter = parameters.setdefault(variable, {'value': None, 'units': record.get('units')})
+        if not parameter.get('units'):
+            raise WorkflowError(f'{record["parameterisation_name"]}: no units to write it to '
+                                f'{path} with.')
+        parameter['value'] = float(record['value'])
+        parameter['data_reference'] = reference(record)
+        if 'sourced' in parameter:
+            parameter['sourced'] = 'no'
+        written.add(record['model_name'])
+    for path, doc in docs.items():
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(dump_supermodule_parameters(doc))
+    return written
+
+
 def write_calibrated_parameters(target, merged_parameters, workflow_name, path=None):
     '''``path`` (default ``<name>_calibrated_parameters.csv`` beside the target's parameters
     file, ``<name>`` its parameterisation, or its module array's prefix): the target's
     parameters with the merged values in place, and rows it lacks added, written
-    ``<vessel or submodule>/<variable>``. A row is matched by the model parameter it names.'''
+    ``<vessel or submodule>/<variable>``. A row is matched by the model parameter it names.
+
+    For a module-array target, a value at a vessel inside a super instance goes to that
+    supermodule's parameters file (``_write_instance_values``); it is written to ``path`` too
+    only where the target's parameters file has a row for it, which would win over the file.'''
     rows = read_parameter_rows(target.parameters_path)
     columns = list(rows[0].keys()) if rows else ['variable_name', 'units', 'value',
                                                   'data_reference']
@@ -801,11 +851,18 @@ def write_calibrated_parameters(target, merged_parameters, workflow_name, path=N
         except ValueError:
             pass
     today = datetime.date.today().isoformat()
+
+    def reference_of(record):
+        return f'calibrated by workflow {workflow_name}, step {record["from_step"]} ({today})'
+
+    in_files = (_write_instance_values(target, merged_parameters, reference_of)
+                if target.kind == 'array' else set())
     for record in merged_parameters:
-        reference = (f'calibrated by workflow {workflow_name}, step {record["from_step"]} '
-                     f'({today})')
+        reference = reference_of(record)
         row = by_model_name.get(record['model_name']) or \
             by_name.get(record['parameterisation_name'])
+        if row is None and record['model_name'] in in_files:
+            continue
         if row is None:
             row = {c: '' for c in columns}
             row.update(variable_name=record['parameterisation_name'], units=record['units'])

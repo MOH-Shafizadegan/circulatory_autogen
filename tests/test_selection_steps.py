@@ -164,8 +164,8 @@ def test_a_selection_names_instances_of_the_target(library, select, message):
                                         path=os.path.join(library['arrays'], 'w.json')))
 
 
-@pytest.mark.unit
-def test_a_nested_instance_takes_its_super_instances_values(library):
+def _nested_sys(library):
+    '''A target ``sys`` of one chain instance, with a step selecting ``sys/C``, resolved.'''
     arrays = library['arrays']
     _write_json(os.path.join(arrays, 'sys_module_array.json'), [_record('sys', 'chain')])
     with open(os.path.join(arrays, 'sys_parameters.csv'), 'w') as f:
@@ -177,13 +177,61 @@ def test_a_nested_instance_takes_its_super_instances_values(library):
     step = {'id': 'sys-c', 'model': {'select': ['sys/C']}, 'obs_data': obs,
             'params_for_id': params}
     raw = _workflow(library, [step], 'sys_module_array.json')
-    resolved = resolve_workflow(parse_workflow(raw, path=os.path.join(arrays, 'w.json')))
-    rs = resolved.steps['sys-c']
+    return resolve_workflow(parse_workflow(raw, path=os.path.join(arrays, 'w.json')))
+
+
+@pytest.mark.unit
+def test_a_nested_instance_takes_its_super_instances_values(library):
+    rs = _nested_sys(library).steps['sys-c']
     assert rs.model.target == Target('lin_c', 'v1', 'default') and rs.place == 'sys__C'
-    # the chain parameterisation's C/q and C/k, under the host's sys/C/q
+    # the chain's parameters file's C/q and C/k, under the host's sys/C/q
     assert {r['variable_name']: r['value'] for r in rs.base_rows} == {'mod/q': '2.0',
                                                                        'mod/k': '1.0'}
     assert rs.target_parameterisation_name(rs.parameters[0]) == 'sys__C/q'
+
+
+def _chain_instance(library, instance):
+    return _read_json(os.path.join(library['modules'], 'chain', 'versions', 'v1',
+                                   'chain_v1_parameters.json'))['instances'][instance]
+
+
+@pytest.mark.unit
+def test_a_nested_instance_starts_from_the_parameterisation_its_supermodule_records(library):
+    """The chain's parameters file records that C started from lin_c's "fit_c"; the step model
+    is that parameterisation, with the file's values over it."""
+    _nested_sys(library)
+    path = os.path.join(library['modules'], 'chain', 'versions', 'v1', 'chain_v1_parameters.json')
+    doc = _read_json(path)
+    doc['instances']['C']['parameterisation'] = 'fit_c'
+    _write_json(path, doc)
+    fit_c = os.path.join(library['modules'], 'lin_c', 'versions', 'v1', 'parameterisations',
+                         'fit_c')
+    os.makedirs(fit_c)
+    with open(os.path.join(fit_c, 'fit_c_parameters.csv'), 'w') as f:
+        f.write('variable_name,units,value,data_reference\nq,dimensionless,5.0,fit\n')
+    arrays = library['arrays']
+    resolved = resolve_workflow(parse_workflow(
+        _workflow(library, [{'id': 'sys-c', 'model': {'select': ['sys/C']},
+                             'obs_data': os.path.join(arrays, 'data', 'sys_c_obs.json'),
+                             'params_for_id': os.path.join(arrays, 'data', 'sys_c_params.csv')}],
+                  'sys_module_array.json'), path=os.path.join(arrays, 'w.json')))
+    assert resolved.steps['sys-c'].model.target == Target('lin_c', 'v1', 'fit_c')
+
+
+@pytest.mark.unit
+def test_calibrated_values_inside_a_super_instance_go_to_its_supermodule_s_parameters_file(
+        library, tmp_path):
+    """sys/C/q and sys/C/k are written to the chain version's parameters file (instance C);
+    the written host file updates only sys/C/q, the row the host file has."""
+    from libcuflynx.calibration_workflow.runner import write_calibrated_parameters
+    resolved = _nested_sys(library)
+    merged = [{'model_name': f'{v}_sys__C', 'parameterisation_name': f'sys__C/{v}', 'value': x,
+               'units': 'dimensionless', 'from_step': 'sys-c'} for v, x in (('q', 3.0), ('k', 4.0))]
+    out = write_calibrated_parameters(resolved.target, merged, 'w', path=str(tmp_path / 'out.csv'))
+    instance = _chain_instance(library, 'C')
+    assert instance['parameters']['q']['value'] == 3.0 and instance['parameters']['k']['value'] == 4.0
+    assert instance['parameters']['q']['data_reference'].startswith('calibrated by workflow w, step sys-c')
+    assert _parameters(out) == {'sys/C/q': 3.0}
 
 
 @pytest.mark.unit
@@ -241,15 +289,21 @@ def test_one_instance_calibrated_from_its_protocol_lands_on_that_instance(librar
 
 @pytest.mark.integration
 def test_a_nested_instance_is_calibrated_into_its_super_instance(library, tmp_path):
-    test_a_nested_instance_takes_its_super_instances_values(library)
+    _nested_sys(library)
     path = os.path.join(library['arrays'], 'sys_workflow.json')
     _write_json(path, _workflow(library, [{
         'id': 'sys-c', 'model': {'select': ['sys/C']}, 'obs_data': 'data/sys_c_obs.json',
         'params_for_id': 'data/sys_c_params.csv'}], 'sys_module_array.json'))
-    result = run_calibration_workflow(path, output_dir=str(tmp_path / 'run'))
+    result = run_calibration_workflow(path, output_dir=str(tmp_path / 'run'),
+                                      write_calibrated=True)
     merged = {r['parameterisation_name']: r['value'] for r in result['merged_parameters']}
     assert list(merged) == ['sys__C/q']
     assert merged['sys__C/q'] == pytest.approx(np.sqrt(Z_C - Y_A), rel=1e-4)
+    # in the chain version's parameters file, and in the host's row that would win over it
+    assert _chain_instance(library, 'C')['parameters']['q']['value'] == \
+        pytest.approx(np.sqrt(Z_C - Y_A), rel=1e-4)
+    calibrated = _parameters(os.path.join(library['arrays'], 'sys_calibrated_parameters.csv'))
+    assert calibrated == {'sys/C/q': pytest.approx(np.sqrt(Z_C - Y_A), rel=1e-4)}
 
 
 @pytest.mark.integration

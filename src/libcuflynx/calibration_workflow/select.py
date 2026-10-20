@@ -5,15 +5,16 @@ a workflow already has:
 
 * one instance (a record, or ``heart/lv`` inside a super instance) is its library module,
   placed at that instance (``naming.Placed``), as a step naming ``vessel`` would be. Its
-  parameterisation is the record's; a submodule's is its version's default;
+  parameterisation is the record's; a submodule's is the one its supermodule's parameters file
+  records (``"default"``: its version's default);
 * several records are the module array they form, cut from the target (``naming.Renamed``,
   names unchanged). A link to a record outside the selection is dropped, which leaves that
   port open.
 
 Either way the step starts from the target's values for those instances. The target's
-parameters file rows for them (plus, for a nested instance, the parameterisation rows its
-super instances give it) are the step model's parameters, under any values fixed from
-earlier steps. A cut port's boundary condition then takes its value from the step's
+parameters file rows for them (plus, for a nested instance, the values its super instances'
+parameters files and parameterisations give it) are the step model's parameters, under any
+values fixed from earlier steps. A cut port's boundary condition then takes its value from the step's
 obs_data protocol (``params_to_change``), the parameterisation, or the target's parameters
 file; one with none of these is an :class:`UnsetParametersError`.
 
@@ -32,6 +33,7 @@ from libcuflynx.calibration_workflow.spec import LibraryModule, ModuleArray, Wor
 from libcuflynx.utilities.parameter_names import (flat_name, is_path_name, split_path_name)
 from libcuflynx.utilities.parameterisations import (PARAMETERISATION_KEY,
                                                     parameterisation_rows)
+from libcuflynx.utilities.supermodules import instance_parameter_rows
 
 
 class UnsetParametersError(WorkflowError):
@@ -124,8 +126,11 @@ def _single(step, parts, by_name, host_rows, components, supermodules):
                 f'{where}: "{"/".join(parts[:depth])}" has no submodule "{name}" (it has '
                 f'{sorted(subs) or "none"}).')
         sub = subs[name]
+        # a submodule's parameterisation is the one its supermodule's parameters file records
+        started = ((entry.get('instance_parameters') or {}).get(name) or {}).get(
+            'parameterisation', 'default')
         entry = _entry(sub, components, supermodules, where)
-        levels.append((entry, sub.get(PARAMETERISATION_KEY)))
+        levels.append((entry, None if started == 'default' else started))
     entry, parameterisation = levels[-1]
     try:
         chosen, _ = parameterisation_rows(entry, parameterisation, where)
@@ -137,11 +142,14 @@ def _single(step, parts, by_name, host_rows, components, supermodules):
             f'to calibrate (no "parameterisation" and no default_parameterisation file).')
     model = LibraryModule(entry['module_type'], entry['module_subtype'], chosen)
 
-    # lowest precedence first: each enclosing super instance's parameterisation, then the host
+    # lowest precedence first: each enclosing super instance's parameters file and then its
+    # parameterisation, the innermost first (an outer supermodule's values win, as in expansion),
+    # then the host
     rows = {}
-    for depth, (outer, name) in enumerate(levels[:-1]):
+    for depth, (outer, name) in reversed(list(enumerate(levels[:-1]))):
         try:
             _, outer_rows = parameterisation_rows(outer, name, where)
+            outer_rows = instance_parameter_rows(outer, supermodules, where) + outer_rows
         except ValueError as exc:
             raise WorkflowError(str(exc)) from exc
         below = parts[depth + 1:]
