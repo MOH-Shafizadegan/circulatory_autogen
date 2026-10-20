@@ -1695,10 +1695,16 @@ class CVS0DParamID():
             from libcuflynx.param_id import prediction_plots
             model_values = dict(features)
             model_values.update(self._data_item_feature_values(self.prediction_plots))
+            info = self.param_id.param_id_info
+            time_courses = prediction_plots.record_time_courses(
+                self.param_id._protocol_executor, self.protocol_info, self.prediction_plots,
+                id_param_names=info['param_names'],
+                id_param_vals=expand_modifier_param_vals(info, self._best_fit()))
             for path in prediction_plots.plot_prediction_plots(
                     self.prediction_plots, self.gt_df, self.prediction_info, self.protocol_info,
                     model_values, self.output_dir, funcs=self.param_id.operation_funcs_dict,
-                    units=prediction_plots.group_units(self.gt_df, self.prediction_info)):
+                    units=prediction_plots.group_units(self.gt_df, self.prediction_info),
+                    time_courses=time_courses):
                 print(f'prediction plot saved in {path}')
 
     def set_bayesian_parameters(self, n_calls, n_initial_points, acq_func, random_state, acq_func_kwargs={}):
