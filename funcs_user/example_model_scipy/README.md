@@ -32,7 +32,7 @@ one.
 |---|---|
 | `oscillator_model.py` | The model class plus `SIM_HELPER = Oscillator`. |
 | `oscillator_params_for_id.csv` | Parameters to calibrate / sweep (`c`, `k`) with bounds. |
-| `oscillator_parameters.csv` | Default parameter values (the calibration start point). |
+| `oscillator_parameters.json` | Default parameter values (the calibration start point). |
 | `oscillator_obs_data.json` | The `protocol_info` (the run window) plus target observables — `mean(x)`, `min(x)`, `range(v)` at the "true" `c=0.7, k=5.0`. |
 
 `oscillator/energy` is exposed as an output but not scored by any observable; it is there to show
@@ -93,7 +93,7 @@ type.
 
 ```yaml
 file_prefix: oscillator
-input_param_file: oscillator_parameters.csv
+input_param_file: oscillator_parameters.json
 model_type: external_python
 solver: external
 # Default model location is funcs_user/{file_prefix}_model.py. This example lives in a

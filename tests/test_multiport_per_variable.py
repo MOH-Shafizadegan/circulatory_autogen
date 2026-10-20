@@ -379,12 +379,12 @@ def _generate(tmp_path, external_modules_dir, prefix, vessel_rows, params, model
     param_lines = ["variable_name,units,value,data_reference"]
     for variable_name, units, value in params:
         param_lines.append(f"{variable_name},{units},{value},test")
-    (resources_dir / f"{prefix}_parameters.csv").write_text("\n".join(param_lines) + "\n")
+    (resources_dir / f"{prefix}_parameters.json").write_text("\n".join(param_lines) + "\n")
 
     generated_dir = tmp_path / "generated_models"
     config = {
         'file_prefix': prefix,
-        'input_param_file': f'{prefix}_parameters.csv',
+        'input_param_file': f'{prefix}_parameters.json',
         'model_type': model_type,
         'solver': 'CVODE_myokit' if model_type == 'cellml' else 'solve_ivp',
         'resources_dir': str(resources_dir),
@@ -748,7 +748,7 @@ def test_flow_merge_without_neighbours_sums_to_zero(tmp_path, external_modules_d
     out = capsys.readouterr().out
     assert re.search(r'WARNING: "merge" variable "v_in" is a multi_port "sum".*set to 0', out)
 
-    parameters = _read(os.path.join(os.path.dirname(cellml_path), "mp_none_parameters.csv"))
+    parameters = _read(os.path.join(os.path.dirname(cellml_path), "mp_none_parameters.json"))
     assert "v_in_merge" not in parameters
     res = _simulate(cellml_path, ["merge/v_out", "wk/q"], sim_time=0.5)
     assert np.all(res["merge/v_out"] == 0.0)

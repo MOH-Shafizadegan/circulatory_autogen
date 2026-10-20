@@ -79,7 +79,7 @@ def test_a_step_names_its_files_relative_to_the_workflow(library):
     array = load_workflow(library['chain_array'])
     assert array.target == ModuleArray(
         os.path.join(library['arrays'], 'chain_module_array.json'),
-        os.path.join(library['arrays'], 'chain_parameters.csv'))
+        os.path.join(library['arrays'], 'chain_parameters.json'))
     assert array.step('a-alone').params_for_id == os.path.join(library['arrays'], 'data',
                                                                 'a_params.csv')
 
@@ -284,7 +284,7 @@ def test_an_ambiguous_submodule_must_be_named(library):
         'module_type': 'double', 'module_subtype': 'v1', 'module_format': 'supermodule',
         'default_parameterisation': 'default',
         'submodules': [dict(sub, name='A1'), dict(sub, name='A2')]})
-    with open(os.path.join(version_dir, 'parameterisations', 'default', 'default_parameters.csv'),
+    with open(os.path.join(version_dir, 'parameterisations', 'default', 'default_parameters.json'),
               'w') as f:
         f.write('variable_name,units,value,data_reference\n')
     raw = {'workflow_name': 'double', 'module_library_dirs': [library['modules']],
@@ -430,7 +430,7 @@ def _calibrate_joint(library, out_dir):
                 'do_ia': False, 'do_uq': False, 'UQ_options': {},
                 'resources_dir': generated['resources_dir'],
                 'generated_models_dir': generated['generated_models_dir'],
-                'input_param_file': 'joint_parameters.csv',
+                'input_param_file': 'joint_parameters.json',
                 'param_id_obs_path': os.path.join(library['twin/joint'], 'joint_obs_data.json'),
                 'params_for_id_file': os.path.join(library['twin/joint'],
                                                    'joint_params_for_id.csv'),
@@ -500,7 +500,7 @@ def test_fixed_values_flow_into_the_supermodule_and_editing_obs_data_redoes_it(l
 
     rest = _read_json(os.path.join(out, 'rest', 'step_result.json'))
     assert [(f['model_name'], f['from_step']) for f in rest['fixed']] == [('p_mod__A', 'fit_a')]
-    with open(os.path.join(os.path.dirname(rest['model_path']), 'rest_parameters.csv')) as f:
+    with open(os.path.join(os.path.dirname(rest['model_path']), 'rest_parameters.json')) as f:
         generated = {r['variable_name']: float(r['value']) for r in csv.DictReader(f)}
     assert generated['p_mod__A'] == pytest.approx(merged['A/p'], rel=1e-12)
 
@@ -530,7 +530,7 @@ def test_fixed_values_flow_into_the_supermodule_and_editing_obs_data_redoes_it(l
     with open(result['calibrated_parameters_file']) as f:
         written = {r['variable_name']: r for r in csv.DictReader(f)}
     assert result['calibrated_parameters_file'] == os.path.join(
-        library['chain/rest'], 'rest_calibrated_parameters.csv')
+        library['chain/rest'], 'rest_calibrated_parameters.json')
     assert float(written['A/p']['value']) == pytest.approx(1.5, rel=1e-6)
     assert float(written['C/q']['value']) == pytest.approx(4.0, rel=1e-6)
     assert 'step rest' in written['C/q']['data_reference']
@@ -650,7 +650,7 @@ def test_calibrated_values_replace_their_rows_and_new_ones_are_added(tmp_path):
     class _Target:
         kind = 'library'
         paths = (('A',), ('C',))
-        parameters_path = str(tmp_path / 'rest_parameters.csv')
+        parameters_path = str(tmp_path / 'rest_parameters.json')
 
         def file(self, suffix):
             return str(tmp_path / f'rest_{suffix}')
@@ -715,7 +715,7 @@ def test_a_vessel_map_renames_a_module_array_into_the_target(library):
     _write_json(os.path.join(arrays, 'aorta_module_array.json'), [
         {'name': 'aorta', 'module_type': 'lin_a', 'module_subtype': 'v1',
          'parameterisation': 'default', 'inp_instances': [], 'out_instances': []}])
-    with open(os.path.join(arrays, 'aorta_parameters.csv'), 'w') as f:
+    with open(os.path.join(arrays, 'aorta_parameters.json'), 'w') as f:
         f.write('variable_name,units,value,data_reference\naorta/p,dimensionless,1.0,x\n')
     with open(os.path.join(arrays, 'data', 'aorta_params.csv'), 'w') as f:
         f.write('vessel_name,param_name,min,max,name_for_plotting\naorta,p,0.1,5.0,p\n')
@@ -757,7 +757,7 @@ def test_a_workflow_of_module_arrays_runs_and_writes_beside_the_target(library, 
     assert [(f['model_name'], f['from_step']) for f in chain['fixed']] == [('p_A', 'a-alone')]
     assert set(chain['inputs']) == {'obs_data', 'params_for_id', 'parameters', 'module_array'}
     assert result['calibrated_parameters_file'] == os.path.join(
-        library['arrays'], 'chain_calibrated_parameters.csv')
+        library['arrays'], 'chain_calibrated_parameters.json')
     with open(result['calibrated_parameters_file']) as f:
         written = {r['variable_name']: r for r in csv.DictReader(f)}
     # the target's own rows take the values; the uncalibrated k keeps its own and its source
@@ -783,7 +783,7 @@ def test_a_workflow_records_itself_in_one_study_manifest(library, tmp_path):
     assert workflow['target']['generated_model'] == study['model']
     assert os.path.isfile(study['model'])
     assert workflow['target']['calibrated_parameters'] == os.path.join(
-        library['arrays'], 'chain_calibrated_parameters.csv')
+        library['arrays'], 'chain_calibrated_parameters.json')
     steps = {s['id']: s for s in workflow['steps']}
     assert [s['id'] for s in workflow['steps']] == ['a-alone', 'chain']
     assert steps['chain']['fixed_from'] == ['a-alone'] and steps['chain']['status'] == 'done'
@@ -1064,7 +1064,7 @@ def test_a_packed_workflow_runs_without_the_files_it_was_packed_from(tmp_path, w
         assert 'params_for_id' not in steps['fit'] and 'obs_data' not in steps['reduce']
     else:
         assert raw['target'] == {'module_array': 'inputs/_target/chain_module_array.json',
-                                 'parameters': 'inputs/_target/chain_parameters.csv'}
+                                 'parameters': 'inputs/_target/chain_parameters.json'}
 
     os.rename(str(root), str(tmp_path / 'moved'))      # the originals are gone
     result = run_calibration_workflow(packed['workflow'], output_dir=str(tmp_path / 'run'))

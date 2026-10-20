@@ -198,7 +198,7 @@ def components(super_library_dir):
 def test_a_host_binds_through_the_interface(registry, components):
     """flow_src feeds through a flow_port, reader is fed through a gain_port: each binds to
     the first interface entry of its port type, with no per_submodule_* entry."""
-    from libcuflynx.utilities.supermodules import expand_supermodules, version_instance_parameters
+    from libcuflynx.utilities.supermodules import expand_supermodules
     from libcuflynx.utilities.config_schemas import normalise_vessel_records
     config = _with_interface(registry, [
         {'name': 'gain_out', 'submodule': 'g', 'port_type': 'gain_port', 'label': 'gain'},
@@ -207,17 +207,14 @@ def test_a_host_binds_through_the_interface(registry, components):
     host = [_rec('src_a', 'flow_src', out=['pair']), _rec('src_b', 'flow_src', out=['pair']),
             _rec('pair', 'flowpair', subtype='supermodule'), _rec('rd', 'reader', inp=['pair'])]
     records = normalise_vessel_records(host, 'test')
-    expanded, _ = expand_supermodules(records, config, 'test', components=components,
-                                      instance_parameters=version_instance_parameters(records,
-                                                                                      config))
+    expanded, _ = expand_supermodules(records, config, 'test', components=components)
     assert _links(expanded) == _links(_expand(_flowpair_host(), registry)[0])
     # without a matching port it is the usual error
     with pytest.raises(ValueError, match='none of its interface entries matches its ports'):
         expand_supermodules(records,
                             _with_interface(registry, [{'name': 'x', 'submodule': 'g',
                                                         'port_type': 'volume_port'}]),
-                            'test', components=components,
-                            instance_parameters=version_instance_parameters(records, config))
+                            'test', components=components)
 
 
 @pytest.mark.parametrize('interface, message', [
@@ -254,11 +251,10 @@ _TEST_INPUTS = os.path.join(os.path.dirname(__file__), 'test_inputs')
 def test_the_example_files_pass_the_schemas_and_expand(components):
     import json
     jsonschema = pytest.importorskip('jsonschema')
-    from libcuflynx.schemas import (MODULE_ARRAY_SCHEMA, MODULE_CONFIG_SCHEMA,
-                                    SUPERMODULE_PARAMETERS_SCHEMA, load_schema)
-    from libcuflynx.utilities.config_schemas import (load_supermodule_registry,
-                                                     read_module_array_records)
-    from libcuflynx.utilities.supermodules import expand_supermodules
+    from libcuflynx.schemas import (MODULE_ARRAY_SCHEMA, MODULE_CONFIG_SCHEMA, PARAMETERS_SCHEMA,
+                                    load_schema)
+    from libcuflynx.utilities.config_schemas import (load_expanded_vessel_records,
+                                                     load_supermodule_registry)
     config = os.path.join(_TEST_INPUTS, 'nested_paths_modules_config.json')
     array = os.path.join(_TEST_INPUTS, 'nested_paths_module_array.json')
     with open(config) as f:
@@ -268,16 +264,11 @@ def test_the_example_files_pass_the_schemas_and_expand(components):
                  os.path.join(_TEST_INPUTS, 'outer_supermodule_module_array.json')):
         with open(path) as f:
             jsonschema.validate(json.load(f), load_schema(MODULE_ARRAY_SCHEMA))
-    # the versions' parameters files, and the model's instances' beside its module array
-    for path in (os.path.join(_TEST_INPUTS, 'flowpair_supermodule_parameters.json'),
-                 os.path.join(_TEST_INPUTS, 'outer_supermodule_parameters.json'),
-                 os.path.join(_TEST_INPUTS, 'nested_paths_supermodule_parameters', 'pair.json'),
-                 os.path.join(_TEST_INPUTS, 'nested_paths_supermodule_parameters', 'o.json')):
-        with open(path) as f:
-            jsonschema.validate(json.load(f), load_schema(SUPERMODULE_PARAMETERS_SCHEMA))
-    expanded, _ = expand_supermodules(read_module_array_records(array),
-                                      load_supermodule_registry([config]), array,
-                                      components=components, instance_parameters=array)
+    # the model's parameters file beside its module array, with an entry per supermodule instance
+    with open(os.path.join(_TEST_INPUTS, 'nested_paths_parameters.json')) as f:
+        jsonschema.validate(json.load(f), load_schema(PARAMETERS_SCHEMA))
+    expanded, _ = load_expanded_vessel_records(array, load_supermodule_registry([config]),
+                                               components)
     links = _links(expanded)
     assert links['src_a'][1] == ['pair__coll']           # a path
     assert links['src_b'][1] == ['pair__coll']           # the interface (flow_port)

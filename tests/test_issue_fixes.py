@@ -89,7 +89,7 @@ def test_finished_parameters_csv_written_to_output_dir(tmp_path):
 
     gen._CVS0DCellMLGenerator__generate_parameters_csv()
 
-    assert (output / 'demo_parameters.csv').is_file()
+    assert (output / 'demo_parameters.json').is_file()
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +165,7 @@ def _reduce(tmp_path, header, rows, variables_and_units=None):
     from libcuflynx.parsers.ModelParsers import CSV0DModelParser
     from libcuflynx.parsers.PrimitiveParsers import CSVFileParser
 
-    csv_path = tmp_path / 'x_parameters.csv'
+    csv_path = tmp_path / 'x_parameters.json'
     csv_path.write_text('\n'.join([header] + rows) + '\n')
 
     if variables_and_units is None:
@@ -187,7 +187,7 @@ def test_parameters_csv_extra_column_does_not_shift_the_value(tmp_path):
     """The bug: rows were flattened into a positional list, so any column the code did not expect
     shifted every field to its right.
 
-    resources/FTU_wCVS_parameters.csv is a real file with a 'comp_env' column between units and
+    resources/FTU_wCVS_parameters.json is a real file with a 'comp_env' column between units and
     value; before the fix its parameter values parsed as the comp_env string ('heart') and its
     data_references as the values.
     """

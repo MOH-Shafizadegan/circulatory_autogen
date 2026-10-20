@@ -100,6 +100,7 @@ def read_parameters_file(path, where='', kind=MODEL):
     doc, raw = _load(path)
     validate(PARAMETERS_SCHEMA, doc, source=str(path), what='parameters file')
     check_parameters(raw, f'{where}{path}', kind)
+    raw[SCHEMA_VERSION_KEY] = doc[SCHEMA_VERSION_KEY]
     return raw
 
 
@@ -294,7 +295,7 @@ def dump_parameters(doc):
         pad = ' ' * depth
         comma = '' if last else ','
         if key == SCHEMA_VERSION_KEY:
-            lines.append(f'{pad}{json.dumps(key)}: {json.dumps(value)}{comma}')
+            lines.append(f'{pad}{json.dumps(key)}: {int(value)}{comma}')
         elif is_leaf(value):
             lines.append(f'{pad}{json.dumps(key, ensure_ascii=False)}: {_leaf_json(value)}{comma}')
         elif not value:

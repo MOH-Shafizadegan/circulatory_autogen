@@ -14,8 +14,9 @@ import csv
 from pathlib import Path
 from libcuflynx.utilities.config_schemas import (dump_vessel_records, read_module_array_records,
                                                  module_array_path, vessel_records_to_string_frame)
-from libcuflynx.utilities.parameters_file import (parameters_file_name, read_parameter_rows,
-                                                  rows_to_document, write_parameters_file)
+from libcuflynx.utilities.parameters_file import (get_leaf, leaf_from_row, name_path,
+                                                  parameters_file_name, read_parameters_file,
+                                                  set_leaf, write_parameters_file)
 
 
 def _write_json_records(source_path, source_records, df_vess, out_path):
@@ -56,9 +57,9 @@ def convert_0d_to_1d(model, folder_0d, param_file_0d, folder_hyb=None, vess_1d_l
     source_path = module_array_path(str(folder_0d), f"{model}_0d")
     source_records = read_module_array_records(source_path)
     df_vess = vessel_records_to_string_frame(source_records)
-    # the 0D model's parameters file (nested JSON), as rows named <vessel>/<variable>
-    df_params = pd.DataFrame(read_parameter_rows(folder_0d / param_file_0d),
-                             columns=['variable_name', 'units', 'value', 'data_reference'])
+    # the 0D model's parameters file (nested JSON); the rows below add the coupling variables
+    parameters = read_parameters_file(folder_0d / param_file_0d)
+    df_params = pd.DataFrame(columns=['variable_name', 'units', 'value', 'data_reference'])
 
     n1d = len(vess_1d_list)
     nV = df_vess.shape[0]
@@ -139,11 +140,12 @@ def convert_0d_to_1d(model, folder_0d, param_file_0d, folder_hyb=None, vess_1d_l
                             folder_hyb / f"{model}_hybrid_module_array.json")
     else:
         df_vess.to_csv(folder_hyb / f"{model}_hybrid_module_array.csv", index=False, header=True)
-    # a coupling parameter added for two 1D vessels is written once
-    write_parameters_file(folder_hyb / parameters_file_name(f"{model}_hybrid"),
-                          rows_to_document([{k: str(v) for k, v in row.items()}
-                                            for row in df_params.to_dict('records')],
-                                           duplicates=[]))
+    # a coupling parameter added for two 1D vessels, or one the file has, is written once
+    for row in df_params.to_dict('records'):
+        path = name_path(row['variable_name'])
+        if get_leaf(parameters, path) is None:
+            set_leaf(parameters, path, leaf_from_row({k: str(v) for k, v in row.items()}))
+    write_parameters_file(folder_hyb / parameters_file_name(f"{model}_hybrid"), parameters)
 
     print(f"Converted {n1d} vessels from 0D to 1D for model {model}.")
     print(f"Input hybrid model files saved successfully at {folder_hyb}")

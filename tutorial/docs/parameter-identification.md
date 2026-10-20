@@ -23,7 +23,7 @@ This file defines which parameters (constants and initial_states) within your mo
 The entries in the file are detailed as follows:
 
 - **vessel_name**: the name of the vessel/module the parameter is in
-- **param_name**: the name of the parameter in the cellml module (not including the "vessel_name" suffix that is included in the `[file_prefix]_parameters.csv` file).
+- **param_name**: the name of the parameter in the cellml module (the variable, without its vessel: `C` of `aortic_root/C` in the `[file_prefix]_parameters.json` file).
 - **param_type**: **"state"** or **"const"**; whether the parameter is the initial value of a state or a const. 
 - **min**: The minimimum of the range of possible values (min of the uniform distribution).
 - **max**: The maximum of the range of possible values (max of the uniform distribution).
@@ -861,7 +861,7 @@ To run the parameter identification we need to set a few entries in the `[CA_dir
     - **sigma0**: Initial standard deviation for CMA-ES (optional, default: 0.2 of parameter range)
     - Note: 
         - The number of parallel workers is automatically determined from the number of MPI processes
-        - Initial parameter values are automatically loaded from `{file_prefix}_parameters.csv`
+        - Initial parameter values are automatically loaded from `{file_prefix}_parameters.json`
     
     sp_minimize specific options:
 
@@ -871,7 +871,7 @@ To run the parameter identification we need to set a few entries in the `[CA_dir
 
     - **num_starts**: Number of L-BFGS-B descents to run (default: 10, or 4 when `DEBUG` is true). The starts are spread round-robin over the MPI ranks; make `num_starts` several times the rank count so the work balances (see the note under "Multi-start Gradient-based Optimizer" below).
     - **start_sampling**: How the starting points are scattered over the parameter bounds: `sobol` (default), `latin_hypercube` or `random`.
-    - **include_init_point**: If true (default), the first start is the initial parameter values from `{file_prefix}_parameters.csv`, so this method can never do worse than a single-start `sp_minimize` run.
+    - **include_init_point**: If true (default), the first start is the initial parameter values from `{file_prefix}_parameters.json`, so this method can never do worse than a single-start `sp_minimize` run.
     - **seed**: Seed for the start sampler (default: 0), so a run is repeatable.
     - **fd_step**: Finite-difference step used when an automatic-differentiation gradient isn't available — i.e. any configuration without an AD backend (see the gradient-backend note below), or when `do_ad: false` (default: 1e-4).
     - **cost_convergence**: Once any start reaches this cost, every MPI rank stops launching new starts (signalled between ranks with a non-blocking message), so no rank keeps working after a good-enough solution has been found. (Set `no_new_starts_on_convergence: false` to disable this.)
@@ -914,7 +914,7 @@ optimiser_options:
   num_calls_to_function: 10000  # shared option
   cost_convergence: 0.001         # shared option
   sigma0: 0.1                      # CMA-ES specific (optional, initial standard deviation)
-  # Note: Initial parameter values are automatically loaded from {file_prefix}_parameters.csv
+  # Note: Initial parameter values are automatically loaded from {file_prefix}_parameters.json
 ```
 
 ### Gradient-based Optimizer (sp_minimize)
@@ -950,7 +950,7 @@ optimiser_options:
   cost_convergence: 0.0001
   num_starts: 10              # number of L-BFGS-B descents
   start_sampling: sobol       # sobol | latin_hypercube | random
-  include_init_point: true    # first start is the x0 from {file_prefix}_parameters.csv
+  include_init_point: true    # first start is the x0 from {file_prefix}_parameters.json
   seed: 0
 ```
 
@@ -964,7 +964,7 @@ It also streams three live per-start histories *during* the run, appended one ro
 
 $$\dot V = c\left(V - \tfrac{V^3}{3} + R\right), \qquad \dot R = -\tfrac{1}{c}\left(V - a + bR\right)$$
 
-is a standard hard case for parameter estimation: its least-squares surface has many local minima, because a wrong recovery rate `c` puts the simulated spike train out of phase with the data (Ramsay et al. 2007, *J. R. Statist. Soc. B* 69(5), "Parameter estimation for differential equations: a generalized smoothing approach"). The supplied `FitzHugh_Nagumo_parameters.csv` starts at `(a, b, c) = (0.8, 0.9, 2.0)`, which sits inside a local basin; the true values are `(0.2, 0.2, 3.0)`.
+is a standard hard case for parameter estimation: its least-squares surface has many local minima, because a wrong recovery rate `c` puts the simulated spike train out of phase with the data (Ramsay et al. 2007, *J. R. Statist. Soc. B* 69(5), "Parameter estimation for differential equations: a generalized smoothing approach"). The supplied `FitzHugh_Nagumo_parameters.json` starts at `(a, b, c) = (0.8, 0.9, 2.0)`, which sits inside a local basin; the true values are `(0.2, 0.2, 3.0)`.
 
 `sp_minimize` never leaves the basin it starts in. The genetic algorithm escapes it but, being gradient-free, converges slowly. The multi-start finds the global basin *and* refines it with the gradient — whatever gradient backend drives it (finite differences, CasADi AD, or Myokit CVODES FSA). The table below is regenerated by the benchmark runner (`python benchmarks/run_benchmarks.py --update-docs`) and by the **Benchmarks** GitHub Actions workflow, so the published numbers stay current; they depend on the hardware and MPI rank count used.
 
@@ -1146,7 +1146,7 @@ identifiability analysis to it (see [Step kinds](#step-kinds)).
 Paths are relative to the workflow file. A **model** is one of:
 
 - **a module array** of CA, as `"resources/<prefix>_module_array.csv"` (or `.json`). Its
-  parameters file is `<prefix>_parameters.csv` beside it, or name it:
+  parameters file is `<prefix>_parameters.json` beside it, or name it:
   `{"module_array": "...", "parameters": "..."}`.
 - **a module of a module library**, as `{"module_type": "i_M", "version": "Argus2026_v01",
   "parameterisation": "davis2020_wistar"}`. The library is found through `module_library_dirs`
@@ -1294,9 +1294,10 @@ files its settings name under `settings/`. Paths in `settings` (`external_module
 `--from-step X` reruns X and everything after it, reusing the earlier results (and refusing if
 their obs_data, params_for_id or parameters changed since); `--only X` reruns one step.
 `--write-calibrated` writes the merged set beside the target's parameters file, as
-`<name>_calibrated_parameters.csv` (`<name>` is the module array's prefix or the
-parameterisation): the target's rows with the calibrated values in place, and new rows written
-`<vessel>/<variable>`.
+`<name>_calibrated_parameters.json` (`<name>` is the module array's prefix or the
+parameterisation), in the target's nested form: the target's parameters file with each calibrated
+value set at its path (`<vessel>/<variable>` in a module array's file, the module's own path in a
+parameterisation's), added where the file lacks it. The target's files are not changed.
 
 ### Distributions and priors
 

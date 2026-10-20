@@ -176,7 +176,7 @@ def _config(resources_dir, output_dir, generated_models_dir, emulator_dir,
             library='emcee', **overrides):
     config = {
         'file_prefix': 'Simple_ODE_Benchmark',
-        'input_param_file': 'Simple_ODE_Benchmark_parameters.csv',
+        'input_param_file': 'Simple_ODE_Benchmark_parameters.json',
         'model_type': 'cellml',
         'solver': 'CVODE_myokit',
         'param_id_method': 'genetic_algorithm',

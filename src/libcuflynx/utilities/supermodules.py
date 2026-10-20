@@ -47,9 +47,9 @@ name a submodule that is itself a supermodule instance, except by a path into it
 A supermodule instance's values are in the model's parameters file, under its name
 (``heart/lv/E_A``, ``SN/soma/i_M/rho_M`` for a nested one), as the host's own rows; its
 parameter ``<var>`` of submodule ``sub`` is ``{var}_{instance}__{sub}`` in the model. They are
-copied once, when the instance is made, from its version's template -- the parameterisation the
-record names, or the version's default -- with the templates of the supermodules nested in it
-under them (``write_instance_parameters``; ``cuflynx-upgrade supermodule-instances``). Generation
+copied once, when the instance is made, from its version's template -- its default
+parameterisation, with the parameterisation the record names over it -- with the templates of the
+supermodules nested in it under them (``write_instance_parameters``; ``cuflynx-upgrade supermodule-instances``). Generation
 refuses a supermodule instance the model's parameters file has no entry for
 (``check_model_instances``). Of the supermodule's parameterisation it reads only the globals; a
 parameter neither sets comes from the submodule version's ``default_parameterisation``
@@ -152,10 +152,21 @@ def read_supermodule_parameters(supermodule, record, where, registry=None):
     source = (parameterisation_parameters_path(supermodule['config_path'], parameterisation)
               if parameterisation else where)
     paths = submodule_path_parts(supermodule, registry)
+    instances = {s['name'] for s in supermodule['submodules']}
+    for row in own_rows:
+        if not is_global_row(row) and SEPARATOR not in row['variable_name']:
+            # an older {var}_{sub} name is refused naming its converter; another top-level
+            # parameter has no instance to go to
+            supermodule_row_name(row['variable_name'], name, paths, where=f'{source}: ')
+            raise ValueError(
+                f'{source}: "{row["variable_name"]}" is a parameter at its top, which is not one '
+                f'of the supermodule\'s instances ({sorted(instances)}); its instances\' values '
+                f'are nested under their names, and its globals under '
+                f'"{parameters_file.GLOBAL}".')
     return _rename_rows([r for r in own_rows if is_global_row(r)], name, paths, source)
 
 
-def _template(supermodule, parameterisation, where):
+def _template(supermodule, parameterisation, where, registry=None):
     '''The sub-instance values (``{sub: {...}}``, no globals) of the parameterisation
     ``parameterisation`` of the supermodule version ``supermodule`` (None: its default).'''
     used, _ = parameterisation_rows(supermodule, parameterisation, where)
@@ -170,6 +181,11 @@ def _template(supermodule, parameterisation, where):
         if key in (parameters_file.GLOBAL, parameters_file.SCHEMA_VERSION_KEY):
             continue
         if key not in names or parameters_file.is_leaf(value):
+            if parameters_file.is_leaf(value):
+                # an older {var}_{sub} name is refused naming its converter
+                supermodule_row_name(key, supermodule.get('module_type', ''),
+                                     submodule_path_parts(supermodule, registry),
+                                     where=f'{where}: parameterisation "{used}": ')
             raise ValueError(
                 f'{where}: parameterisation "{used}" has "{key}" at its top, which is not one of '
                 f'the supermodule\'s instances ({sorted(names)}); a supermodule\'s parameters '
@@ -194,12 +210,16 @@ def _merge(under, over):
 def instance_values_from_version(supermodule, registry=None, parameterisation=None, where='',
                                  _depth=0):
     '''A new instance's values, ``{sub: {var: parameter}, nested sub: {its sub: ...}}``, of the
-    supermodule version ``supermodule`` (a registry entry): its template -- the parameterisation
-    ``parameterisation``, by default its ``default_parameterisation`` -- with each nested
-    supermodule instance's own version's template under the values the template gives it. Every
-    instance of the version has an entry, ``{}`` when nothing sets its values.'''
+    supermodule version ``supermodule`` (a registry entry): its template, the values of its
+    ``default_parameterisation`` with those of the parameterisation ``parameterisation`` (when
+    another is named) over them, with each nested supermodule instance's own version's template
+    under the values the template gives it. Every instance of the version has an entry, ``{}``
+    when nothing sets its values.'''
     where = where or f'supermodule {_key(supermodule)}'
-    template = _template(supermodule, parameterisation, where)
+    template = _template(supermodule, None, where, registry)
+    if parameterisation is not None and parameterisation != supermodule.get(
+            'default_parameterisation'):
+        template = _merge(template, _template(supermodule, parameterisation, where, registry))
     values = {}
     for sub in supermodule['submodules']:
         nested = (registry or {}).get(_key(sub))
@@ -207,7 +227,16 @@ def instance_values_from_version(supermodule, registry=None, parameterisation=No
         if nested is not None and _depth < _MAX_DEPTH:
             inner = instance_values_from_version(nested, registry, None,
                                                  f'{where}, instance "{sub["name"]}"', _depth + 1)
-        values[sub['name']] = _merge(inner, template.get(sub['name']) or {})
+        own = template.get(sub['name']) or {}
+        if nested is not None:
+            leaves = [k for k, v in own.items() if parameters_file.is_leaf(v)]
+            if leaves:
+                raise ValueError(
+                    f'{where}: its template gives instance "{sub["name"]}", a supermodule '
+                    f'instance, the parameters {leaves}; its values are paths into it '
+                    f'({{"{sub["name"]}": {{"<its instance>": {{"<variable>": ...}}}}}}), and '
+                    f'a global is set under "{parameters_file.GLOBAL}".')
+        values[sub['name']] = _merge(inner, own)
     return values
 
 
@@ -249,8 +278,8 @@ def write_instance_parameters(array_path, registry, instances=None, replace=Fals
     ``array_path`` (those named in ``instances``, default all) into the model's parameters file
     (``parameters``, default ``config_schemas.model_parameters_path``, made when it does not
     exist), under the instance's name: a copy of its version's template
-    (``instance_values_from_version``, from the parameterisation the record names, else the
-    version's default).
+    (``instance_values_from_version``: the version's default parameterisation, with the one the
+    record names over it).
 
     An instance the file has an entry for keeps it unless ``replace``. Returns ``[(name, path,
     action)]``, ``action`` "written", "replaced" or "kept". ``registry`` is the supermodule

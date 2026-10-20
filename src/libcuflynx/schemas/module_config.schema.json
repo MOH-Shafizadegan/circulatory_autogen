@@ -190,7 +190,7 @@
               },
               {
                 "type": "string",
-                "description": "\"constant\" (a parameter named <variable>_<instance> in the parameters file), \"global_constant\" (a parameter shared by every instance, named <variable>), \"boundary_condition\" (a parameter named <variable>_<instance> that a connection can replace), or \"variable\" (computed by the model, not a parameter)",
+                "description": "\"constant\" (a parameter written <instance>/<variable> in the parameters file), \"global_constant\" (a parameter shared by every instance, under \"global\"), \"boundary_condition\" (a parameter written <instance>/<variable> that a connection can replace), or \"variable\" (computed by the model, not a parameter)",
                 "enum": [
                   "constant",
                   "global_constant",
@@ -213,7 +213,7 @@
               ".."
             ]
           },
-          "description": "the parameterisation (a directory under parameterisations/, next to this config file) used when a record names none; ignored if its <name>_parameters.csv does not exist"
+          "description": "the parameterisation (a directory under parameterisations/, next to this config file) used when a record names none; ignored if its <name>_parameters.json does not exist"
         },
         "delay_info": {
           "type": "object",
@@ -346,7 +346,7 @@
               ".."
             ]
           },
-          "description": "the parameterisation (a directory under parameterisations/, next to this config file) used when a record names none; ignored if its <name>_parameters.csv does not exist"
+          "description": "the parameterisation (a directory under parameterisations/, next to this config file) used when a record names none; ignored if its <name>_parameters.json does not exist"
         },
         "interface": {
           "type": "array",

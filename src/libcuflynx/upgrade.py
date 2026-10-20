@@ -54,9 +54,9 @@ What each converts:
   Of two rows for one parameter the first is kept (generation used it) and the other reported.
 * ``supermodule-instances``: writes the values of each supermodule instance of a model into the
   model's parameters file (``<prefix>_parameters.json`` beside its module array, made if
-  needed), under the instance's name: a copy of its version's template, the parameterisation the
-  record names or the version's default (with the templates of the supermodules nested in it
-  under them). It is how a new supermodule instance gets its values. An instance the file has an
+  needed), under the instance's name: a copy of its version's template, its default
+  parameterisation with the parameterisation the record names over it (and the templates of the
+  supermodules nested in it under them). It is how a new supermodule instance gets its values. An instance the file has an
   entry for keeps it; ``--instance`` picks instances and ``--replace`` writes theirs again from the
   version.
 * ``parameter-names``: ``{variable}_{vessel}`` parameter names to ``<vessel>/<variable>``, and
@@ -328,7 +328,11 @@ def _submodules_to_versions(config_path, entry, dry_run, module_library_dirs, bu
         cols, rows = (columns, kept) if name == own else _load_parameterisation(path)
         have = {r['variable_name'].strip().split('/')[-1] for r in rows
                 if r['variable_name'].strip().startswith('global/') or '/' not in r['variable_name']}
-        added = [r for r in folded if r['variable_name'] not in have]
+        added = []
+        for r in folded:          # the first of two submodules' values for one global is kept
+            if r['variable_name'] not in have:
+                have.add(r['variable_name'])
+                added.append(r)
         if added:
             changes.append(f'globals {[r["variable_name"] for r in added]} added to '
                            f'parameterisation "{name}"')
