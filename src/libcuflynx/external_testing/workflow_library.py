@@ -225,10 +225,16 @@ def build_workflow_library(root, settings=None):
                       'submodule_versions': [{'module_type': t, 'module_subtype': s}
                                              for t, s in versions]}])
         _write_json(os.path.join(version_dir, f'{module_type}_v1_module_array.json'), submodules)
-        _write_json(os.path.join(version_dir, f'{module_type}_v1_parameters.json'),
-                    {'schema_version': 1,
-                     'instances': {s['name']: {'parameterisation': 'default', 'parameters': {}}
-                                   for s in submodules}})
+        # the supermodule's instance values; its default parameterisation sets nothing more
+        values = {'twin': {'A': [('p', 1.0)], 'B': [('p', 1.0)]},
+                  'chain': {'A': [('p', 1.0)], 'C': [('q', 1.0), ('k', 1.0, K_SOURCE)]}}[module_type]
+        _write_json(os.path.join(version_dir, f'{module_type}_v1_parameters.json'), {
+            'schema_version': 1,
+            'instances': {s['name']: {'parameterisation': 'default', 'parameters': {
+                row[0]: {'value': row[1], 'units': 'dimensionless',
+                         'data_reference': row[2] if len(row) > 2 else 'workflow test library'}
+                for row in values.get(s['name'], [])}} for s in submodules}})
+        _parameterisation(modules, module_type, 'default', [])
 
     paths = {'modules': modules}
     paths['lin_a/fit_a'] = _parameterisation(modules, 'lin_a', 'fit_a', [('p', 1.0)],
@@ -238,7 +244,6 @@ def build_workflow_library(root, settings=None):
                                              obs=[('y_b', 'mod/y', Y_B, STD_B)],
                                              params_for_id=[('mod', 'p', 0.1, 5.0)])
     twin_rows = [('A/p', 1.0), ('B/p', 1.0)]
-    _parameterisation(modules, 'twin', 'default', twin_rows)
     paths['twin/joint'] = _parameterisation(
         modules, 'twin', 'joint', twin_rows,
         obs=[('y_a', 'mod__A/y', Y_A, STD_A), ('y_b', 'mod__B/y', Y_B, STD_B)],
@@ -255,7 +260,6 @@ def build_workflow_library(root, settings=None):
                   _library_step('fit_b', 'lin_b', paths['lin_b/fit_b'], paths['twin/split'])]})
 
     chain_rows = [('A/p', 1.0), ('C/q', 1.0), ('C/k', 1.0, K_SOURCE)]
-    _parameterisation(modules, 'chain', 'default', chain_rows)
     paths['chain/rest'] = _parameterisation(modules, 'chain', 'rest', chain_rows,
                                             obs=[('z_c', 'mod__C/z', Z_C, STD_C)],
                                             params_for_id=[('mod__C', 'q', 0.1, 10.0)])
