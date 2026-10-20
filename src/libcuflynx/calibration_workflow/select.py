@@ -5,16 +5,18 @@ a workflow already has:
 
 * one instance (a record, or ``heart/lv`` inside a super instance) is its library module,
   placed at that instance (``naming.Placed``), as a step naming ``vessel`` would be. Its
-  parameterisation is the record's; a submodule's is the one its supermodule's parameters file
-  records (``"default"``: its version's default);
+  parameterisation is the record's; a submodule's is the one its super instance's parameters file
+  in the model records (``"default"``: its version's default). A selected supermodule instance is
+  generated with the model's values for it as its own parameters file;
 * several records are the module array they form, cut from the target (``naming.Renamed``,
   names unchanged). A link to a record outside the selection is dropped, which leaves that
   port open.
 
 Either way the step starts from the target's values for those instances. The target's
-parameters file rows for them (plus, for a nested instance, the values its super instances'
-parameters files and parameterisations give it) are the step model's parameters, under any
-values fixed from earlier steps. A cut port's boundary condition then takes its value from the step's
+parameters file rows for them (plus, for a nested instance, the values the parameters file of
+the model's super instance holding it gives it, ``<prefix>_supermodule_parameters/<instance>.json``)
+are the step model's parameters, under any values fixed from earlier steps; a cut array takes the
+model's parameters files of its supermodule instances. A cut port's boundary condition then takes its value from the step's
 obs_data protocol (``params_to_change``), the parameterisation, or the target's parameters
 file; one with none of these is an :class:`UnsetParametersError`.
 
@@ -33,7 +35,7 @@ from libcuflynx.calibration_workflow.spec import LibraryModule, ModuleArray, Wor
 from libcuflynx.utilities.parameter_names import (flat_name, is_path_name, split_path_name)
 from libcuflynx.utilities.parameterisations import (PARAMETERISATION_KEY,
                                                     parameterisation_rows)
-from libcuflynx.utilities.supermodules import instance_parameter_rows
+from libcuflynx.utilities.supermodules import load_instance_parameters
 
 
 class UnsetParametersError(WorkflowError):
@@ -68,11 +70,14 @@ class SelectedArray(ModuleArray):
 @dataclass
 class ResolvedSelection:
     '''What a selection step runs: ``model`` (a LibraryModule or SelectedArray), the target
-    ``vessel`` a single instance sits at (None for several), and ``rows``, the target's
-    parameter rows for the selection named as the step model's parameters file names them.'''
+    ``vessel`` a single instance sits at (None for several), ``rows``, the target's
+    parameter rows for the selection named as the step model's parameters file names them, and
+    ``instance_parameters``, the parameters file a single selected supermodule instance is
+    generated with (the model's values for it), else None.'''
     model: object
     vessel: str
     rows: list
+    instance_parameters: dict = None
 
 
 def _parts(name):
@@ -91,7 +96,8 @@ def resolve_selection(step, target, components, supermodules):
                                 f'{sorted(by_name)}).')
     host_rows = _host_rows(target.model.parameters)
     if len(names) == 1:
-        return _single(step, _parts(names[0]), by_name, host_rows, components, supermodules)
+        return _single(step, _parts(names[0]), by_name, host_rows, components, supermodules,
+                       target.model.module_array)
     nested = [n for n in names if len(_parts(n)) > 1]
     if nested:
         raise WorkflowError(f'step "{step.id}" selects {nested} inside a super instance along '
@@ -111,25 +117,31 @@ def resolve_selection(step, target, components, supermodules):
     return ResolvedSelection(model=model, vessel=None, rows=rows)
 
 
-def _single(step, parts, by_name, host_rows, components, supermodules):
+def _single(step, parts, by_name, host_rows, components, supermodules, array_path):
     record = by_name[parts[0]]
     where = f'step "{step.id}" (selects "{"/".join(parts)}")'
-    # the module at each level of the path, and the parameterisation rows it gives what is below
-    levels = []        # [(entry, parameterisation or None)], the outermost first
-    entry, parameterisation = _entry(record, components, supermodules, where), \
-        record.get(PARAMETERISATION_KEY)
-    levels.append((entry, parameterisation))
+    entry = _entry(record, components, supermodules, where)
+    # the model's values for a super instance: the parameters file of its record, by instance,
+    # each parameter a path below it
+    instances = None
+    if (record['module_type'], record['module_subtype']) in supermodules:
+        try:
+            instances, _ = load_instance_parameters(array_path, record, entry, where)
+        except ValueError as exc:
+            raise WorkflowError(str(exc)) from exc
+    # the module at each level of the path and the parameterisation it runs as
+    levels = [(entry, record.get(PARAMETERISATION_KEY))]
     for depth, name in enumerate(parts[1:], start=1):
         subs = {s['name']: s for s in entry.get('submodules', [])}
         if name not in subs:
             raise WorkflowError(
                 f'{where}: "{"/".join(parts[:depth])}" has no submodule "{name}" (it has '
                 f'{sorted(subs) or "none"}).')
-        sub = subs[name]
-        # a submodule's parameterisation is the one its supermodule's parameters file records
-        started = ((entry.get('instance_parameters') or {}).get(name) or {}).get(
-            'parameterisation', 'default')
-        entry = _entry(sub, components, supermodules, where)
+        # where its values started: the model's file records it for the record's own
+        # submodules, the version's file for those nested deeper
+        recorded = instances if depth == 1 else entry.get('instance_parameters')
+        started = ((recorded or {}).get(name) or {}).get('parameterisation', 'default')
+        entry = _entry(subs[name], components, supermodules, where)
         levels.append((entry, None if started == 'default' else started))
     entry, parameterisation = levels[-1]
     try:
@@ -142,27 +154,48 @@ def _single(step, parts, by_name, host_rows, components, supermodules):
             f'to calibrate (no "parameterisation" and no default_parameterisation file).')
     model = LibraryModule(entry['module_type'], entry['module_subtype'], chosen)
 
-    # lowest precedence first: each enclosing super instance's parameters file and then its
-    # parameterisation, the innermost first (an outer supermodule's values win, as in expansion),
-    # then the host
-    rows = {}
-    for depth, (outer, name) in reversed(list(enumerate(levels[:-1]))):
-        try:
-            _, outer_rows = parameterisation_rows(outer, name, where)
-            outer_rows = instance_parameter_rows(outer, supermodules, where) + outer_rows
-        except ValueError as exc:
-            raise WorkflowError(str(exc)) from exc
-        below = parts[depth + 1:]
-        for row in outer_rows:
-            if not is_path_name(row['variable_name']):
-                continue        # a global
-            path, variable = split_path_name(row['variable_name'], where)
-            if tuple(path[:len(below)]) == below:
-                _put(rows, path[len(below):], variable, row)
+    # lowest precedence first: the model's parameters file of the super instance, then the host
+    rows, below = {}, parts[1:]
+    for instance, values in (instances or {}).items():
+        for key, parameter in values['parameters'].items():
+            path = (instance,) + tuple(key.split('/')[:-1])
+            if path[:len(below)] == below:
+                _put(rows, path[len(below):], key.split('/')[-1], {
+                    'units': parameter['units'], 'value': _value_text(parameter['value']),
+                    'data_reference': parameter.get('data_reference', '')})
     for path, row in host_rows:
         if tuple(path[:len(parts)]) == parts:
             _put(rows, path[len(parts):], split_path_name(row['variable_name'])[1], row)
-    return ResolvedSelection(model=model, vessel=flat_name(parts), rows=list(rows.values()))
+    return ResolvedSelection(model=model, vessel=flat_name(parts), rows=list(rows.values()),
+                             instance_parameters=_selected_instance_parameters(
+                                 entry, instances, below, supermodules))
+
+
+def _value_text(value):
+    return repr(value) if isinstance(value, float) else str(value)
+
+
+def _selected_instance_parameters(entry, instances, below, supermodules):
+    '''The parameters file a selected supermodule instance (``entry``, at ``below`` in its record's
+    ``instances``, the model's file; the record itself when ``below`` is empty) is generated
+    with: the model's values for it, each instance's "parameterisation" as recorded there (or
+    in its version's file). None when it is not a supermodule.'''
+    if (entry['module_type'], entry['module_subtype']) not in supermodules or instances is None:
+        return None
+    if not below:
+        return {'schema_version': 1, 'instances': copy.deepcopy(instances)}
+    template = entry.get('instance_parameters') or {}
+    out = {s['name']: {'parameterisation': (template.get(s['name']) or {}).get(
+               'parameterisation', 'default'), 'parameters': {}}
+           for s in entry['submodules']}
+    for instance, values in instances.items():
+        for key, parameter in values['parameters'].items():
+            path = (instance,) + tuple(key.split('/')[:-1])
+            if path[:len(below)] == below and len(path) > len(below):
+                rest = path[len(below):] + (key.split('/')[-1],)
+                if rest[0] in out:
+                    out[rest[0]]['parameters']['/'.join(rest[1:])] = copy.deepcopy(parameter)
+    return {'schema_version': 1, 'instances': out}
 
 
 def _put(rows, sub_path, variable, row):

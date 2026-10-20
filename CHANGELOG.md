@@ -13,10 +13,11 @@ as the module array they form, cut from the target. The step starts from the tar
 them, and its obs_data and params_for_id name vessels as the target does. A boundary condition
 the selection leaves open takes its value from the step's protocol (`params_to_change`), and one
 with no value anywhere raises `UnsetParametersError`, which lists them. Any workflow step's
-protocol now gives the parameters its model would otherwise leave unset. A calibrated value
-inside a super instance of a module-array target is written to that supermodule's parameters
-file (`<module_type>_<module_subtype>_parameters.json`), and to the calibrated parameters CSV only
-where the target's parameters file has a row for it.
+protocol now gives the parameters its model would otherwise leave unset. A nested selection starts
+from the model's parameters file of its super instance. A calibrated value inside a super
+instance of a module-array target is written to that file
+(`<prefix>_supermodule_parameters/<instance>.json`), never to the supermodule version's, and to the
+calibrated parameters CSV only where the target's parameters file has a row for it.
 
 ### Changed — a supermodule names its submodule versions; its instances are its own module array
 

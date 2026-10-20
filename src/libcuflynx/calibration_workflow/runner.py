@@ -732,7 +732,9 @@ def generate_step_model(resolved_step, work_dir, prefix, rows, obs_data, library
         return generate_model(
             resolved_step.model.model, work_dir, prefix, rows, library_inputs=library_inputs,
             model_type=settings.get('model_type', STEP_DEFAULTS['model_type']),
-            solver=settings.get('solver'), protocol=protocol_values(obs_data))
+            solver=settings.get('solver'), protocol=protocol_values(obs_data),
+            instance_parameters=(resolved_step.selection.instance_parameters
+                                 if resolved_step.selection else None))
     except UnsetModelParameters as exc:
         vessels = sorted(resolved_step.model.vessels, key=len, reverse=True)
         names = []
@@ -787,11 +789,14 @@ def write_calibrated_parameters_to(source, output_dir, path, module_library_dirs
 
 def _write_instance_values(target, merged_parameters, reference):
     '''Write each merged value of a module-array ``target`` at a vessel inside a super instance
-    (``sys__C/q``) into the parameters file of the innermost supermodule holding it (instance
-    ``C`` of ``sys``'s supermodule version, parameter ``q``), in place. That changes every model
-    using that supermodule version. Returns the model names written.'''
-    from libcuflynx.utilities.config_schemas import (dump_supermodule_parameters,
-                                                     supermodule_parameters_path)
+    (``sys__C/q``, ``SN__soma__i_M/g``) into the model's parameters file of the super instance
+    holding it (``<prefix>_supermodule_parameters/sys.json``: instance ``C``, parameter ``q``;
+    ``SN.json``: instance ``soma``, parameter ``i_M/g``), in place. Only that model changes; the
+    supermodule version's file, a new instance's template, is not touched. Returns the model
+    names written.'''
+    from libcuflynx.utilities.config_schemas import (read_supermodule_parameters_file,
+                                                     supermodule_instance_parameters_path,
+                                                     write_supermodule_parameters_file)
     from libcuflynx.utilities.parameter_names import LEVEL_SEPARATOR
     by_name = {r['name']: r for r in target.records}
     docs, written = {}, set()
@@ -801,22 +806,22 @@ def _write_instance_values(target, merged_parameters, reference):
             continue
         parts = vessel.split(LEVEL_SEPARATOR)
         container = by_name.get(parts[0])
-        entry = target.supermodules.get((container['module_type'], container['module_subtype'])) \
-            if container else None
-        for part in parts[1:-1]:
-            if entry is None:
-                break
-            sub = next((s for s in entry['submodules'] if s['name'] == part), None)
-            entry = target.supermodules.get((sub['module_type'], sub['module_subtype'])) \
-                if sub else None
-        if entry is None:
+        if container is None or (container['module_type'],
+                                 container['module_subtype']) not in target.supermodules:
             continue
-        path = supermodule_parameters_path(entry['config_path'], entry)
+        path = supermodule_instance_parameters_path(target.model.module_array, parts[0])
         if path not in docs:
-            with open(path, encoding='utf-8-sig') as f:
-                docs[path] = json.load(f)
-        parameters = docs[path]['instances'][parts[-1]]['parameters']
-        parameter = parameters.setdefault(variable, {'value': None, 'units': record.get('units')})
+            if not os.path.isfile(path):
+                raise WorkflowError(f'{record["parameterisation_name"]}: the parameters file of '
+                                    f'the super instance "{parts[0]}", {path}, does not exist.')
+            docs[path] = read_supermodule_parameters_file(path)
+        instance = docs[path]['instances'].get(parts[1])
+        if instance is None:
+            raise WorkflowError(f'{record["parameterisation_name"]}: {path} has no instance '
+                                f'"{parts[1]}".')
+        key = '/'.join(parts[2:] + [variable])
+        parameter = instance['parameters'].setdefault(key, {'value': None,
+                                                            'units': record.get('units')})
         if not parameter.get('units'):
             raise WorkflowError(f'{record["parameterisation_name"]}: no units to write it to '
                                 f'{path} with.')
@@ -826,8 +831,7 @@ def _write_instance_values(target, merged_parameters, reference):
             parameter['sourced'] = 'no'
         written.add(record['model_name'])
     for path, doc in docs.items():
-        with open(path, 'w', encoding='utf-8') as f:
-            f.write(dump_supermodule_parameters(doc))
+        write_supermodule_parameters_file(path, doc)
     return written
 
 
@@ -837,9 +841,10 @@ def write_calibrated_parameters(target, merged_parameters, workflow_name, path=N
     parameters with the merged values in place, and rows it lacks added, written
     ``<vessel or submodule>/<variable>``. A row is matched by the model parameter it names.
 
-    For a module-array target, a value at a vessel inside a super instance goes to that
-    supermodule's parameters file (``_write_instance_values``); it is written to ``path`` too
-    only where the target's parameters file has a row for it, which would win over the file.'''
+    For a module-array target, a value at a vessel inside a super instance goes to the model's
+    parameters file of that super instance (``_write_instance_values``); it is written to
+    ``path`` too only where the target's parameters file has a row for it, which would win over
+    the file.'''
     rows = read_parameter_rows(target.parameters_path)
     columns = list(rows[0].keys()) if rows else ['variable_name', 'units', 'value',
                                                   'data_reference']
