@@ -32,7 +32,7 @@
       "items": {
         "$ref": "#/$defs/prediction_plot"
       },
-      "description": "figures of a scalar feature against another feature or an input, across experiments (libcuflynx.param_id.prediction_plots); drawn by save_prediction_data and cuflynx-run-predictions"
+      "description": "figures across experiments (libcuflynx.param_id.prediction_plots): a scalar feature against another feature or an input, or an input and a model output over time; drawn by save_prediction_data and cuflynx-run-predictions"
     }
   },
   "required": [
@@ -41,12 +41,10 @@
   "$defs": {
     "prediction_plot": {
       "type": "object",
-      "description": "one figure. A group is the data_items and prediction_items sharing an item_name_for_plotting, at most one per experiment; a point is one experiment",
+      "description": "one figure. feature_vs_feature / feature_vs_input: a group is the data_items and prediction_items sharing an item_name_for_plotting, at most one per experiment, and a point is one experiment. input_and_output / output_vs_input: an input and a model output over time, from a simulation",
       "required": [
         "name",
-        "kind",
-        "x",
-        "y"
+        "kind"
       ],
       "additionalProperties": false,
       "properties": {
@@ -58,16 +56,18 @@
         "kind": {
           "enum": [
             "feature_vs_feature",
-            "feature_vs_input"
+            "feature_vs_input",
+            "input_and_output",
+            "output_vs_input"
           ],
-          "description": "feature_vs_feature: y against another group; feature_vs_input: y against a value params_to_change sets"
+          "description": "feature_vs_feature: y against another group; feature_vs_input: y against a value params_to_change sets; input_and_output: per experiment, the input and the output over time on two y-axes; output_vs_input: the output against the input at the same times, a line per experiment"
         },
         "y": {
           "type": "string",
-          "description": "the group on the y-axis"
+          "description": "feature kinds: the group on the y-axis"
         },
         "x": {
-          "description": "feature_vs_feature: a group; feature_vs_input: the number params_to_change sets in that sub-experiment",
+          "description": "feature kinds: a group (feature_vs_feature) or an input reference (feature_vs_input)",
           "oneOf": [
             {
               "type": "string"
@@ -78,7 +78,7 @@
           ]
         },
         "series": {
-          "description": "one line per distinct value of this input",
+          "description": "feature kinds: one line per distinct value of this input",
           "oneOf": [
             {
               "type": "null"
@@ -87,8 +87,82 @@
               "$ref": "#/$defs/input_reference"
             }
           ]
+        },
+        "input": {
+          "$ref": "#/$defs/time_course_input"
+        },
+        "output": {
+          "type": "string",
+          "pattern": "\\S",
+          "description": "time-course kinds: the model output, <vessel>/<variable> (a nested vessel by its path, SN/soma/membrane/V) or a global's bare name"
+        },
+        "experiments": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "time-course kinds: the experiments drawn. Default: all"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "feature_vs_feature",
+                  "feature_vs_input"
+                ]
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "x",
+              "y"
+            ],
+            "properties": {
+              "input": false,
+              "output": false,
+              "experiments": false
+            }
+          },
+          "description": "A feature_vs_feature or feature_vs_input plot gives x and y, and not input, output or experiments."
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "input_and_output",
+                  "output_vs_input"
+                ]
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "input",
+              "output"
+            ],
+            "properties": {
+              "x": false,
+              "y": false,
+              "series": false
+            }
+          },
+          "description": "An input_and_output or output_vs_input plot gives input and output, and not x, y or series."
+        }
+      ]
     },
     "input_reference": {
       "type": "object",
@@ -100,12 +174,53 @@
       "properties": {
         "params_to_change": {
           "type": "string",
-          "description": "the params_to_change key (a model parameter) whose value is used"
+          "description": "the params_to_change key (a model parameter) whose value is used: a number, or a trace with reduce"
         },
         "subexperiment_idx": {
           "type": "integer",
           "minimum": 0,
           "description": "the sub-experiment whose value is used"
+        },
+        "reduce": {
+          "description": "a trace made one number: its final value, its mean, max or min over the sub-experiment, or its value at a time from the start of the sub-experiment. Ignored for a number. Default: none (an experiment whose input is a trace has no point)",
+          "oneOf": [
+            {
+              "enum": [
+                "final",
+                "mean",
+                "max",
+                "min"
+              ]
+            },
+            {
+              "type": "object",
+              "required": [
+                "at"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "at": {
+                  "type": "number",
+                  "minimum": 0,
+                  "description": "seconds from the start of the sub-experiment"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "time_course_input": {
+      "type": "object",
+      "required": [
+        "params_to_change"
+      ],
+      "additionalProperties": false,
+      "description": "the input of a time-course plot",
+      "properties": {
+        "params_to_change": {
+          "type": "string",
+          "description": "the params_to_change key, drawn over each experiment: a number as a step, a trace as its waveform"
         }
       }
     },

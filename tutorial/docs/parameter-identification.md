@@ -581,9 +581,11 @@ the validation uses.
 
 #### Plots across experiments (`prediction_plots`)
 
-A family of experiments, each summarised by one feature, is read as a curve: peak current
-against step potential (I–V), a feature against a dose. The optional top-level
-`prediction_plots` list draws one figure per entry:
+A family of experiments is often read as one picture: peak current against step potential
+(I–V), a feature against a dose, a clamp protocol beside the current it drives. The optional
+top-level `prediction_plots` list draws one figure per entry. There are four kinds.
+
+**Feature kinds: one point per experiment.**
 
 ```json
 "prediction_plots": [
@@ -598,16 +600,57 @@ against step potential (I–V), a feature against a dose. The optional top-level
   (written, or its default). A group has at most one item per experiment, and each item is a
   scalar feature.
 - A **point** is one experiment: y is the `y` group's item for it; x is the `x` group's item
-  for the same experiment (`feature_vs_feature`) or the number `params_to_change[key]` is set to
-  in that sub-experiment (`feature_vs_input`, which must be a number, not a trace).
+  for the same experiment (`feature_vs_feature`) or the value `params_to_change[key]` takes in
+  that sub-experiment (`feature_vs_input`).
 - `series` (an input reference, optional) draws one line per value of that input. Points are
   sorted by x; an item's `value`/`std` is drawn as error bars.
+- An **input reference** is `{"params_to_change": <key>, "subexperiment_idx": <i>}` with an
+  optional `"reduce"`. A number is used as it is. A trace (a `protocol_traces` or
+  `protocol_shapes` name) needs `reduce` to become one number: `"final"`, `"mean"`, `"max"`,
+  `"min"`, or `{"at": <seconds from the start of that sub-experiment>}`. These are taken over
+  the trace as the sub-experiment applies it (linear between its points, held past its ends,
+  cut at the end of the sub-experiment). An experiment whose input is a trace with no `reduce`
+  has no point: it is left out with a warning that names it.
 
-The structure is checked when the obs_data is read; a group that misses an experiment the
-other group has is an error, not a gap. `save_prediction_data` draws `<name>.png` in the output
-directory after a calibration, with a data_item's model value from the cost path; and
-`cuflynx-run-predictions` draws them without a calibration (a data_item there shows its data
-only).
+```json
+{"name": "Peak I vs ramp end", "kind": "feature_vs_input", "y": "I_peak",
+ "x": {"params_to_change": "clamp/V_cmd", "subexperiment_idx": 1, "reduce": "final"}}
+```
+
+**Time-course kinds: an input and a model output over time.**
+
+```json
+"prediction_plots": [
+  {"name": "Clamp and current", "kind": "input_and_output",
+   "input": {"params_to_change": "clamp/V_cmd"}, "output": "cell/membrane/I_Na",
+   "experiments": [0, 2]},
+  {"name": "I-V loop", "kind": "output_vs_input",
+   "input": {"params_to_change": "clamp/V_cmd"}, "output": "cell/membrane/I_Na"}
+]
+```
+
+- `input_and_output` draws one figure per experiment, `<name>_exp_<idx>.png`. The input is on
+  the left y-axis and the model output on the right, against the time since the end of the
+  warm-up. Sub-experiment boundaries are dashed. A data_item that has the output as a series
+  (its first operand, no operation) in that experiment is overlaid.
+- `output_vs_input` draws the output against the input sampled at the same times, one line per
+  experiment (for example an I–V loop under a voltage ramp), in `<name>.png`.
+- `input` is a `params_to_change` key. Across the experiment, a number is drawn as a step and a
+  trace as its waveform.
+- `output` is written as an obs_data operand is: `<vessel>/<variable>`, a nested vessel by its
+  path (`SN/soma/membrane/V`), or a global's bare name. It is recorded the way prediction items
+  are, in a simulation of those experiments (at the best fit, after a calibration), so any
+  model variable can be drawn. An output the model does not have is refused before anything
+  runs.
+- `experiments` (optional) lists the experiments to draw. The default is all of them.
+
+The structure is checked when the obs_data is read: a `params_to_change` key the protocol does
+not set, a `subexperiment_idx` or experiment out of range, a malformed `reduce`, an `at` after
+the end of its sub-experiment, and the wrong keys for a kind are refused. A feature group that
+misses an experiment the other group has is an error, not a gap. `save_prediction_data` draws
+the figures in the output directory after a calibration, with a data_item's model value from
+the cost path. `cuflynx-run-predictions` draws them without a calibration; a data_item point
+there shows its data only.
 
 ## Running external cellml models
 

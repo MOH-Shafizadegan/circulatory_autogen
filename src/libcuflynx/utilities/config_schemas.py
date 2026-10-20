@@ -42,8 +42,9 @@ submodules only, each of one of the ``submodule_versions`` (every one of which i
 names no ``parameterisation``. A submodule may itself be a supermodule instance, with its own
 ``per_submodule_inputs``/``per_submodule_outputs`` naming siblings.
 
-Its instances' parameter values are ``<module_type>_<module_subtype>_parameters.json`` beside the
-array (``supermodule_parameters_path``, schema ``supermodule_parameters.schema.json``)::
+A version's parameters file, ``<module_type>_<module_subtype>_parameters.json`` beside the array
+(``supermodule_parameters_path``, schema ``supermodule_parameters.schema.json``), is the template
+of a new instance's values::
 
     {"schema_version": 1,
      "instances": {"lv": {"parameterisation": "default",
@@ -54,9 +55,21 @@ array (``supermodule_parameters_path``, schema ``supermodule_parameters.schema.j
 with one entry per instance: the parameterisation of its version its values started from
 (``"default"``, the version's ``default_parameterisation``, or another's name; a record, not
 read) and its values, its own variables for a component instance and paths into it
-(``i_M/g_M``) for a supermodule instance. A submodule's parameter comes from the supermodule's
-parameterisation (rows ``<submodule>/<variable>``, and the globals), then this file, then its
-version's ``default_parameterisation``. Supermodule entries never reach the module dataframe or
+(``i_M/g_M``) for a supermodule instance.
+
+A model is generated from its own copy. Each supermodule instance of a model's module array has a
+parameters file in the same format in the model's files,
+``<prefix>_supermodule_parameters/<instance>.json`` beside the array
+(``supermodule_instance_parameters_path``; ``<prefix>`` is the array's name without
+``_module_array.json``/``.csv``). It is written once, when the instance is made, from its
+version's file (``supermodules.write_instance_parameters``, ``cuflynx-upgrade
+supermodule-instances``), with a nested supermodule instance's values written out as paths, so
+it holds every value the instance has. Generation reads it, never the version's file, and refuses
+an instance without one. A submodule's parameter comes from the host parameters file, then the
+supermodule's parameterisation (its globals only: a ``<submodule>/<variable>`` row there is
+refused), then the instance's file, then the submodule version's ``default_parameterisation``.
+
+Supermodule entries never reach the module dataframe or
 the (module_type, module_subtype) join: they are collected by ``load_supermodule_registry``, which
 reads their arrays and parameters files, and expanded out of the module array
 (``utilities/supermodules.py``) before anything else reads it.
@@ -296,6 +309,35 @@ def load_supermodule_array(entry, config_path):
     return records
 
 
+def read_supermodule_parameters_file(path):
+    '''The supermodule parameters file at ``path`` (a version's, or a model's instance file),
+    checked against its schema (``supermodule_parameters.schema.json``).'''
+    from libcuflynx.schemas import SUPERMODULE_PARAMETERS_SCHEMA
+    from libcuflynx.schemas.validation import validate
+    with open(path, encoding='utf-8-sig') as f:
+        doc = json.load(f)
+    validate(SUPERMODULE_PARAMETERS_SCHEMA, doc, source=path, what='supermodule parameters file')
+    return doc
+
+
+def check_supermodule_parameters_instances(doc, records, path, array_path):
+    '''``{instance name: entry}`` of the parameters file ``doc`` (read from ``path``), in the
+    order of ``records``, the supermodule's instance records (from ``array_path``). ValueError
+    unless its instances are exactly those.'''
+    instances = doc['instances']
+    names = [r['name'] for r in records]
+    missing = [n for n in names if n not in instances]
+    unknown = sorted(n for n in instances if n not in names)
+    if missing or unknown:
+        raise ValueError(f'{path}: its instances must be those of the module array '
+                         f'{array_path}; '
+                         + '; '.join(text for text in (
+                             f'it has no entry for {missing}' if missing else '',
+                             f'{unknown} are not instances there' if unknown else '') if text)
+                         + '.')
+    return {n: instances[n] for n in names}
+
+
 def load_supermodule_parameters(entry, config_path, records):
     '''
     ``{instance name: {"parameterisation", "parameters"}}``: the parameters file
@@ -306,28 +348,72 @@ def load_supermodule_parameters(entry, config_path, records):
     (``supermodule_parameters.schema.json``) refuses, or instances that are not those of the
     module array.
     '''
-    from libcuflynx.schemas import SUPERMODULE_PARAMETERS_SCHEMA
-    from libcuflynx.schemas.validation import validate
     path = supermodule_parameters_path(config_path, entry)
     description = f'supermodule ({entry["module_type"]}, {entry["module_subtype"]})'
     if not os.path.isfile(path):
         raise ValueError(f'{description} of {config_path}: its parameters file {path}, which '
                          f'holds the parameter values of its instances, does not exist.')
-    with open(path, encoding='utf-8-sig') as f:
-        doc = json.load(f)
-    validate(SUPERMODULE_PARAMETERS_SCHEMA, doc, source=path, what='supermodule parameters file')
-    instances = doc['instances']
-    names = [r['name'] for r in records]
-    missing = [n for n in names if n not in instances]
-    unknown = sorted(n for n in instances if n not in names)
-    if missing or unknown:
-        raise ValueError(f'{path}: its instances must be those of the module array '
-                         f'{supermodule_array_path(config_path, entry)}; '
-                         + '; '.join(text for text in (
-                             f'it has no entry for {missing}' if missing else '',
-                             f'{unknown} are not instances there' if unknown else '') if text)
-                         + '.')
-    return {n: instances[n] for n in names}
+    return check_supermodule_parameters_instances(read_supermodule_parameters_file(path), records,
+                                                  path, supermodule_array_path(config_path, entry))
+
+
+#: the directory beside a model's module array holding its supermodule instances' parameters files
+INSTANCE_PARAMETERS_DIR_SUFFIX = '_supermodule_parameters'
+_MODULE_ARRAY_SUFFIXES = ('_module_array', '_vessel_array')
+
+
+def module_array_prefix(array_path):
+    '''``aorta`` for ``aorta_module_array.json`` (or ``.csv``): the array's name without its
+    extension and ``_module_array`` suffix (the whole name without its extension when it has no
+    such suffix).'''
+    stem = os.path.splitext(os.path.basename(str(array_path)))[0]
+    for suffix in _MODULE_ARRAY_SUFFIXES:
+        if stem.endswith(suffix) and len(stem) > len(suffix):
+            return stem[:-len(suffix)]
+    return stem
+
+
+def supermodule_instances_dir(array_path):
+    '''``<array dir>/<prefix>_supermodule_parameters``: where the parameters files of the
+    supermodule instances of the model whose module array is ``array_path`` are.'''
+    return os.path.join(os.path.dirname(os.path.abspath(str(array_path))),
+                        module_array_prefix(array_path) + INSTANCE_PARAMETERS_DIR_SUFFIX)
+
+
+def supermodule_instance_parameters_path(array_path, instance):
+    '''``<prefix>_supermodule_parameters/<instance>.json`` beside the module array
+    ``array_path``: the parameter values of its supermodule instance ``instance``.'''
+    return os.path.join(supermodule_instances_dir(array_path), f'{instance}.json')
+
+
+def copy_supermodule_instance_parameters(source_array, dest_array, instances=None):
+    '''Copy the parameters files of the supermodule instances of the module array
+    ``source_array`` (those named in ``instances``, default all) to where ``dest_array``'s are
+    looked for. Returns the paths written.'''
+    import shutil
+    source_dir = supermodule_instances_dir(source_array)
+    if not os.path.isdir(source_dir):
+        return []
+    written = []
+    for name in sorted(os.listdir(source_dir)):
+        instance, ext = os.path.splitext(name)
+        if ext != '.json' or (instances is not None and instance not in instances):
+            continue
+        dest = supermodule_instance_parameters_path(dest_array, instance)
+        if os.path.realpath(os.path.join(source_dir, name)) == os.path.realpath(dest):
+            continue
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        shutil.copyfile(os.path.join(source_dir, name), dest)
+        written.append(dest)
+    return written
+
+
+def write_supermodule_parameters_file(path, doc):
+    '''Write the supermodule parameters ``doc`` to ``path`` (``dump_supermodule_parameters``),
+    making its directory.'''
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(dump_supermodule_parameters(doc))
 
 
 def dump_supermodule_parameters(doc):
@@ -752,7 +838,8 @@ def load_expanded_vessel_records(path, supermodule_registry=None, component_regi
     records, extra_param_rows = expand_supermodules(read_module_array_records(path),
                                                     supermodule_registry or {}, source=str(path),
                                                     settings=settings,
-                                                    components=component_registry)
+                                                    components=component_registry,
+                                                    instance_parameters=str(path))
     if component_registry is not None:
         extra_param_rows = first_rows_win(extra_param_rows + component_parameterisation_rows(
             records, component_registry, str(path), settings=settings))

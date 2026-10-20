@@ -23,16 +23,40 @@ where the target's parameters file has a row for it.
 A supermodule version's config lists the module versions it is built from, `submodule_versions:
 [{"module_type", "module_subtype"}]`. Its instances and their connections are a module array of their
 own, `<module_type>_<module_subtype>_module_array.json` beside the config, whose records name no
-`parameterisation`. Their parameter values are the supermodule's parameters file,
+`parameterisation`. The values a new instance starts from are the version's parameters file,
 `<module_type>_<module_subtype>_parameters.json` beside the array (schema
 `supermodule_parameters.schema.json`): for each instance, the parameterisation of its version its
-values started from (`"default"` or a name) and the values. A submodule's parameter comes from the
-supermodule's parameterisation (its globals, and any `<submodule>/<variable>` rows), then the
-parameters file, then its version's `default_parameterisation`. An inline `submodules` list is
-refused; `cuflynx-upgrade module-config <file> --module-library-dir <library>` converts it: the
-records to the module array, and each instance's values (from the parameterisation it named, else
-its version's default, with the supermodule's default parameterisation's `<instance>/<variable>`
-rows over them, which leave that parameterisation) to the parameters file.
+values started from (`"default"` or a name) and the values. An inline `submodules` list is refused;
+`cuflynx-upgrade module-config <file> --module-library-dir <library>` converts it: the records to the
+module array, and each instance's values (from the parameterisation it named, else its version's
+default, with the supermodule's default parameterisation's `<instance>/<variable>` rows over them,
+which leave that parameterisation) to the parameters file.
+
+### Changed — each supermodule instance of a model has its own parameters file
+
+A model's supermodule instance takes its values from its own parameters file, in the version's format,
+`<prefix>_supermodule_parameters/<instance>.json` beside the model's module array. It is written once,
+from the version's parameters file (a nested supermodule's values written out as paths), by
+`cuflynx-upgrade supermodule-instances <module array> --module-library-dir <library>`, and after that
+generation reads it and never the version's. An instance without one is refused, naming that command;
+run it once on each model that has supermodule instances. A submodule's parameter comes from the host
+parameters file, then the supermodule's parameterisation, which now sets globals only (a
+`<submodule>/<variable>` row there is refused), then the instance's file, then its version's
+`default_parameterisation`. `supermodule-instances` moves such rows of the instance's parameterisation
+into the instance's file; delete them from the parameterisation afterwards. A calibration workflow
+copies the files with its module arrays, and `pack_workflow` packs them.
+
+### Added — trace inputs and time courses in `prediction_plots`
+
+- An input reference (`x`, `series`) takes an optional `reduce` that makes a trace one number:
+  `"final"`, `"mean"`, `"max"`, `"min"` or `{"at": <seconds from the start of the
+  sub-experiment>}`. A trace without `reduce` is no longer refused when the obs_data is read:
+  that experiment's point is left out with a `PredictionPlotWarning`.
+- Two kinds drawn from a simulation: `input_and_output` (per experiment, a `params_to_change`
+  input and a model output over time on two y-axes, with sub-experiment boundaries and any
+  series data for the output) and `output_vs_input` (the output against the input at the same
+  times, one line per experiment). Both take `{"name", "kind", "input": {"params_to_change"},
+  "output", "experiments"?}`; the schema enforces each kind's keys.
 
 ### Changed — a nested vessel is written by its path
 

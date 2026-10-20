@@ -9,6 +9,7 @@ import os
 import shutil
 
 from libcuflynx.calibration_workflow.naming import STEP_VESSEL, host_model_name
+from libcuflynx.utilities.config_schemas import copy_supermodule_instance_parameters
 
 PARAMETER_HEADER = ('variable_name', 'units', 'value', 'data_reference')
 # the value generation writes for a parameter nothing gave one
@@ -42,9 +43,11 @@ def read_parameter_rows(path):
 
 def generate_parameterisation(target, work_dir, file_prefix, overrides=(), library_inputs=None,
                               model_type='cellml', solver=None, vessel=STEP_VESSEL,
-                              protocol=None):
+                              protocol=None, instance_parameters=None):
     '''Generate the module parameterisation ``target`` (a spec.Target) alone, as a single
-    module-array record named ``vessel``, under ``work_dir``.
+    module-array record named ``vessel``, under ``work_dir``. A supermodule's record gets
+    ``instance_parameters`` (a supermodule parameters file) as its instance parameters file, or a
+    new instance's, from its version.
 
     ``overrides`` are parameter rows (``variable_name`` as a host parameters file names it,
     ``mod__A/p``, ``units``, ``value``, ``data_reference``) written as the host parameters file, which wins
@@ -66,33 +69,56 @@ def generate_parameterisation(target, work_dir, file_prefix, overrides=(), libra
     record = {'name': vessel, 'module_type': target.module_type,
               'module_subtype': target.version, 'parameterisation': target.parameterisation,
               'inp_instances': [], 'out_instances': []}
-    with open(os.path.join(resources_dir, f'{file_prefix}_module_array.json'), 'w') as f:
+    array = os.path.join(resources_dir, f'{file_prefix}_module_array.json')
+    with open(array, 'w') as f:
         json.dump([record], f, indent=1)
+    _write_new_instance(array, vessel, library_inputs, instance_parameters)
     write_parameter_rows(os.path.join(resources_dir, f'{file_prefix}_parameters.csv'),
                          list(overrides))
     return _generate(work_dir, resources_dir, file_prefix, model_type, solver, library_inputs,
                      target.label(), protocol)
 
 
+def _write_new_instance(array, vessel, library_inputs, instance_parameters=None):
+    '''Give the record ``vessel`` of the one-record module array ``array`` its supermodule
+    instance parameters file, when it is a supermodule instance: ``instance_parameters`` if given,
+    else a new instance's, from its version (``supermodules.write_instance_parameters``).'''
+    from libcuflynx.utilities.config_schemas import (supermodule_instance_parameters_path,
+                                                     write_supermodule_parameters_file)
+    if instance_parameters is not None:
+        write_supermodule_parameters_file(supermodule_instance_parameters_path(array, vessel),
+                                          instance_parameters)
+        return
+    from libcuflynx.utilities.module_library import ModuleSources
+    from libcuflynx.utilities.supermodules import write_instance_parameters
+    write_instance_parameters(array, ModuleSources(dict(library_inputs or {})).supermodule_registry(),
+                              replace=True)
+
+
 def generate_module_array(model, work_dir, file_prefix, overrides=(), library_inputs=None,
                           model_type='cellml', solver=None, protocol=None):
     '''Generate the module array ``model`` (a spec.ModuleArray) under ``work_dir``, from a copy
-    of its module array and parameters file. ``overrides`` (rows named as a host parameters
-    file names them) replace the rows of the parameters file that set the same parameter.
-    A select.SelectedArray is written from its records, with ``overrides`` as its parameters
-    file. Returns as :func:`generate_parameterisation`.'''
+    of its module array, its supermodule instances' parameters files and its parameters file.
+    ``overrides`` (rows named as a host parameters file names them) replace the rows of the
+    parameters file that set the same parameter. A select.SelectedArray is written from its
+    records, with ``overrides`` as its parameters file and the target's parameters files of its
+    supermodule instances. Returns as :func:`generate_parameterisation`.'''
     work_dir = os.path.abspath(work_dir)
     resources_dir = os.path.join(work_dir, 'resources')
     os.makedirs(resources_dir, exist_ok=True)
     records = getattr(model, 'records', None)
     if records is not None:
-        with open(os.path.join(resources_dir, f'{file_prefix}_module_array.json'), 'w') as f:
+        array = os.path.join(resources_dir, f'{file_prefix}_module_array.json')
+        with open(array, 'w') as f:
             json.dump(records, f, indent=1)
+        copy_supermodule_instance_parameters(model.module_array, array,
+                                             {r['name'] for r in records})
         rows = []
     else:
         extension = os.path.splitext(model.module_array)[1].lower() or '.csv'
-        shutil.copyfile(model.module_array,
-                        os.path.join(resources_dir, f'{file_prefix}_module_array{extension}'))
+        array = os.path.join(resources_dir, f'{file_prefix}_module_array{extension}')
+        shutil.copyfile(model.module_array, array)
+        copy_supermodule_instance_parameters(model.module_array, array)
         overridden = {host_model_name(row['variable_name']) for row in overrides}
         rows = [r for r in read_parameter_rows(model.parameters)
                 if host_model_name(r.get('variable_name') or '') not in overridden]
@@ -103,14 +129,16 @@ def generate_module_array(model, work_dir, file_prefix, overrides=(), library_in
 
 
 def generate_model(model, work_dir, file_prefix, overrides=(), library_inputs=None,
-                   model_type='cellml', solver=None, protocol=None):
+                   model_type='cellml', solver=None, protocol=None, instance_parameters=None):
     '''Generate a workflow model of either kind: :func:`generate_module_array` for a
-    spec.ModuleArray, :func:`generate_parameterisation` for a library module.'''
+    spec.ModuleArray, :func:`generate_parameterisation` for a library module (a supermodule's
+    with ``instance_parameters``, if given, as its instance's parameters file).'''
     if model.kind == 'array':
         return generate_module_array(model, work_dir, file_prefix, overrides, library_inputs,
                                      model_type, solver, protocol=protocol)
     return generate_parameterisation(model, work_dir, file_prefix, overrides, library_inputs,
-                                     model_type, solver, protocol=protocol)
+                                     model_type, solver, protocol=protocol,
+                                     instance_parameters=instance_parameters)
 
 
 def _unset(resources_dir, file_prefix):

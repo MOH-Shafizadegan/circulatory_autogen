@@ -5,10 +5,12 @@ CellML, a one-entry ``*_modules_config.json`` (module_subtype == version) and na
 sets, *parameterisations*, in ``parameterisations/<name>/<name>_parameters.csv``. A
 module-array record picks one with ``"parameterisation"``; without it, the entry's
 ``default_parameterisation`` is used when its file exists. A supermodule's submodule names none:
-the supermodule's parameterisation sets it (rows ``<sub>/<var>``), then its version's default
-fills the rest. Rows ``{var}`` become ``{var}_{vessel}``, except the module's global constants,
-and are default parameters: the host parameters file wins, then a supermodule's
-parameterisation, then the submodules' version defaults. The older ``instances/`` directory and
+its values are the supermodule instance's parameters file in the model
+(``<prefix>_supermodule_parameters/<instance>.json``, written from the version's parameters file),
+then its version's default fills the rest; the supermodule's parameterisation sets globals only.
+Rows ``{var}`` become ``{var}_{vessel}``, except the module's global constants, and are default
+parameters: the host parameters file wins, then a supermodule's parameterisation, then the
+instance's parameters file, then the submodules' version defaults. The older ``instances/`` directory and
 ``default_instance`` key are refused.
 
 obs_data files may carry a top-level ``obs_data_name``; one filed under
@@ -26,8 +28,8 @@ is recalibrated there changes nothing here. The modules they use:
 
 A small synthetic library is kept for what a real library cannot contain -- its own structure
 tests forbid it: a ``default_parameterisation`` whose file is missing and a config without a
-``parameterisations/`` directory (``pulse_src`` v2), a supermodule with two parameterisations
-(``pair``, ``base`` and ``alt``), and two instances that set one global constant to
+``parameterisations/`` directory (``pulse_src`` v2), a supermodule with three parameterisations
+(``pair``, ``base`` and ``alt``, and ``legacy`` with a ``<sub>/<var>`` row, which is refused), and two instances that set one global constant to
 different values (``pulse_src`` v1 ``default`` and ``other``; no real module's instances
 disagree on a global). Its reader modules are those of test_config_schemas.py.
 """
@@ -55,7 +57,8 @@ from libcuflynx.utilities.parameterisations import (ConflictingGlobalWarning,
                                                    available_parameterisations, global_constants,
                                                    parameterisation_parameters_path, read_parameter_rows)
 from libcuflynx.utilities.parameter_names import supermodule_row_name
-from libcuflynx.utilities.supermodules import submodule_path_parts
+from libcuflynx.utilities.config_schemas import supermodule_instance_parameters_path
+from libcuflynx.utilities.supermodules import (submodule_path_parts, write_instance_parameters)
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RESOURCES_DIR = os.path.join(REPO_ROOT, 'resources')
@@ -99,6 +102,7 @@ def _parameterisation_values(lib, key, instance):
 def _real_load(tmp_path, lib, records):
     path = str(tmp_path / 'm_module_array.json')
     _write_json(path, records)
+    write_instance_parameters(path, lib.supermodules)
     return load_expanded_vessel_records(path, lib.supermodules, lib.components)
 
 
@@ -154,9 +158,10 @@ PULSE_INSTANCES = {
               ('omega', 'per_s', '4.0')],
 }
 PAIR_INSTANCES = {
-    'base': [('a/amp', 'dimensionless', '0.9'), ('a/mean', 'm3_per_s', '2e-05'),
-             ('omega', 'per_s', '5.0')],
-    'alt': [('b/amp', 'dimensionless', '0.1')],
+    'base': [('omega', 'per_s', '5.0')],
+    'alt': [],
+    # a <sub>/<var> row, which a supermodule parameterisation may no longer hold
+    'legacy': [('b/amp', 'dimensionless', '0.1')],
 }
 
 
@@ -220,12 +225,14 @@ def _rec(name, module_type, subtype='nn', inp=(), out=(), **extra):
     return record
 
 
-def _load(tmp_path, library, records):
+def _load(tmp_path, library, records, instances=True):
     path = str(tmp_path / 'm_module_array.json')
     _write_json(path, records)
     files = _config_files(library)
-    return load_expanded_vessel_records(path, load_supermodule_registry(files),
-                                        load_component_registry(files))
+    supermodules = load_supermodule_registry(files)
+    if instances:
+        write_instance_parameters(path, supermodules)
+    return load_expanded_vessel_records(path, supermodules, load_component_registry(files))
 
 
 def _values(rows):
@@ -517,32 +524,125 @@ def test_a_nested_supermodule_s_parameters_file_is_renamed_through_the_nesting(t
 
 
 @pytest.mark.unit
-def test_the_supermodule_s_parameterisation_sets_its_submodules_and_their_default_fills_the_rest(
+def test_the_instance_s_file_sets_its_submodules_and_their_default_fills_the_rest(
         tmp_path, library):
     records, rows = _load(tmp_path, library, _pair_host())
     assert [r['name'] for r in records] == ['pr__a', 'pr__b', 'coll']
     assert all('parameterisation' not in r for r in records[:2])
     assert _values(rows) == {
-        # the supermodule's default parameterisation "base", rows a/amp, a/mean and omega
-        'amp_pr__a': ('0.9', 'base_ref'), 'mean_pr__a': ('2e-05', 'base_ref'),
+        # the supermodule's default parameterisation "base": its global
         'omega': ('5.0', 'base_ref'),
-        # what base leaves unset: the supermodule's parameters file
-        'amp_pr__b': ('0.2', 'file_ref'),
+        # the instance's parameters file, written from the version's
+        'amp_pr__a': ('0.7', 'file_ref'), 'amp_pr__b': ('0.2', 'file_ref'),
         # what that leaves unset: the submodule version's default parameterisation
-        'mean_pr__b': ('1e-05', 'default_ref'),
+        'mean_pr__a': ('1e-05', 'default_ref'), 'mean_pr__b': ('1e-05', 'default_ref'),
     }
 
 
 @pytest.mark.unit
-def test_a_named_supermodule_parameterisation_replaces_its_default(tmp_path, library):
+def test_a_named_supermodule_parameterisation_replaces_its_default_s_globals(tmp_path, library):
     # synthetic: the real supermodules have one parameterisation each
     _, rows = _load(tmp_path, library, _pair_host(parameterisation='alt'))
     assert _values(rows) == {
-        'amp_pr__b': ('0.1', 'alt_ref'),
-        # nothing of base: a takes the parameters file's amp and its version's default mean
-        'amp_pr__a': ('0.7', 'file_ref'), 'mean_pr__a': ('1e-05', 'default_ref'),
-        'omega': ('6.0', 'default_ref'), 'mean_pr__b': ('1e-05', 'default_ref'),
+        'amp_pr__a': ('0.7', 'file_ref'), 'amp_pr__b': ('0.2', 'file_ref'),
+        # nothing of base: omega and mean are the submodules' version default's
+        'omega': ('6.0', 'default_ref'),
+        'mean_pr__a': ('1e-05', 'default_ref'), 'mean_pr__b': ('1e-05', 'default_ref'),
     }
+
+
+# --------------------------------------------------------------------------------------------
+# a model's supermodule instance parameters files
+# --------------------------------------------------------------------------------------------
+
+def _instance_file(tmp_path, instance='pr'):
+    return supermodule_instance_parameters_path(str(tmp_path / 'm_module_array.json'), instance)
+
+
+@pytest.mark.unit
+def test_generation_reads_the_model_s_instance_file_not_the_version_s(tmp_path, library):
+    """The model's copy is what is generated: a value edited there is used, and a value edited
+    in the version's parameters file afterwards is not."""
+    _load(tmp_path, library, _pair_host())
+    path = _instance_file(tmp_path)
+    assert path == str(tmp_path / 'm_supermodule_parameters' / 'pr.json')
+    with open(path) as f:
+        doc = json.load(f)
+    doc['instances']['b']['parameters']['amp'] = {'value': 0.45, 'units': 'dimensionless',
+                                                  'data_reference': 'model_ref'}
+    doc['instances']['a']['parameters']['mean'] = {'value': 3e-05, 'units': 'm3_per_s',
+                                                   'data_reference': 'model_ref'}
+    with open(path, 'w') as f:
+        json.dump(doc, f)
+    version_file = os.path.join(library[0], 'systems', 'pair', 'versions', 'v1',
+                                'pair_v1_parameters.json')
+    original = open(version_file).read()
+    try:
+        with open(version_file, 'w') as f:
+            f.write(original.replace('0.7', '0.11'))
+        _, rows = _load(tmp_path, library, _pair_host())
+    finally:
+        with open(version_file, 'w') as f:
+            f.write(original)
+    values = _values(rows)
+    assert values['amp_pr__b'] == ('0.45', 'model_ref')
+    assert values['mean_pr__a'] == ('3e-05', 'model_ref')
+    assert values['amp_pr__a'] == ('0.7', 'file_ref')
+
+
+@pytest.mark.unit
+def test_a_supermodule_instance_without_its_file_is_refused_naming_the_command(tmp_path,
+                                                                              library):
+    with pytest.raises(ValueError, match=r'supermodule instance "pr" .*its parameters file '
+                                         r'.*m_supermodule_parameters/pr\.json does not exist\. '
+                                         r'.*cuflynx-upgrade supermodule-instances '
+                                         r'.*m_module_array\.json'):
+        _load(tmp_path, library, _pair_host(), instances=False)
+
+
+@pytest.mark.unit
+def test_a_submodule_row_in_a_supermodule_parameterisation_is_refused(tmp_path, library):
+    with pytest.raises(ValueError, match=r'legacy_parameters\.csv: the rows \[\'b/amp\'\] set '
+                                         r'submodule parameters\. A supermodule\'s '
+                                         r'parameterisation sets only globals.*cuflynx-upgrade '
+                                         r'supermodule-instances'):
+        _load_legacy(tmp_path, library)
+
+
+def _load_legacy(tmp_path, library):
+    """The pair host on "legacy", its instance file written from the version alone (as one
+    written before the refusal would be)."""
+    path = str(tmp_path / 'm_module_array.json')
+    _write_json(path, _pair_host(parameterisation='legacy'))
+    files = _config_files(library)
+    supermodules = load_supermodule_registry(files)
+    from libcuflynx.utilities.config_schemas import write_supermodule_parameters_file
+    from libcuflynx.utilities.supermodules import instance_parameters_from_version
+    write_supermodule_parameters_file(_instance_file(tmp_path), instance_parameters_from_version(
+        supermodules[('pair', 'v1')], supermodules))
+    return load_expanded_vessel_records(path, supermodules, load_component_registry(files))
+
+
+@pytest.mark.unit
+def test_writing_an_instance_moves_its_parameterisation_s_submodule_rows_into_its_file(
+        tmp_path, library):
+    """cuflynx-upgrade supermodule-instances: a parameterisation's <sub>/<var> rows go over the
+    version's values in the new file; an existing file is kept unless replaced."""
+    path = str(tmp_path / 'm_module_array.json')
+    _write_json(path, _pair_host(parameterisation='legacy'))
+    supermodules = load_supermodule_registry(_config_files(library))
+    done = write_instance_parameters(path, supermodules)
+    assert [(n, a) for n, _, a in done] == [('pr', 'written')]
+    with open(_instance_file(tmp_path)) as f:
+        doc = json.load(f)
+    assert doc['instances']['b']['parameters']['amp'] == {
+        'value': 0.1, 'units': 'dimensionless', 'data_reference': 'legacy_ref'}
+    assert doc['instances']['a']['parameters']['amp']['value'] == 0.7
+    assert [a for _, _, a in write_instance_parameters(path, supermodules)] == ['kept']
+    assert [a for _, _, a in write_instance_parameters(path, supermodules, replace=True)] == \
+        ['replaced']
+    with pytest.raises(ValueError, match=r"\['coll'\] are not supermodule instances there"):
+        write_instance_parameters(path, supermodules, instances=['coll'])
 
 
 @pytest.mark.unit
@@ -648,19 +748,24 @@ def test_a_supermodule_instance_s_values_are_paths_into_it(tmp_path, library):
     files = _config_files(library) + [config]
     path = str(tmp_path / 'm_module_array.json')
     _write_json(path, [_rec('o', 'outer', 'v1')])
-    _, rows = load_expanded_vessel_records(path, load_supermodule_registry(files),
-                                           load_component_registry(files))
+    supermodules = load_supermodule_registry(files)
+    write_instance_parameters(path, supermodules)
+    # the new instance's file holds pair's values too, as paths, under outer's
+    with open(_instance_file(tmp_path, 'o')) as f:
+        written = json.load(f)['instances']['p']['parameters']
+    assert written['a/amp']['value'] == 0.3 and written['b/amp']['value'] == 0.2
+    _, rows = load_expanded_vessel_records(path, supermodules, load_component_registry(files))
     assert _values(rows)['amp_o__p__a'] == ('0.3', 'outer_ref')
     assert _values(rows)['amp_o__p__b'] == ('0.2', 'file_ref')
 
     outer['instance_parameters'] = {'p': {'amp': (0.3, 'dimensionless')}}
     config = write_supermodule(str(tmp_path / 'outer2'), outer)
+    supermodules = load_supermodule_registry(_config_files(library) + [config])
+    write_instance_parameters(path, supermodules, replace=True)
     with pytest.raises(ValueError, match=r'instance "p" of its parameters file is a supermodule '
                                          r'instance, so its parameter "amp" must be a path into '
                                          r'it'):
-        load_expanded_vessel_records(path, load_supermodule_registry(_config_files(library)
-                                                                     + [config]),
-                                     load_component_registry(files))
+        load_expanded_vessel_records(path, supermodules, load_component_registry(files))
 
 
 # --------------------------------------------------------------------------------------------
