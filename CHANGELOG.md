@@ -17,6 +17,15 @@ next release; add to that section as you land a change.
   times, one line per experiment). Both take `{"name", "kind", "input": {"params_to_change"},
   "output", "experiments"?}`; the schema enforces each kind's keys.
 
+### Changed — `solver: CVODE` for a cellml model is `CVODE_myokit`
+
+`solver: CVODE` (or `solver_info.solver: CVODE`) with `model_type: cellml` is read as
+`CVODE_myokit` when user_inputs are read, with one printed line saying so; a `solver_info` error
+then names the shorthand. The dated `user_inputs_<yymmdd>.yaml` keeps `CVODE`, as written; a
+pipeline bundle's config records `CVODE_myokit`, since its `run_pipeline.py` does not go through
+the reader. `CVODE` for a cpp model is unchanged. The shorthand is listed in
+`SOLVER_SCHEMA['solver_aliases_by_model_type']`.
+
 ### Changed — a nested vessel is written by its path
 
 An output or obs_data operand names a nested vessel by its path, as a host parameter already
@@ -97,8 +106,6 @@ naming what to write instead:
 - `do_mcmc` / `mcmc_options` / `debug_mcmc_options` -> `do_uq` / `UQ_options` /
   `debug_UQ_options`.
 - `model_type: cellml_only` -> `cellml`.
-- `solver: CVODE` with a cellml model -> `CVODE_myokit` or `CVODE_opencor` (`CVODE` stays the
-  cpp solver).
 - AADC `method: bdf_tape` / `bdf_kernel` -> `method: semi_implicit_signed` with
   `gradient_strategy: tape` / `kernel`.
 - `sa_options.gradient_method: analytic` -> `auto`.

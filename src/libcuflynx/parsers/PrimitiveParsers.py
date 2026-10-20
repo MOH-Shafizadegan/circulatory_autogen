@@ -175,6 +175,12 @@ SOLVER_SCHEMA = {
         # something to name.
         'external': ['external'],
     },
+    # Shorthands accepted for a model_type's solver, and the solver each is read as (at read
+    # time, by resolve_solver_alias). `CVODE` is cpp's own solver; for a cellml model it means
+    # CVODE_myokit.
+    'solver_aliases_by_model_type': {
+        'cellml': {'CVODE': 'CVODE_myokit'},
+    },
     # Default solver for each model_type (used when none is specified).
     'default_solver_by_model_type': {
         # CVODE_myokit, not CVODE_opencor: the default has to be a backend a pip install can
@@ -2065,14 +2071,58 @@ def refuse_removed_user_inputs(inp_data_dict):
     if inp_data_dict.get('model_type') == 'cellml_only':
         raise ValueError("model_type 'cellml_only' is not supported; write 'cellml' instead.")
     solver_info = inp_data_dict.get('solver_info') or {}
-    solver = solver_info.get('solver', inp_data_dict.get('solver'))
-    if solver == 'CVODE' and inp_data_dict.get('model_type', 'cellml') == 'cellml':
-        raise ValueError("solver 'CVODE' is for model_type 'cpp'; for a cellml model write "
-                         "'CVODE_myokit' or 'CVODE_opencor' instead.")
     method = solver_info.get('method')
     if method in ('bdf_tape', 'bdf_kernel'):
         raise ValueError(f"solver_info method {method!r} is not supported; write method: "
                          f"semi_implicit_signed with gradient_strategy: {method[4:]} instead.")
+
+
+#: user_inputs key holding the solver as the user wrote it, when resolve_solver_alias read it as
+#: another solver; user_inputs_as_written puts it back.
+SOLVER_AS_WRITTEN_KEY = '_solver_as_written'
+
+
+def resolve_solver_alias(inp_data_dict):
+    """Read a solver shorthand (``SOLVER_SCHEMA['solver_aliases_by_model_type']``) as the solver
+    it names, in both ``solver`` and ``solver_info.solver``: ``CVODE`` for a cellml model is
+    ``CVODE_myokit``. Prints one line when it does, and records the written name for
+    ``user_inputs_as_written``."""
+    model_type = inp_data_dict.get('model_type', 'cellml')
+    aliases = SOLVER_SCHEMA['solver_aliases_by_model_type'].get(model_type, {})
+    solver_info = inp_data_dict.get('solver_info') or {}
+    written = solver_info.get('solver', inp_data_dict.get('solver'))
+    if written not in aliases:
+        return
+    resolved = aliases[written]
+    if inp_data_dict.get('solver') == written:
+        inp_data_dict['solver'] = resolved
+    if solver_info.get('solver') == written:
+        inp_data_dict['solver_info'] = dict(solver_info, solver=resolved)
+    inp_data_dict[SOLVER_AS_WRITTEN_KEY] = written
+    print(f'solver {written} for a {model_type} model: using {resolved}')
+
+
+def solver_alias_note(inp_data_dict):
+    """'' or the sentence saying which solver a shorthand was read as, for error messages."""
+    written = inp_data_dict.get(SOLVER_AS_WRITTEN_KEY)
+    if not written:
+        return ''
+    solver = (inp_data_dict.get('solver_info') or {}).get('solver', inp_data_dict.get('solver'))
+    return (f" (solver {written!r} was read as {solver!r} for this "
+            f"{inp_data_dict.get('model_type', 'cellml')} model)")
+
+
+def user_inputs_as_written(inp_data_dict):
+    """A copy of ``inp_data_dict`` with the solver the user wrote in place of the one a shorthand
+    was read as (resolve_solver_alias), for writing user_inputs back."""
+    out = dict(inp_data_dict)
+    written = out.pop(SOLVER_AS_WRITTEN_KEY, None)
+    if written:
+        if 'solver' in out:
+            out['solver'] = written
+        if isinstance(out.get('solver_info'), dict) and 'solver' in out['solver_info']:
+            out['solver_info'] = dict(out['solver_info'], solver=written)
+    return out
 
 
 def save_dated_user_inputs(inp_data_dict):
@@ -2088,7 +2138,7 @@ def save_dated_user_inputs(inp_data_dict):
             return
         # Keep only yaml-serialisable entries so a stray object never breaks a run.
         safe = {}
-        for key, value in inp_data_dict.items():
+        for key, value in user_inputs_as_written(inp_data_dict).items():
             try:
                 yaml.safe_dump({key: value})
             except Exception:
@@ -2343,6 +2393,7 @@ class YamlFileParser(object):
         refuse_removed_user_inputs(inp_data_dict)
         if 'model_type' not in inp_data_dict.keys():
             inp_data_dict['model_type'] = 'cellml'
+        resolve_solver_alias(inp_data_dict)
 
         if inp_data_dict.get('model_type') == 'external_python':
             model_ext = None
@@ -2615,7 +2666,7 @@ class YamlFileParser(object):
         try:
             validate_solver_info(solver_name, inp_data_dict['solver_info'])
         except ValueError as exc:
-            print(exc)
+            print(f'{exc}{solver_alias_note(inp_data_dict)}')
             exit()
 
         warn_if_casadi_nonzero_pre_time(

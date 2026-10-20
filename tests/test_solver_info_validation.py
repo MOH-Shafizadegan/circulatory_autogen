@@ -1,4 +1,5 @@
 import ast
+import os
 import pathlib
 import re
 import warnings
@@ -1432,8 +1433,6 @@ def test_cvode_myokit_schema_declares_cas_defaults():
     ({'debug_mcmc_options': {}}, 'debug_UQ_options'),
     ({'do_mcmc': True}, 'do_uq'),
     ({'model_type': 'cellml_only'}, "'cellml'"),
-    ({'solver': 'CVODE'}, 'CVODE_myokit'),
-    ({'model_type': 'cellml', 'solver_info': {'solver': 'CVODE'}}, 'CVODE_myokit'),
     ({'model_type': 'aadc_python', 'solver_info': {'method': 'bdf_tape'}},
      'gradient_strategy: tape'),
     ({'model_type': 'aadc_python', 'solver_info': {'method': 'bdf_kernel'}},
@@ -1448,6 +1447,7 @@ def test_a_removed_user_inputs_form_is_refused_naming_its_replacement(inp, repla
 def test_current_user_inputs_forms_are_not_refused():
     refuse_removed_user_inputs({'model_type': 'cpp', 'solver': 'CVODE', 'do_uq': True,
                                 'UQ_options': {}, 'optimiser_options': {}})
+    refuse_removed_user_inputs({'model_type': 'cellml', 'solver': 'CVODE'})
     refuse_removed_user_inputs({'model_type': 'aadc_python',
                                 'solver_info': {'method': 'semi_implicit_signed'}})
 
@@ -1591,3 +1591,78 @@ def test_the_defaulted_solver_comes_from_the_schema_for_every_model_type():
             f'{model_type} defaults to {defaults[model_type]!r}, which is not one of its '
             f'solvers {solvers} -- a method name here is the mistake to look for')
 
+
+
+# ---------------------------------------------------------------------------
+# `solver: CVODE` for a cellml model is read as CVODE_myokit
+# ---------------------------------------------------------------------------
+def _cvode_inputs(tmp_path, model_type='cellml', solver_info=None, top_level=True):
+    import shutil
+    resources = tmp_path / 'resources'
+    resources.mkdir(exist_ok=True)
+    for suffix in ('_module_array.csv', '_parameters.csv'):
+        shutil.copy(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                 'resources', '3compartment' + suffix), resources)
+    inp = {'file_prefix': '3compartment', 'input_param_file': '3compartment_parameters.csv',
+           'model_type': model_type, 'resources_dir': str(resources),
+           'generated_models_dir': str(tmp_path / 'generated'),
+           'dt': 0.01, 'pre_time': 0.0, 'sim_time': 1.0}
+    if top_level:
+        inp['solver'] = 'CVODE'
+    if solver_info is not None:
+        inp['solver_info'] = solver_info
+    return inp
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('top_level, solver_info', [
+    (True, None),
+    (False, {'solver': 'CVODE', 'MaximumStep': 0.001}),
+    (True, {'solver': 'CVODE'}),
+])
+def test_cvode_for_a_cellml_model_runs_as_cvode_myokit(tmp_path, capsys, top_level,
+                                                       solver_info):
+    parsed = YamlFileParser().parse_user_inputs_file(
+        _cvode_inputs(tmp_path, solver_info=solver_info, top_level=top_level),
+        obs_path_needed=False, do_generation_with_fit_parameters=False)
+    assert parsed['solver_info']['solver'] == 'CVODE_myokit'
+    assert parsed['solver_info']['method'] == 'CVODE'
+    out = capsys.readouterr().out
+    assert out.count('solver CVODE for a cellml model: using CVODE_myokit') == 1
+
+
+@pytest.mark.unit
+def test_the_solver_info_error_names_the_cvode_shorthand(tmp_path, capsys):
+    with pytest.raises(SystemExit):
+        YamlFileParser().parse_user_inputs_file(
+            _cvode_inputs(tmp_path, solver_info={'solver': 'CVODE', 'dt_solver': 1e-4,
+                                                 'MaximumNumberOfSteps': 100,
+                                                 'not_a_key': 1}),
+            obs_path_needed=False, do_generation_with_fit_parameters=False)
+    out = capsys.readouterr().out
+    assert "not supported by solver 'CVODE_myokit'" in out
+    assert "solver 'CVODE' was read as 'CVODE_myokit' for this cellml model" in out
+
+
+@pytest.mark.unit
+def test_the_dated_user_inputs_keep_cvode(tmp_path):
+    import yaml
+    from datetime import date
+    inp = _cvode_inputs(tmp_path, solver_info={'solver': 'CVODE'})
+    YamlFileParser().parse_user_inputs_file(inp, obs_path_needed=False,
+                                            do_generation_with_fit_parameters=False)
+    dated = tmp_path / 'resources' / f"user_inputs_{date.today().strftime('%y%m%d')}.yaml"
+    saved = yaml.safe_load(dated.read_text())
+    assert saved['solver_info']['solver'] == 'CVODE'
+    assert not any(key.startswith('_') for key in saved)
+
+
+@pytest.mark.unit
+def test_cvode_for_a_cpp_model_is_unchanged(tmp_path, capsys):
+    parsed = YamlFileParser().parse_user_inputs_file(
+        _cvode_inputs(tmp_path, model_type='cpp', solver_info={'dt_solver': 1e-4}),
+        obs_path_needed=False, do_generation_with_fit_parameters=False)
+    assert parsed['solver_info']['solver'] == 'CVODE'
+    assert 'using CVODE_myokit' not in capsys.readouterr().out
+    assert 'CVODE' in SOLVER_SCHEMA['solvers_by_model_type']['cpp']
+    assert SOLVER_SCHEMA['solver_aliases_by_model_type'] == {'cellml': {'CVODE': 'CVODE_myokit'}}
