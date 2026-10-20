@@ -17,6 +17,7 @@ import _module_library as module_library
 from libcuflynx.utilities.config_schemas import (load_component_registry,
                                                  load_expanded_vessel_records,
                                                  load_supermodule_registry)
+from libcuflynx.utilities.supermodules import write_instance_parameters
 from libcuflynx.utilities.parameter_names import (host_model_names, model_name, output_model_name,
                                                   split_path_name,
                                                   supermodule_row_name)
@@ -237,13 +238,16 @@ def library_files():
 
 
 def _soma_rows(tmp_path, files):
+    """The soma's rows in a model of one soma instance in ``tmp_path``, whose parameters file is
+    written from its version (and its parameterisation's <sub>/<var> rows) when it has none."""
     path = str(tmp_path / 'm_module_array.json')
     import json
     with open(path, 'w') as f:
         json.dump([{'name': 'soma', 'module_type': SOMA[0], 'module_subtype': SOMA[1],
                     'inp_instances': [], 'out_instances': []}], f)
-    _, rows = load_expanded_vessel_records(path, load_supermodule_registry(files),
-                                           load_component_registry(files))
+    supermodules = load_supermodule_registry(files)
+    write_instance_parameters(path, supermodules)
+    _, rows = load_expanded_vessel_records(path, supermodules, load_component_registry(files))
     return {r['variable_name']: (r['value'], r['data_reference']) for r in rows}
 
 
@@ -273,15 +277,15 @@ def test_a_supermodule_parameterisation_in_the_older_form_is_refused_and_convert
     rows += [{'variable_name': f'membrane/{v}', 'units': q['units'], 'value': repr(q['value']),
               'data_reference': q.get('data_reference', ''), 'sourced': q.get('sourced', '')}
              for v, q in membrane.items()]
-    with open(parameterisation, 'w', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=columns, extrasaction='ignore')
-        writer.writeheader()
-        writer.writerows(rows)
+    _write_rows(parameterisation, columns, rows)
     current = _read(parameterisation)
     assert any(r['variable_name'].startswith('membrane/') for r in current)
     files_with_copy = [f for f in files if f != original] + [config]
+    # what the model is without those rows: the values are the parameters file's
+    _write_rows(parameterisation, columns, [r for r in current if '/' not in r['variable_name']])
     os.makedirs(tmp_path / 'current')
     expected = _soma_rows(tmp_path / 'current', files_with_copy)
+    _write_rows(parameterisation, columns, current)
 
     _write_old_form(parameterisation, _old_row_name)
     os.makedirs(tmp_path / 'old')
@@ -290,8 +294,21 @@ def test_a_supermodule_parameterisation_in_the_older_form_is_refused_and_convert
     assert upgrade(['parameter-names', '--supermodule-config', config, '--module-library-dir',
                     modules, '--no-builtin-modules']) == 0
     assert _read(parameterisation) == current
+    # <sub>/<var> rows are a submodule's values, which a supermodule parameterisation no longer
+    # holds: writing the instance's parameters file takes them in, and they are deleted here
     os.makedirs(tmp_path / 'after')
+    with pytest.raises(ValueError, match=r'set submodule parameters.*cuflynx-upgrade '
+                                         r'supermodule-instances'):
+        _soma_rows(tmp_path / 'after', files_with_copy)
+    _write_rows(parameterisation, columns, [r for r in current if '/' not in r['variable_name']])
     assert _soma_rows(tmp_path / 'after', files_with_copy) == expected
+
+
+def _write_rows(path, columns, rows):
+    with open(path, 'w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=columns, extrasaction='ignore')
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 @pytest.mark.unit

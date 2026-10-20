@@ -35,7 +35,9 @@ from libcuflynx.utilities.config_schemas import (load_supermodule_registry, load
                                                  normalise_module_config_entry,
                                                  read_module_array_records, module_array_path,
                                                  module_array_to_json, vessel_records_to_frame)
-from libcuflynx.utilities.supermodules import expand_supermodules
+from libcuflynx.utilities.module_library import ModuleSources
+from libcuflynx.utilities.supermodules import (expand_supermodules, version_instance_parameters,
+                                               write_instance_parameters)
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RESOURCES_DIR = os.path.join(REPO_ROOT, 'resources')
@@ -62,10 +64,13 @@ FLOWPAIR = {
     'description': 'a flow collector and a gain, for tests',
     'submodules': [_rec('coll', 'collector'), _rec('g', 'gain')],
     'default_parameterisation': 'default',
+    # its parameters file: the values a new instance starts from
+    'instance_parameters': {'g': {'mean': (1.5e-05, 'm3_per_s', 'flowpair_default'),
+                                  'amp': (0.25, 'dimensionless', 'flowpair_default'),
+                                  'omega': (3.0, 'per_s', 'flowpair_default')}},
 }
-FLOWPAIR_DEFAULTS = [  # (variable_name, units, value) of its parameterisation "default"
-    ('g/mean', 'm3_per_s', '1.5e-05'), ('g/amp', 'dimensionless', '0.25'),
-    ('g/omega', 'per_s', '3.0'), ('some_global', 'dimensionless', '7.0'),
+FLOWPAIR_DEFAULTS = [  # (variable_name, units, value) of its parameterisation "default": a global
+    ('some_global', 'dimensionless', '7.0'),
 ]
 # "inner": a gain feeding a reader, internally; "outer" nests an "inner" next to a collector
 INNER = {
@@ -134,12 +139,20 @@ def _write_array(resources_dir, prefix, records, fmt):
     return path
 
 
+def _write_instances(array, modules_dir):
+    """Each supermodule instance of the module array ``array`` gets its parameters file, new from
+    its version (the supermodules in ``modules_dir``, an external_modules_dir)."""
+    write_instance_parameters(array, ModuleSources({'external_modules_dir': modules_dir})
+                              .supermodule_registry())
+
+
 def _generate(work_dir, modules_dir, prefix, records, params, fmt='json', data_reference='test'):
-    """Write the module array and parameters and generate the model; returns the CellML path."""
+    """Write the module array, its supermodule instances' parameters files (new, from their
+    versions) and parameters, and generate the model; returns the CellML path."""
     work_dir = str(work_dir)
     resources_dir = os.path.join(work_dir, 'resources')
     os.makedirs(resources_dir, exist_ok=True)
-    _write_array(resources_dir, prefix, records, fmt)
+    _write_instances(_write_array(resources_dir, prefix, records, fmt), modules_dir)
     with open(os.path.join(resources_dir, f'{prefix}_parameters.csv'), 'w') as f:
         f.write('variable_name,units,value,data_reference\n')
         for row in params:
@@ -171,9 +184,14 @@ def _generated_parameters(cellml_path):
         return {row['variable_name']: row for row in csv.DictReader(f)}
 
 
-def _expand(records, registry):
+def _expand(records, registry, instance_parameters=None):
+    """Expand ``records``, each supermodule instance with ``instance_parameters`` (default: a new
+    instance's, from its version)."""
     from libcuflynx.utilities.config_schemas import normalise_vessel_records
-    return expand_supermodules(normalise_vessel_records(records, 'test'), registry, 'test')
+    records = normalise_vessel_records(records, 'test')
+    if instance_parameters is None:
+        instance_parameters = version_instance_parameters(records, registry)
+    return expand_supermodules(records, registry, 'test', instance_parameters=instance_parameters)
 
 
 def read_records(records):
@@ -227,11 +245,12 @@ HOST_PARAMS = (_prescribed_params('src_a', 1.0e-5, 0.5, 6.0) +
 
 
 def _flowpair_defaults(instance, join='_'):
-    '''The flowpair parameterisation's rows as host rows of the vessel ``<instance><join>g``.
-    Its global ``some_global`` is left out: no module of the flattened model declares it, so a
-    host file may not set it.'''
-    return [(f'{instance}{join}{name}', units, value, 'flowpair_default')
-            for name, units, value in FLOWPAIR_DEFAULTS if '/' in name]
+    '''The values of a new flowpair instance's parameters file as host rows of the vessels
+    ``<instance><join><submodule>``. Its parameterisation's global ``some_global`` is left out: no
+    module of the flattened model declares it, so a host file may not set it.'''
+    return [(f'{instance}{join}{sub}/{var}', units, repr(value), reference)
+            for sub, values in FLOWPAIR['instance_parameters'].items()
+            for var, (value, units, reference) in values.items()]
 
 
 # --------------------------------------------------------------------------------------------
@@ -500,7 +519,7 @@ def test_supermodule_generates_the_same_model_as_the_flattened_array_and_runs(
     params = HOST_PARAMS + _flowpair_defaults('pair')
     flattened = _generate(tmp_path / 'flat', super_library_dir, 'jv_pair',
                           _flowpair_flattened(join='_'), params)
-    # the supermodule's default parameters stand in for the flattened model's gain parameters
+    # the instance's parameters file stands in for the flattened model's gain parameters
     expanded = _generate(tmp_path / 'super', super_library_dir, 'jv_pair', _flowpair_host(),
                          HOST_PARAMS)
     _assert_same_up_to_level_joins(flattened, expanded)
@@ -531,9 +550,10 @@ def test_supermodule_parameters_are_renamed_and_globals_added_once(registry):
     ]
     _, rows = _expand(host, registry)
     names = [row['variable_name'] for row in rows]
-    assert names == ['mean_p1__g', 'amp_p1__g', 'omega_p1__g', 'some_global',
+    # the parameterisation's global, then each instance's parameters file
+    assert names == ['some_global', 'mean_p1__g', 'amp_p1__g', 'omega_p1__g',
                      'mean_p2__g', 'amp_p2__g', 'omega_p2__g']
-    assert rows[0] == {'variable_name': 'mean_p1__g', 'units': 'm3_per_s', 'value': '1.5e-05',
+    assert rows[1] == {'variable_name': 'mean_p1__g', 'units': 'm3_per_s', 'value': '1.5e-05',
                        'data_reference': 'flowpair_default'}
 
 
@@ -652,7 +672,8 @@ def test_load_model_expands_before_the_heart_block(tmp_path, super_library_dir):
     from libcuflynx.parsers.ModelParsers import CSV0DModelParser
     resources = tmp_path / 'resources'
     resources.mkdir()
-    _write_array(str(resources), 'm', _flowpair_host('heart'), 'json')
+    _write_instances(_write_array(str(resources), 'm', _flowpair_host('heart'), 'json'),
+                     super_library_dir)
     (resources / 'm_parameters.csv').write_text(
         'variable_name,units,value,data_reference\n' +
         ''.join(f'{n},{u},{v},t\n' for n, u, v in HOST_PARAMS))
@@ -759,6 +780,7 @@ def test_convert_0d_to_1d_keeps_a_json_arrays_supermodule_links(tmp_path, regist
     from libcuflynx.utilities.config_schemas import dump_vessel_records
     records = read_records(_flowpair_host() + [_rec('A', 'flow_src', out=[])])
     (tmp_path / 'm_0d_module_array.json').write_text(dump_vessel_records(records))
+    write_instance_parameters(str(tmp_path / 'm_0d_module_array.json'), registry)
     (tmp_path / 'm_0d_parameters.csv').write_text('variable_name,units,value,data_reference\n')
     convert_0d_to_1d('m', str(tmp_path), 'm_0d_parameters.csv', vess_1d_list=['A'])
     hybrid = tmp_path / 'm_hybrid_module_array.json'
@@ -767,7 +789,11 @@ def test_convert_0d_to_1d_keeps_a_json_arrays_supermodule_links(tmp_path, regist
     assert (converted['A']['module_type'], converted['A']['module_subtype']) == ('FV1D_vessel', 'nn')
     assert converted['pair']['per_submodule_inputs'] == {'coll': ['src_a', 'src_b']}
     assert converted['pair']['per_submodule_outputs'] == {'g': ['rd']}
-    expanded, _ = expand_supermodules(list(converted.values()), registry, 'test')
+    # the instance's parameters file goes with the array
+    assert (tmp_path / 'm_hybrid_supermodule_parameters' / 'pair.json').read_text() == \
+        (tmp_path / 'm_0d_supermodule_parameters' / 'pair.json').read_text()
+    expanded, _ = expand_supermodules(list(converted.values()), registry, 'test',
+                                      instance_parameters=str(hybrid))
     assert 'pair__coll' in {r['name'] for r in expanded}
 
 
@@ -812,23 +838,18 @@ def test_the_1d_generator_reads_the_merged_parameters(tmp_path):
 
 
 @pytest.mark.unit
-def test_a_supermodule_parameter_reaches_a_nested_supermodules_submodules(tmp_path, registry):
-    """A supermodule's row naming a submodule of a nested supermodule (in/g/mean: submodule g
-    of the inner supermodule in) reaches it."""
-    config = tmp_path / 'outer_modules_config.json'
-    config.write_text('[]')
-    rows_dir = tmp_path / 'parameterisations' / 'p'
-    rows_dir.mkdir(parents=True)
-    (rows_dir / 'p_parameters.csv').write_text('variable_name,units,value,data_reference\n'
-                                               'in/g/mean,m3_per_s,2e-05,outer\n'
-                                               'coll/mean,m3_per_s,1e-05,outer\n'
-                                               'some_global,dimensionless,3,outer\n')
-    outer = dict(registry[('outer', 'supermodule')], default_parameterisation='p',
-                 config_path=str(config))
-    _, rows = _expand([_rec('o', 'outer', subtype='supermodule')],
-                      {**registry, ('outer', 'supermodule'): outer})
-    names = {r['variable_name'] for r in rows}
-    assert {'mean_o__in__g', 'mean_o__coll', 'some_global'} <= names
+def test_a_supermodule_parameter_reaches_a_nested_supermodules_submodules(registry):
+    """An instance's parameters file naming a submodule of a nested supermodule (in, g/mean:
+    submodule g of the inner supermodule in) reaches it."""
+    instances = version_instance_parameters([_rec('o', 'outer', subtype='supermodule')], registry)
+    parameters = instances['o']['instances']
+    parameters['in']['parameters']['g/mean'] = {'value': 2e-05, 'units': 'm3_per_s',
+                                               'data_reference': 'outer'}
+    parameters['coll']['parameters']['mean'] = {'value': 1e-05, 'units': 'm3_per_s',
+                                               'data_reference': 'outer'}
+    _, rows = _expand([_rec('o', 'outer', subtype='supermodule')], registry, instances)
+    values = {r['variable_name']: r['value'] for r in rows}
+    assert values['mean_o__in__g'] == '2e-05' and values['mean_o__coll'] == '1e-05'
 
 
 @pytest.mark.unit

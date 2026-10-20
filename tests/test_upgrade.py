@@ -261,7 +261,8 @@ def test_each_instance_s_values_are_written_to_the_parameters_file(tmp_path):
     # c/k left "base"; a's globals from "fast" are added where they are missing
     assert _rows(directory / 'parameterisations' / 'base' / 'base_parameters.csv') == [
         ('T', '305'), ('G', '2')]
-    # another parameterisation's rows stay: they are read over the parameters file
+    # another parameterisation's rows stay: a supermodule parameterisation's <sub>/<var> rows are
+    # refused when generating, and supermodule-instances moves them into a model's instance file
     assert _rows(directory / 'parameterisations' / 'alt' / 'alt_parameters.csv') == [
         ('a/k', '8'), ('T', '310'), ('G', '2')]
     load_supermodule_registry([path])
@@ -341,3 +342,66 @@ def test_a_dry_run_writes_no_module_array(tmp_path):
                     '--no-builtin-modules']) == 0
     assert open(path).read() == before
     assert sorted(os.listdir(directory)) == ['sup_v1_modules_config.json']
+
+
+# ------------------------------------------------------------------------ supermodule-instances
+
+def _model_library(tmp_path):
+    """The converted ``sup`` (instances a, from src's "fast", and in, an inner) over a library of
+    src and inner, with sup's parameterisation "alt" setting a/k."""
+    library = _library(tmp_path / 'lib')
+    shutil.rmtree(os.path.join(library, 'legacy'))
+    _write(tmp_path / 'lib' / 'inner' / 'versions' / 'v1' / 'inner_v1_parameters.json',
+           {'schema_version': 1, 'instances': {'g': {'parameterisation': 'default', 'parameters': {
+               'k': {'value': 1, 'units': 'm', 'data_reference': 'inner'}}}}})
+    path, directory = _supermodule(tmp_path, [_sub('a', parameterisation='fast'),
+                                              _sub('in', module_type='inner', parameterisation='p')])
+    _parameters(directory / 'parameterisations' / 'alt' / 'alt_parameters.csv', [('a/k', '8')])
+    assert upgrade(['module-config', path, '--module-library-dir', library,
+                    '--no-builtin-modules']) == 0
+    model = tmp_path / 'model'
+    model.mkdir()
+    array = _write(model / 'm_module_array.json', [
+        {'name': 'S', 'module_type': 'sup', 'module_subtype': 'v1'},
+        {'name': 'S2', 'module_type': 'sup', 'module_subtype': 'v1', 'parameterisation': 'alt'},
+        {'name': 'k', 'module_type': 'src', 'module_subtype': 'v1'}])
+    return array, ['--module-library-dir', library, '--module-library-dir', str(tmp_path / 'sup'),
+                   '--no-builtin-modules']
+
+
+def _instance_values(model, name):
+    with open(model / 'm_supermodule_parameters' / f'{name}.json') as f:
+        doc = json.load(f)
+    return {n: (i['parameterisation'], {v: p['value'] for v, p in i['parameters'].items()})
+            for n, i in doc['instances'].items()}
+
+
+def test_a_model_s_supermodule_instances_get_their_parameters_files(tmp_path):
+    array, sources = _model_library(tmp_path)
+    model = tmp_path / 'model'
+    assert upgrade(['supermodule-instances', array, '--dry-run'] + sources) == 0
+    assert not (model / 'm_supermodule_parameters').exists()
+    assert upgrade(['supermodule-instances', array] + sources) == 0
+    assert sorted(os.listdir(model / 'm_supermodule_parameters')) == ['S.json', 'S2.json']
+    # a copy of the version's file, with the nested inner's values as paths under sup's own
+    assert _instance_values(model, 'S') == {'a': ('fast', {'k': 5}), 'in': ('p', {'g/k': 7})}
+    # S2's parameterisation "alt" set a/k: the row is a's value in S2's file
+    assert _instance_values(model, 'S2') == {'a': ('fast', {'k': 8}), 'in': ('p', {'g/k': 7})}
+
+
+def test_an_instance_s_file_is_kept_unless_replaced(tmp_path, capsys):
+    array, sources = _model_library(tmp_path)
+    model = tmp_path / 'model'
+    assert upgrade(['supermodule-instances', array] + sources) == 0
+    edited = model / 'm_supermodule_parameters' / 'S.json'
+    doc = json.loads(edited.read_text())
+    doc['instances']['a']['parameters']['k']['value'] = 42
+    edited.write_text(json.dumps(doc))
+    capsys.readouterr()
+    assert upgrade(['supermodule-instances', array] + sources) == 0
+    assert '"S" has its parameters file; kept' in capsys.readouterr().out
+    assert _instance_values(model, 'S')['a'] == ('fast', {'k': 42})
+    assert upgrade(['supermodule-instances', array, '--instance', 'S', '--replace'] + sources) == 0
+    assert _instance_values(model, 'S')['a'] == ('fast', {'k': 5})
+    with pytest.raises(SystemExit, match=r"\['k'\] are not supermodule instances there"):
+        upgrade(['supermodule-instances', array, '--instance', 'k'] + sources)

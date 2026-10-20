@@ -8,11 +8,12 @@ refuses the file and names the command here that converts it::
     cuflynx-upgrade module-array <*_module_array|_vessel_array .json|.csv>...
     cuflynx-upgrade obs-data <*_obs_data.json>... --user-inputs <user_inputs.yaml>
     cuflynx-upgrade parameter-names --module-array <array> --module-library-dir <dir> ...
+    cuflynx-upgrade supermodule-instances <*_module_array .json|.csv>... --module-library-dir <dir>
 
 Each converts its files in place (a ``_vessel_array`` file is renamed) and prints what it
-changed. Convert a model's module configs and module array before its parameter names: the
-names are checked against the converted model (the par and pvn a one-output heart gains
-among them). A file already in the current form is left as it is. ``--dry-run`` prints the changes
+changed. Convert a model's module configs and module array, then write its supermodule
+instances' parameters files, before its parameter names: the names are checked against the
+converted model (the par and pvn a one-output heart gains among them). A file already in the current form is left as it is. ``--dry-run`` prints the changes
 without writing them.
 
 What each converts:
@@ -31,6 +32,12 @@ What each converts:
   gets the pulmonary artery and vein (``par``, ``pvn``) the generator used to add for it.
 * ``obs-data``: a bare list of data items, or an obs_data with no ``protocol_info``, gets the
   one-experiment ``protocol_info`` of ``pre_time`` and ``sim_time`` from user_inputs.yaml.
+* ``supermodule-instances``: writes the parameters file of each supermodule instance of a model,
+  ``<prefix>_supermodule_parameters/<instance>.json`` beside its module array, from its version's
+  parameters file, with the ``<submodule>/<variable>`` rows of the instance's supermodule
+  parameterisation over them (a supermodule parameterisation now sets only globals). It is also
+  how a new supermodule instance gets its file. An instance that has one keeps it; ``--instance``
+  picks instances and ``--replace`` writes theirs again from the version.
 * ``parameter-names``: ``{variable}_{vessel}`` parameter names to ``<vessel>/<variable>``, and
   names joined with a single ``_`` across nested levels to ``__`` (see
   ``scripts/migrate_parameter_names.py``).
@@ -183,7 +190,7 @@ def _json_value(text):
     return value if value == value and abs(value) != float('inf') else text
 
 
-def _parameter(row):
+def parameter_from_row(row):
     '''A parameters CSV row as a parameters file's parameter: value, units, data_reference and
     any other column that is set.'''
     out = {'value': _json_value(row.get('value', '')), 'units': (row.get('units') or '').strip(),
@@ -259,7 +266,7 @@ def _submodules_to_versions(config_path, entry, dry_run, module_library_dirs, bu
                         # a global of the named parameterisation, as the supermodule's
                         folded.append(dict(row, variable_name=name.split('/')[-1]))
                     continue
-                parameters[name] = _parameter(row)
+                parameters[name] = parameter_from_row(row)
         instances[sub] = {'parameterisation': 'default' if used == default else used,
                           'parameters': parameters}
         if used != default:
@@ -274,7 +281,7 @@ def _submodules_to_versions(config_path, entry, dry_run, module_library_dirs, bu
         for row in rows:
             head, _, rest = row['variable_name'].strip().partition('/')
             if rest and head in instances:
-                instances[head]['parameters'][rest] = _parameter(row)
+                instances[head]['parameters'][rest] = parameter_from_row(row)
                 moved += 1
             else:
                 kept.append(row)
@@ -438,6 +445,33 @@ def _times(args):
 
 # ------------------------------------------------------------------------------------------ CLI
 
+# ------------------------------------------------------------------ supermodule instances
+
+def upgrade_supermodule_instances(path, dry_run=False, module_library_dirs=(), builtin_modules=True,
+                                  external_modules_dir=None, instances=None, replace=False):
+    '''Write the parameters files of the supermodule instances of the model whose module array is
+    ``path`` (``supermodules.write_instance_parameters``), its supermodules looked for in the
+    module sources given. Returns the changes made (empty if none).'''
+    from libcuflynx.utilities.module_library import ModuleSources
+    from libcuflynx.utilities.supermodules import write_instance_parameters
+    sources = ModuleSources({'module_library_dirs': list(module_library_dirs),
+                             'external_modules_dir': external_modules_dir,
+                             'use_builtin_modules': builtin_modules})
+    try:
+        done = write_instance_parameters(path, sources.supermodule_registry(), instances, replace,
+                                         dry_run)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    changes = [f'"{name}": {os.path.relpath(written, os.path.dirname(os.path.abspath(path)))} '
+               f'{action} from its version' for name, written, action in done if action != 'kept']
+    for name, _, action in done:
+        if action == 'kept':
+            print(f'{path}: "{name}" has its parameters file; kept (--replace writes it again)')
+    if changes:
+        print(f'{path}: ' + '; '.join(changes))
+    return changes
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv[:1] == ['parameter-names']:
@@ -449,20 +483,33 @@ def main(argv=None):
                "the user_inputs.yaml given with --user-inputs for its pre_time and sim_time).",
         formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest='command', required=True)
-    for name, help_text in (('module-config', 'module config files'),
-                            ('module-array', 'module (or vessel) array files'),
-                            ('obs-data', 'obs_data files')):
-        sub = commands.add_parser(name, help=f'convert {help_text}')
+    for name, help_text in (('module-config', 'convert module config files'),
+                            ('module-array', 'convert module (or vessel) array files'),
+                            ('obs-data', 'convert obs_data files'),
+                            ('supermodule-instances',
+                             "write each supermodule instance's parameters file, beside a "
+                             "model's module array, from its version")):
+        sub = commands.add_parser(name, help=help_text)
         sub.add_argument('paths', nargs='+')
         sub.add_argument('--dry-run', action='store_true', help='print, do not write')
-        if name == 'module-config':
+        if name in ('module-config', 'supermodule-instances'):
             sub.add_argument('--module-library-dir', dest='module_library_dirs', action='append',
                              default=[], metavar='DIR',
                              help="a module library (repeatable): where a supermodule's "
                                   "submodule versions are, whose parameterisations give its "
-                                  "instances' values")
+                                  "instances' values" if name == 'module-config' else
+                                  "a module library (repeatable), as the model's "
+                                  "module_library_dirs")
             sub.add_argument('--no-builtin-modules', action='store_true',
                              help="leave libcuflynx's built-in modules out")
+        if name == 'supermodule-instances':
+            sub.add_argument('--external-modules-dir', metavar='DIR',
+                             help="the model's external_modules_dir")
+            sub.add_argument('--instance', dest='instances', action='append', metavar='NAME',
+                             help='only this supermodule instance (repeatable)')
+            sub.add_argument('--replace', action='store_true',
+                             help="write the files again from the version, over the model's "
+                                  "values")
         if name == 'obs-data':
             sub.add_argument('--user-inputs', help="the user_inputs.yaml whose pre_time and "
                                                    "sim_time the files were run with")
@@ -478,6 +525,10 @@ def main(argv=None):
                                                   not args.no_builtin_modules))
         elif args.command == 'module-array':
             changed += bool(upgrade_module_array(path, args.dry_run))
+        elif args.command == 'supermodule-instances':
+            changed += bool(upgrade_supermodule_instances(
+                path, args.dry_run, args.module_library_dirs, not args.no_builtin_modules,
+                args.external_modules_dir, args.instances, args.replace))
         else:
             changed += bool(upgrade_obs_data(path, *_times(args), dry_run=args.dry_run))
     print(f'{changed} of {len(args.paths)} file(s) {"would be " if args.dry_run else ""}changed.')

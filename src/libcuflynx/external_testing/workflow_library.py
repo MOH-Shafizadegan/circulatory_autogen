@@ -243,7 +243,9 @@ def build_workflow_library(root, settings=None):
     paths['lin_b/fit_b'] = _parameterisation(modules, 'lin_b', 'fit_b', [('p', 1.0)],
                                              obs=[('y_b', 'mod/y', Y_B, STD_B)],
                                              params_for_id=[('mod', 'p', 0.1, 5.0)])
-    twin_rows = [('A/p', 1.0), ('B/p', 1.0)]
+    # a supermodule's parameterisation sets globals only; its instances' values are its
+    # parameters file's, copied into each instance of it
+    twin_rows = []
     paths['twin/joint'] = _parameterisation(
         modules, 'twin', 'joint', twin_rows,
         obs=[('y_a', 'mod__A/y', Y_A, STD_A), ('y_b', 'mod__B/y', Y_B, STD_B)],
@@ -259,7 +261,7 @@ def build_workflow_library(root, settings=None):
         'steps': [_library_step('fit_a', 'lin_a', paths['lin_a/fit_a'], paths['twin/split']),
                   _library_step('fit_b', 'lin_b', paths['lin_b/fit_b'], paths['twin/split'])]})
 
-    chain_rows = [('A/p', 1.0), ('C/q', 1.0), ('C/k', 1.0, K_SOURCE)]
+    chain_rows = []
     paths['chain/rest'] = _parameterisation(modules, 'chain', 'rest', chain_rows,
                                             obs=[('z_c', 'mod__C/z', Z_C, STD_C)],
                                             params_for_id=[('mod__C', 'q', 0.1, 10.0)])

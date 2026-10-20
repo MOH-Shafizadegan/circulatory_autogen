@@ -6,8 +6,9 @@ Layout of the packed directory::
 
     calibration_workflow.json     the workflow, its paths rewritten to the files below
     inputs/<step_id>/             each step's obs_data, params_for_id, and module array with
-                                  its parameters file (a file several steps share is packed
-                                  once, under the first)
+                                  its parameters file and its supermodule instances'
+                                  (<prefix>_supermodule_parameters/) (a file several steps
+                                  share is packed once, under the first)
     inputs/_target/               the target's module array and parameters file, with its
                                   variable_mapping.csv if it has one
     modules/                      each module version the workflow uses, laid out as in its
@@ -25,6 +26,7 @@ import os
 import shutil
 
 from libcuflynx.calibration_workflow.resolve import resolve_workflow
+from libcuflynx.utilities.config_schemas import copy_supermodule_instance_parameters
 from libcuflynx.calibration_workflow.spec import (PATH_SETTINGS, WORKFLOW_FILE_NAME,
                                                   load_workflow)
 
@@ -119,7 +121,11 @@ def pack_workflow(source, dest_dir, module_library_dirs=None):
     def model(spec_model, owner):
         if spec_model.kind == 'library':
             return spec_model.as_dict()
-        packed = {'module_array': packer.file(spec_model.module_array, owner),
+        array = packer.file(spec_model.module_array, owner)
+        for written in copy_supermodule_instance_parameters(
+                spec_model.module_array, os.path.join(packer.dest_dir, array)):
+            packer.files.add(os.path.relpath(written, packer.dest_dir))
+        packed = {'module_array': array,
                   'parameters': packer.file(spec_model.parameters, owner)}
         return packed
 

@@ -12,7 +12,8 @@ import os
 import sys
 import csv
 from pathlib import Path
-from libcuflynx.utilities.config_schemas import (dump_vessel_records, read_module_array_records,
+from libcuflynx.utilities.config_schemas import (copy_supermodule_instance_parameters,
+                                                 dump_vessel_records, read_module_array_records,
                                                  module_array_path, vessel_records_to_string_frame)
 
 
@@ -133,6 +134,9 @@ def convert_0d_to_1d(model, folder_0d, param_file_0d, folder_hyb=None, vess_1d_l
         # (or any other object-valued key), which the frame above leaves out
         _write_json_records(source_path, source_records, df_vess,
                             folder_hyb / f"{model}_hybrid_module_array.json")
+        # and its supermodule instances' parameters files go with it
+        copy_supermodule_instance_parameters(source_path,
+                                             folder_hyb / f"{model}_hybrid_module_array.json")
     else:
         df_vess.to_csv(folder_hyb / f"{model}_hybrid_module_array.csv", index=False, header=True)
     df_params.to_csv(folder_hyb / f"{model}_hybrid_parameters.csv", index=False, header=True)

@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/physiomelinks/circulatory_autogen/schemas/supermodule_parameters.schema.json",
-  "title": "libcuflynx supermodule parameters (<module_type>_<module_subtype>_parameters.json)",
-  "description": "The parameter values of a supermodule version's instances, beside its module array (<module_type>_<module_subtype>_module_array.json) and config. It names every instance of the array once. A model is generated from these values: an instance's parameter <var> becomes {var}_<record>__<instance>. The supermodule's parameterisation (the host record's, or its default_parameterisation) is read over them, and the host parameters file over that; a parameter the file does not give comes from the instance's version's default parameterisation. cuflynx-upgrade module-config writes it when it converts a supermodule; after that it is the file that is edited and calibrated. Read by libcuflynx/utilities/config_schemas.py (load_supermodule_parameters).",
+  "title": "libcuflynx supermodule parameters (<module_type>_<module_subtype>_parameters.json; a model's <prefix>_supermodule_parameters/<instance>.json)",
+  "description": "The parameter values of a supermodule's instances: a version's file, beside its module array (<module_type>_<module_subtype>_module_array.json) and config, is the template a new instance is copied from; a model's supermodule instance has its own, <prefix>_supermodule_parameters/<instance>.json beside the model's module array, which is what generation reads. It names every instance of the version's module array once. An instance's parameter <var> becomes {var}_<record>__<instance>. The supermodule's parameterisation (the host record's, or its default_parameterisation; globals only) and the host parameters file are read over them; a parameter the file does not give comes from the instance's version's default parameterisation. cuflynx-upgrade module-config writes a version's file when it converts a supermodule, and cuflynx-upgrade supermodule-instances a model's instance files. Read by libcuflynx/utilities/config_schemas.py (read_supermodule_parameters_file).",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -50,7 +50,7 @@
           "additionalProperties": {
             "$ref": "#/$defs/parameter"
           },
-          "description": "Required. {variable: value}. A component instance's are its own variables (\"E_A\"); a supermodule instance's are paths into it (\"i_M/g_M\"), which override its own parameters file. Globals are set by the supermodule's parameterisation, not here."
+          "description": "Required. {variable: value}. A component instance's are its own variables (\"E_A\"); a supermodule instance's are paths into it (\"i_M/g_M\"), which override its own version's file. Globals are set by the supermodule's parameterisation, not here."
         }
       }
     },
