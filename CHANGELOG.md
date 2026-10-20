@@ -10,10 +10,16 @@ next release; add to that section as you land a change.
 A supermodule version's config lists the module versions it is built from, `submodule_versions:
 [{"module_type", "module_subtype"}]`. Its instances and their connections are a module array of their
 own, `<module_type>_<module_subtype>_module_array.json` beside the config, whose records name no
-`parameterisation`: a submodule's parameters come from the supermodule's parameterisation, then from
-its version's `default_parameterisation`. An inline `submodules` list is refused;
-`cuflynx-upgrade module-config <file> --module-library-dir <library>` converts it, folding a
-parameterisation a submodule named into the supermodule's.
+`parameterisation`. Their parameter values are the supermodule's parameters file,
+`<module_type>_<module_subtype>_parameters.json` beside the array (schema
+`supermodule_parameters.schema.json`): for each instance, the parameterisation of its version its
+values started from (`"default"` or a name) and the values. A submodule's parameter comes from the
+supermodule's parameterisation (its globals, and any `<submodule>/<variable>` rows), then the
+parameters file, then its version's `default_parameterisation`. An inline `submodules` list is
+refused; `cuflynx-upgrade module-config <file> --module-library-dir <library>` converts it: the
+records to the module array, and each instance's values (from the parameterisation it named, else
+its version's default, with the supermodule's default parameterisation's `<instance>/<variable>`
+rows over them, which leave that parameterisation) to the parameters file.
 
 ### Changed — a nested vessel is written by its path
 

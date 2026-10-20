@@ -225,6 +225,10 @@ def build_workflow_library(root, settings=None):
                       'submodule_versions': [{'module_type': t, 'module_subtype': s}
                                              for t, s in versions]}])
         _write_json(os.path.join(version_dir, f'{module_type}_v1_module_array.json'), submodules)
+        _write_json(os.path.join(version_dir, f'{module_type}_v1_parameters.json'),
+                    {'schema_version': 1,
+                     'instances': {s['name']: {'parameterisation': 'default', 'parameters': {}}
+                                   for s in submodules}})
 
     paths = {'modules': modules}
     paths['lin_a/fit_a'] = _parameterisation(modules, 'lin_a', 'fit_a', [('p', 1.0)],

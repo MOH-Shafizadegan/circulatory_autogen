@@ -44,22 +44,26 @@ is an error. Links between a host and a nested supermodule go through that neste
 supermodule's own ``per_submodule_*`` (or a path), so an instance's ``per_submodule_*`` may not
 name a submodule that is itself a supermodule instance, except by a path into it.
 
-The supermodule's parameters -- those of its *parameterisation* (the record's
+The supermodule's parameters are those of its *parameterisation* (the record's
 ``"parameterisation"``, or the entry's ``default_parameterisation``; see
-``utilities/parameterisations.py``) -- name a submodule's parameter ``<sub>/<var>`` (one nested
-in a submodule ``<sub>/<subsub>/<var>``), and are renamed to ``{var}_{instance}__{sub}``,
-``instance`` being the supermodule record's name; ``global/<var>`` or a plain name is a global
-and keeps its name, added only once (see ``utilities/parameter_names.py``). A parameter the
-supermodule's parameterisation does not set comes from the submodule version's
-``default_parameterisation`` (``parameterisations.component_parameterisation_rows``, read after
-the supermodule's, so the supermodule's values win).
+``utilities/parameterisations.py``), then the values of its parameters file
+(``<module_type>_<module_subtype>_parameters.json``, the entry's ``instance_parameters``; see
+``config_schemas.load_supermodule_parameters``), whose parameter ``<var>`` of instance ``sub`` is
+the row ``<sub>/<var>``. A row names a submodule's parameter ``<sub>/<var>`` (one nested in a
+submodule ``<sub>/<subsub>/<var>``) and is renamed to ``{var}_{instance}__{sub}``, ``instance``
+being the supermodule record's name; ``global/<var>`` or a plain name is a global and keeps its
+name, added only once (see ``utilities/parameter_names.py``). A parameter neither sets comes from
+the submodule version's ``default_parameterisation``
+(``parameterisations.component_parameterisation_rows``, read after the supermodule's, so the
+supermodule's values win).
 
 After expansion no record is a supermodule instance.
 '''
 
 import copy
 
-from libcuflynx.utilities.config_schemas import PER_SUBMODULE_KEYS, SUPERMODULE_FORMAT
+from libcuflynx.utilities.config_schemas import (PER_SUBMODULE_KEYS, SUPERMODULE_FORMAT,
+                                                 supermodule_parameters_path)
 from libcuflynx.utilities.parameterisations import (first_rows_win, parameterisation_rows,
                                                     parameterisation_parameters_path,
                                                     warn_conflicting_globals,
@@ -129,17 +133,51 @@ def submodule_paths(supermodule, registry=None):
     return [flat_name(p) for p in submodule_path_parts(supermodule, registry)]
 
 
+def instance_parameter_rows(supermodule, registry=None, where=''):
+    '''The values of ``supermodule``'s parameters file (its ``instance_parameters``) as rows of
+    its parameterisation: ``{variable_name: <sub>/<var>, units, value, data_reference}``, in
+    instance order. A supermodule instance's parameters must be paths into it.'''
+    rows = []
+    values = supermodule.get('instance_parameters') or {}
+    for record in supermodule['submodules']:
+        sub = record['name']
+        nested = _key(record) in (registry or {})
+        for var, parameter in (values.get(sub) or {}).get('parameters', {}).items():
+            if nested and SEPARATOR not in var:
+                raise ValueError(
+                    f'{where}: instance "{sub}" of its parameters file is a supermodule '
+                    f'instance, so its parameter "{var}" must be a path into it '
+                    f'(<its submodule>/<variable>); a global is set by the supermodule\'s '
+                    f'parameterisation.')
+            rows.append({'variable_name': f'{sub}{SEPARATOR}{var}',
+                         'units': parameter['units'],
+                         'value': _value_text(parameter['value']),
+                         'data_reference': parameter.get('data_reference', '')})
+    return rows
+
+
+def _value_text(value):
+    '''A parameters file value as a parameters CSV writes it.'''
+    return repr(value) if isinstance(value, float) else str(value)
+
+
 def read_supermodule_parameters(supermodule, record, where, registry=None):
     '''
     The parameters of the supermodule instance ``record`` (its name is the prefix), renamed:
-    those of its parameterisation (the record's, or the entry's default).
+    those of its parameterisation (the record's, or the entry's default), then its parameters
+    file's values.
     '''
     name = record['name']
     parameterisation, own_rows = parameterisation_rows(
         supermodule, record_parameterisation(record, where), where)
     source = (parameterisation_parameters_path(supermodule['config_path'], parameterisation)
               if parameterisation else where)
-    return _rename_rows(own_rows, name, submodule_path_parts(supermodule, registry), source)
+    paths = submodule_path_parts(supermodule, registry)
+    file_source = (supermodule_parameters_path(supermodule['config_path'], supermodule)
+                   if supermodule.get('config_path') else where)
+    return (_rename_rows(own_rows, name, paths, source)
+            + _rename_rows(instance_parameter_rows(supermodule, registry, file_source), name,
+                           paths, file_source))
 
 
 def _head(key):

@@ -1,4 +1,4 @@
-"""The shipped JSON Schemas of the four input files (libcuflynx/schemas) agree with the readers.
+"""The shipped JSON Schemas of the five input files (libcuflynx/schemas) agree with the readers.
 
 * every schema is a valid draft 2020-12 schema, and every property it declares is described;
 * the repository's obs_data and params_for_id files, the converted params_for_id CSVs and the
@@ -22,7 +22,7 @@ from libcuflynx.parsers.PrimitiveParsers import (PARAM_PRIOR_TYPES, PARAMS_FOR_I
                                                  PARAMS_FOR_ID_JSON_VERSION, ObsAndParamDataParser)
 from libcuflynx.generators.multi_port import normalise_port_multi_port, validate_list_multi_port
 from libcuflynx.schemas import (MODULE_ARRAY_SCHEMA, MODULE_CONFIG_SCHEMA, OBS_DATA_SCHEMA,
-                                PARAMS_FOR_ID_SCHEMA, load_schema)
+                                PARAMS_FOR_ID_SCHEMA, SUPERMODULE_PARAMETERS_SCHEMA, load_schema)
 from libcuflynx.utilities.config_schemas import (COMPONENT_KEYS, MODULE_ARRAY_COLUMN_ORDER,
                                                  OLD_MODULE_ARRAY_KEYS, OLD_MODULE_CONFIG_KEYS,
                                                  normalise_module_config_entry)
@@ -35,7 +35,8 @@ pytestmark = pytest.mark.unit
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXAMPLES = os.path.join(ROOT, 'tests', 'test_inputs', 'schema_examples')
-ALL_SCHEMAS = (MODULE_ARRAY_SCHEMA, MODULE_CONFIG_SCHEMA, OBS_DATA_SCHEMA, PARAMS_FOR_ID_SCHEMA)
+ALL_SCHEMAS = (MODULE_ARRAY_SCHEMA, MODULE_CONFIG_SCHEMA, OBS_DATA_SCHEMA, PARAMS_FOR_ID_SCHEMA,
+               SUPERMODULE_PARAMETERS_SCHEMA)
 
 
 def _validator(name):
@@ -87,7 +88,8 @@ def test_the_examples_validate():
     kinds = {'_module_array.json': MODULE_ARRAY_SCHEMA,
              '_modules_config.json': MODULE_CONFIG_SCHEMA,
              '_obs_data.json': OBS_DATA_SCHEMA,
-             '_params_for_id.json': PARAMS_FOR_ID_SCHEMA}
+             '_params_for_id.json': PARAMS_FOR_ID_SCHEMA,
+             '_parameters.json': SUPERMODULE_PARAMETERS_SCHEMA}
     seen = set()
     for path in sorted(glob.glob(os.path.join(EXAMPLES, '*.json'))):
         name = next(n for suffix, n in kinds.items() if path.endswith(suffix))
