@@ -15,6 +15,9 @@ A name is rewritten only when exactly one reading of it names a real variable of
 module, so the guess the old form forced is checked rather than repeated; a global constant
 keeps its plain name. A name with more than one such reading is left as it is and reported,
 for a person to settle. Every other column, and the row order, is kept.
+
+It rewrites the parameters CSVs those names were written in; convert them to nested JSON
+afterwards with ``cuflynx-upgrade parameters``.
 '''
 
 import argparse
@@ -25,14 +28,12 @@ import sys
 
 from libcuflynx.utilities.config_schemas import (is_supermodule_entry, load_component_registry,
                                                  load_supermodule_array,
-                                                 load_expanded_vessel_records,
                                                  load_module_config, load_supermodule_registry,
                                                  read_module_array_records)
-from libcuflynx.utilities.parameterisations import (available_parameterisations,
-                                                    parameterisation_parameters_path)
+from libcuflynx.utilities.parameterisations import parameterisations_dir
 from libcuflynx.utilities.module_library import ModuleSources
 from libcuflynx.utilities.parameter_names import SEPARATOR, flat_name
-from libcuflynx.utilities.supermodules import submodule_path_parts
+from libcuflynx.utilities.supermodules import expand_supermodules, submodule_path_parts
 
 EPILOG = (
     "Not a pipeline stage: it does not read user_inputs.yaml. Give the files' module array or\n"
@@ -117,7 +118,8 @@ def host_places(module_array, config_files):
             for joined in (flat_name((record['name'],) + parts),
                            '_'.join((record['name'],) + parts)):  # current and older joins
                 written.setdefault(joined, SEPARATOR.join((record['name'],) + parts))
-    records, _ = load_expanded_vessel_records(module_array, supermodules, components)
+    records, _ = expand_supermodules(read_module_array_records(module_array), supermodules,
+                                     source=module_array, components=components)
     variables = {}
     for record in records:
         entry = components.get((record['module_type'], record['module_subtype']))
@@ -153,8 +155,10 @@ def supermodule_files(config_path):
                          f'with exactly one.')
     entry = dict(entries[0], config_path=os.path.abspath(config_path))
     entry['submodules'] = load_supermodule_array(entry, config_path)
-    files = [parameterisation_parameters_path(config_path, name)
-             for name in available_parameterisations(config_path)]
+    root = parameterisations_dir(config_path)
+    files = sorted(os.path.join(root, name, f'{name}_parameters.csv')
+                   for name in (os.listdir(root) if os.path.isdir(root) else ())
+                   if os.path.isfile(os.path.join(root, name, f'{name}_parameters.csv')))
     return entry, files
 
 

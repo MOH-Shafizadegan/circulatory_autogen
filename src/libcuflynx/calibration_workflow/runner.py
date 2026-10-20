@@ -49,8 +49,6 @@ from libcuflynx.calibration_workflow.resolve import (CalibratedParameter,
                                                      read_calibrated_parameters,
                                                      resolve_workflow)
 from libcuflynx.sensitivity_analysis.parameter_reduction import SobolReduction
-from libcuflynx.utilities.parameter_names import (is_path_name, split_path_name,
-                                                  supermodule_row_name)
 from libcuflynx.calibration_workflow.spec import (WORKFLOW_FILE_NAME, WorkflowError, load_workflow,
                                                   uses_log_posterior)
 
@@ -350,7 +348,7 @@ class _Run:
             'study_name': step.id,
             'resources_dir': generated['resources_dir'],
             'generated_models_dir': generated['generated_models_dir'],
-            'input_param_file': f'{prefix}_parameters.csv',
+            'input_param_file': f'{prefix}_parameters.json',
             'param_id_obs_path': self.resolved.steps[step.id].obs_data_path,
             'params_for_id_file': params_for_id,
             'param_id_output_dir': os.path.join(step_dir, 'param_id'),
@@ -715,42 +713,26 @@ def emulator_dir(output_dir, step_id):
 
 
 def write_calibrated_parameters(target, merged_parameters, workflow_name):
-    '''``<name>_calibrated_parameters.csv`` beside the target's parameters file (``<name>`` its
-    parameterisation, or its module array's prefix): its parameters with the merged values in
-    place, and rows it lacks added, written ``<vessel or submodule>/<variable>``. A row is
-    matched by the model parameter it names.'''
-    rows = read_parameter_rows(target.parameters_path)
-    columns = list(rows[0].keys()) if rows else ['variable_name', 'units', 'value',
-                                                  'data_reference']
-    by_name = {r['variable_name']: r for r in rows}
-    by_model_name = {}
-    for r in rows:
-        try:
-            by_model_name[_row_model_name(r['variable_name'], target)] = r
-        except ValueError:
-            pass
+    '''``<name>_calibrated_parameters.json`` beside the target's parameters file (``<name>`` its
+    parameterisation, or its module array's prefix): the target's parameters file (nested JSON,
+    utilities/parameters_file.py) with each merged value set at the path the target names it by
+    -- ``<vessel>/<variable>`` in a module array's file, the module's own path in a
+    parameterisation -- and added where the file lacks it. The target's files are not changed.'''
+    from libcuflynx.utilities import parameters_file as pf
+    kind = pf.MODEL if target.kind == 'array' else pf.MODULE
+    doc = pf.read_parameters_file(target.parameters_path, kind=kind)
     today = datetime.date.today().isoformat()
     for record in merged_parameters:
-        reference = (f'calibrated by workflow {workflow_name}, step {record["from_step"]} '
-                     f'({today})')
-        row = by_model_name.get(record['model_name']) or \
-            by_name.get(record['parameterisation_name'])
-        if row is None:
-            row = {c: '' for c in columns}
-            row.update(variable_name=record['parameterisation_name'], units=record['units'])
-            rows.append(row)
-            by_name[record['parameterisation_name']] = row
-        row['value'] = '%.10g' % record['value']
-        row['data_reference'] = reference
-        if 'sourced' in columns:
-            row['sourced'] = 'no'
-    path = target.file('calibrated_parameters.csv')
-    import csv
-    with open(path, 'w', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=columns, extrasaction='ignore')
-        writer.writeheader()
-        writer.writerows(rows)
-    return path
+        name = record['host_name'] if target.kind == 'array' else record['parameterisation_name']
+        path = pf.name_path(name, kind)
+        leaf = dict(pf.get_leaf(doc, path) or {'units': record.get('units', '')})
+        leaf.update(value='%.10g' % record['value'],
+                    data_reference=f'calibrated by workflow {workflow_name}, step '
+                                   f'{record["from_step"]} ({today})')
+        if 'sourced' in leaf:
+            leaf['sourced'] = 'no'
+        pf.set_leaf(doc, path, leaf)
+    return pf.write_parameters_file(target.file('calibrated_parameters.json'), doc)
 
 
 def _write_params_for_id_with_priors(source_path, out_path, priors, step_id):
@@ -785,16 +767,6 @@ def _write_params_for_id_with_priors(source_path, out_path, priors, step_id):
         writer = csv.DictWriter(f, fieldnames=columns, extrasaction='ignore')
         writer.writeheader()
         writer.writerows(rows)
-
-
-def _row_model_name(name, target):
-    '''The target model name of a row of the target's parameters file.'''
-    if target.kind == 'array':
-        return naming.host_model_name(name)
-    if target.paths:
-        return supermodule_row_name(name, naming.STEP_VESSEL, target.paths)
-    _, variable = split_path_name(name) if is_path_name(name) else ([], name)
-    return naming.model_name(naming.STEP_VESSEL, variable)
 
 
 # --------------------------------------------------------------------------------------------
@@ -857,7 +829,7 @@ def run_calibration_workflow(source, *, output_dir=None, module_library_dirs=Non
         only: run just this step, reusing the results it depends on.
         dry_run: resolve and check everything, run nothing; returns :func:`plan_workflow`.
         write_calibrated: write the merged set as the target parameterisation's
-            ``<parameterisation>_calibrated_parameters.csv`` (complete runs only).
+            ``<parameterisation>_calibrated_parameters.json`` (complete runs only).
         progress: ``callable(event_dict)``, called on rank 0 with ``event`` in
             ``workflow_started``, ``step_started``, ``step_finished``, ``step_failed``,
             ``step_skipped``, ``workflow_finished``.

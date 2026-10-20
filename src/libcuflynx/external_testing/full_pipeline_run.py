@@ -66,7 +66,7 @@ def build_config(output_dir, resources_dir, generated_models_dir,
     return {
         'DEBUG': True,
         'file_prefix': FILE_PREFIX,
-        'input_param_file': FILE_PREFIX + '_parameters.csv',
+        'input_param_file': FILE_PREFIX + '_parameters.json',
         'model_type': 'cellml',
         # Myokit, not OpenCOR: OpenCOR's Python module is not on PyPI, and this has to
         # run wherever the tests do.

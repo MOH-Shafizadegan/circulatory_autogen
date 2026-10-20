@@ -7,8 +7,9 @@
 * ``module_config.schema.json`` -- ``*_modules_config.json``: component entries in either key
   style, with their ports and ``variables_and_units`` (and an optional
   ``default_parameterisation``, older name ``default_instance``), and supermodule entries.
-* ``supermodule_parameters.schema.json`` -- ``<module_type>_<module_subtype>_parameters.json``
-  beside a supermodule version's module array: each instance's parameterisation and values.
+* ``parameters.schema.json`` -- ``<prefix>_parameters.json`` (a model's parameter values) and
+  ``parameterisations/<name>/<name>_parameters.json`` (a module's): nested instance,
+  sub-instance, variable (``utilities/parameters_file.py``).
 * ``obs_data.schema.json`` -- ``<name>_obs_data.json``: the optional ``obs_data_name``, the
   ``data_items``, ``prediction_items`` and ``protocol_info`` (with ``protocol_traces`` and
   ``protocol_shapes``).
@@ -24,7 +25,7 @@ Every reader checks its file against its schema when it loads it
 (:mod:`libcuflynx.schemas.validation`), so a schema is the definition of its file's structure:
 what an editor, PhLynx or CUFLynx accepts is what libcuflynx accepts. The readers check only
 what a schema cannot (that a file exists, that a vessel is in the model). For obs_data,
-params_for_id and supermodule parameters the schema runs first; module configs, module arrays and
+params_for_id and parameters the schema runs first; module configs, module arrays and
 calibration workflows
 are checked by their readers first, for those readers' more specific messages, and then by
 the schema. Enums that libcuflynx keeps as registries (prior types, step kinds, data types,
@@ -41,7 +42,7 @@ MODULE_CONFIG_SCHEMA = 'module_config.schema.json'
 OBS_DATA_SCHEMA = 'obs_data.schema.json'
 PARAMS_FOR_ID_SCHEMA = 'params_for_id.schema.json'
 CALIBRATION_WORKFLOW_SCHEMA = 'calibration_workflow.schema.json'
-SUPERMODULE_PARAMETERS_SCHEMA = 'supermodule_parameters.schema.json'
+PARAMETERS_SCHEMA = 'parameters.schema.json'
 
 
 def schema_file(name):
