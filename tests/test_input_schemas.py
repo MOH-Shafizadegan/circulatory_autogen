@@ -24,7 +24,8 @@ from libcuflynx.generators.multi_port import normalise_port_multi_port, validate
 from libcuflynx.reporting.variable_mapping import KINDS, variable_mapping_document
 from libcuflynx.schemas import (MODULE_ARRAY_SCHEMA, MODULE_CONFIG_SCHEMA, OBS_DATA_SCHEMA,
                                 PARAMS_FOR_ID_SCHEMA, VARIABLE_MAPPING_SCHEMA, load_schema)
-from libcuflynx.utilities.config_schemas import (PHLYNX_MODULE_ARRAY_COLUMNS, PHLYNX_MODULE_KEYS,
+from libcuflynx.utilities.config_schemas import (COMPONENT_KEYS, LEGACY_COMPONENT_TYPE_KEY,
+                                                 LEGACY_MODULE_ARRAY_COLUMNS, LEGACY_MODULE_KEYS,
                                                  normalise_module_config_entry)
 from libcuflynx.utilities.obs_data_helpers import VALID_DATA_TYPES
 from libcuflynx.utilities.protocol_shapes import EVENT_KEYS, SHAPE_KEYS, SHAPE_TYPES
@@ -198,13 +199,13 @@ def test_params_for_id_keys_match_the_parser():
 
 def test_module_config_and_array_keys_match_the_reader():
     defs = load_schema(MODULE_CONFIG_SCHEMA)['$defs']
-    assert set(defs['phlynxComponent']['required']) == set(PHLYNX_MODULE_KEYS)
-    assert set(defs['libcuflynxComponent']['required']) == set(PHLYNX_MODULE_KEYS.values())
+    assert set(defs['phlynxComponent']['required']) == set(COMPONENT_KEYS)
+    assert set(defs['libcuflynxComponent']['required']) == \
+        set(LEGACY_MODULE_KEYS) | {LEGACY_COMPONENT_TYPE_KEY}
     array_defs = load_schema(MODULE_ARRAY_SCHEMA)['$defs']
-    for rename in PHLYNX_MODULE_ARRAY_COLUMNS.items():
-        phlynx_key, libcuflynx_key = rename
-        assert phlynx_key in array_defs['phlynxRecord']['properties']
-        assert libcuflynx_key in array_defs['libcuflynxRecord']['properties']
+    for legacy_key, key in LEGACY_MODULE_ARRAY_COLUMNS.items():
+        assert key in array_defs['phlynxRecord']['properties']
+        assert legacy_key in array_defs['libcuflynxRecord']['properties']
 
 
 # --------------------------------------------------------------------------------------------
