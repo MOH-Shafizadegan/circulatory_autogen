@@ -945,6 +945,10 @@ def _cost_and_grad_bdf_tape(pid, param_vals):
     return cost_val, grad
 
 
+# Operations the kernel strategy re-implements on the tape, for a constant observable.
+KERNEL_OPERATIONS = ('mean', 'max', 'min', 'max_minus_min')
+
+
 def _cost_and_grad_bdf_kernel(pid, param_vals):
     """Cost and gradient via aadc-ode kernel replay (fastest method for stiff ODE).
 
@@ -953,15 +957,40 @@ def _cost_and_grad_bdf_kernel(pid, param_vals):
       - call_kernel loop for sim-steps (trajectory accumulation on tape)
       - cost assembled on tape, gradient via one reverse pass
 
-    Dependencies: pip install aadc aadc-ode
+    Observables: constant data items with operation mean/max/min/max_minus_min, on a state or
+    an algebraic variable. An algebraic variable is recomputed on the tape from the states at
+    each sampled point (compute_rates + compute_variables, as the tape strategy does). Any
+    other observable raises NotImplementedError rather than dropping out of the cost.
+
+    solver_info read here: max_step and jac_lag. ``newton_iters`` does not apply: aadc-ode's
+    bdf_solve and the sim-phase loop are the semi-implicit signed scheme, which has no Newton
+    iterations, so a non-zero value warns that it is ignored.
+
+    Needs ``pip install "libcuflynx[aadc]"`` (aadc and aadc-ode). Without aadc-ode it warns and
+    returns the tape strategy's result, which integrates the same scheme.
+
     Verified (q_lv_us, mean(q_lv) cost, 3compartment 27 states): AD/FD = 0.991 at 1000 sub-steps,
     0.995 at 2000, 0.998 at 5000 (the <~1% gap is the frozen-Jacobian-diagonal preconditioner, whose
     param-dependence is intentionally dropped from the gradient; it shrinks as the step grid refines).
     """
-    import aadc
-    import aadc_ode
-
     sim_helper = pid.sim_helper
+    if sim_helper.solver_info.get('newton_iters'):
+        warnings.warn(
+            f"solver_info newton_iters={sim_helper.solver_info['newton_iters']!r} is ignored: "
+            f"'{SEMI_IMPLICIT_SIGNED_METHOD}' is a semi-implicit scheme with no Newton "
+            f"iterations, for both gradient strategies. Use method '{BDF_NEWTON_METHOD}' for "
+            f"a Newton-corrected BDF.", stacklevel=3)
+    try:
+        import aadc_ode
+    except ImportError as exc:
+        warnings.warn(
+            f"gradient_strategy 'kernel' needs the aadc-ode package ({exc}); falling back to "
+            f"gradient_strategy 'tape', which integrates the same scheme with a slower "
+            f"gradient. Install it with: pip install \"libcuflynx[aadc]\"", stacklevel=3)
+        return _cost_and_grad_bdf_tape(pid, param_vals)
+    import aadc
+
+    model = sim_helper.model
     n = sim_helper.STATE_COUNT
     dt = sim_helper.dt
     total_steps = sim_helper.pre_steps + sim_helper.n_steps
@@ -981,20 +1010,6 @@ def _cost_and_grad_bdf_kernel(pid, param_vals):
     for i, idx in enumerate(ad_indices):
         variables_all[idx] = float(param_vals[i])
 
-    # ---- Record compute_rates as Kernel (once, cached) ----
-    if not hasattr(pid, '_aadc_ode_kernel'):
-        kernel = aadc_ode.Kernel()
-        k_states, k_params = kernel.begin(n_states=n, n_params=n_p)
-        # Set up variables with kernel params at ad_indices
-        vars_k = list(variables_all)
-        for i, idx in enumerate(ad_indices):
-            vars_k[idx] = k_params[i]
-        rates_k = [aadc.idouble(0.0)] * n
-        sim_helper.model.compute_rates(0.0, list(k_states), rates_k, vars_k)
-        kernel.end(rates_k)
-        pid._aadc_ode_kernel = kernel
-    kernel = pid._aadc_ode_kernel
-
     # ---- Build observable info ----
     obs_info = pid.obs_info
     if obs_info is None:
@@ -1011,26 +1026,55 @@ def _cost_and_grad_bdf_kernel(pid, param_vals):
         else np.ones(len(gt_const))
     weighted_obs_denom = sum(1 for w in weights if w > 0) if len(weights) > 0 else 1
 
-    op_map = {'mean': 0, 'max': 1, 'min': 2, 'max_minus_min': 3}
+    # (kind, idx, operation, gt, std, weight): idx is a state index for kind 'state' and an
+    # index into the variables list for kind 'var'.
     obs_list = []
+    unsupported = []
     const_idx = 0
     for jj in range(len(operand_names)):
+        op_name = operand_names[jj][0] if isinstance(operand_names[jj], (list, tuple)) else operand_names[jj]
+        operation = operations[jj]
         if data_types[jj] != 'constant':
+            unsupported.append(f"{op_name} (data_type={data_types[jj]})")
             continue
         if const_idx >= len(gt_const):
             const_idx += 1
             continue
-        op_name = operand_names[jj][0] if isinstance(operand_names[jj], (list, tuple)) else operand_names[jj]
-        operation = operations[jj]
         kind, si = sim_helper._resolve_name(op_name)
+        if kind not in ('state', 'var') or si is None or operation not in KERNEL_OPERATIONS:
+            unsupported.append(f"{op_name} (op={operation})")
+            const_idx += 1
+            continue
         gt = float(gt_const[const_idx])
         std = float(std_const[const_idx])
         w = float(weights[const_idx])
         scale = 0.5 if (const_idx < len(cost_types) and cost_types[const_idx] == 'gaussian_MLE') else 1.0
-        op_code = op_map.get(operation, -1)
-        if kind == 'state' and si is not None and op_code >= 0:
-            obs_list.append((kind, si, op_code, gt, std, w * scale / weighted_obs_denom))
+        obs_list.append((kind, si, operation, gt, std, w * scale / weighted_obs_denom))
         const_idx += 1
+    if unsupported:
+        raise NotImplementedError(
+            f"gradient_strategy 'kernel' cannot represent {len(unsupported)} of "
+            f"{len(operand_names)} observable(s) on the tape: {unsupported}. Supported: "
+            f"constant observables on a state or algebraic variable with operation "
+            f"{'/'.join(KERNEL_OPERATIONS)}.")
+    needs_variables = any(obs[0] == 'var' for obs in obs_list)
+    if needs_variables and not hasattr(model, 'compute_variables'):
+        raise NotImplementedError(
+            "gradient_strategy 'kernel' needs the model's compute_variables to put an "
+            "algebraic-variable observable on the tape, and this model has none.")
+
+    # ---- Record compute_rates as Kernel (once, cached) ----
+    if not hasattr(pid, '_aadc_ode_kernel'):
+        kernel = aadc_ode.Kernel()
+        k_states, k_params = kernel.begin(n_states=n, n_params=n_p)
+        vars_k = list(variables_all)
+        for i, idx in enumerate(ad_indices):
+            vars_k[idx] = k_params[i]
+        rates_k = [aadc.idouble(0.0)] * n
+        model.compute_rates(0.0, list(k_states), rates_k, vars_k)
+        kernel.end(rates_k)
+        pid._aadc_ode_kernel = kernel
+    kernel = pid._aadc_ode_kernel
 
     # ---- Record tape: bdf_solve pre-steps + call_kernel sim-steps ----
     param_values = [float(param_vals[i]) for i in range(n_p)]
@@ -1042,9 +1086,26 @@ def _cost_and_grad_bdf_kernel(pid, param_vals):
     p_tape = [aadc.idouble(param_values[i]) for i in range(n_p)]
     p_args = [v.mark_as_input() for v in p_tape]
 
+    if needs_variables:
+        id_v = [aadc.idouble(float(v) if v == v else 0.0) for v in variables_all]
+        for k, idx in enumerate(ad_indices):
+            id_v[idx] = p_tape[k]
+
+    def sample(x):
+        """Each observable's operand at the current state, as tape values."""
+        if needs_variables:
+            rates_cv = [aadc.idouble(0.0)] * n
+            vars_cv = list(id_v)
+            model.compute_rates(aadc.idouble(0.0), x, rates_cv, vars_cv)
+            model.compute_variables(aadc.idouble(0.0), x, rates_cv, vars_cv)
+        vals = []
+        for kind, idx, *_ in obs_list:
+            v = x[idx] if kind == 'state' else vars_cv[idx]
+            vals.append(v if isinstance(v, aadc.idouble) else aadc.idouble(float(v)))
+        return vals
+
     # Phase 1: bdf_solve for pre-steps (C++ loop, fast)
     sim_steps = total_steps - pre_steps
-    total_sub = total_steps * n_sub
     pre_sub = pre_steps * n_sub
     if pre_sub > 0:
         x = aadc_ode.bdf_solve(kernel, y0, params=p_tape, dt=idt,
@@ -1052,19 +1113,12 @@ def _cost_and_grad_bdf_kernel(pid, param_vals):
     else:
         x = list(y0)
 
-    # Phase 2: call_kernel loop for sim-steps (trajectory on tape)
+    # Phase 2: call_kernel loop for sim-steps (trajectory on tape). Every observable is
+    # sampled at the start of the phase and after every sub-step.
     sim_sub = sim_steps * n_sub
-    # Initialize accumulators for observables
-    accum = {}
-    for obs in obs_list:
-        _, si, op_code, _, _, _ = obs
-        key = (si, op_code)
-        if op_code == 0:  # mean
-            accum[key] = aadc.idouble(0.0) + x[si]
-        elif op_code == 1:  # max
-            accum[key] = aadc.idouble(0.0) + x[si]
-        elif op_code == 2:  # min
-            accum[key] = aadc.idouble(0.0) + x[si]
+    accum = []
+    for (_, _, operation, *_), v in zip(obs_list, sample(x)):
+        accum.append([v, v] if operation == 'max_minus_min' else [v])
 
     for step in range(sim_sub):
         rates = aadc_ode.call_kernel(kernel, x, p_tape)
@@ -1074,26 +1128,27 @@ def _cost_and_grad_bdf_kernel(pid, param_vals):
             x[i] = x[i] + aadc.idouble(idt) * rates[i] / (
                 aadc.idouble(1.0) - aadc.idouble(idt * jd[i]))
 
-        for obs in obs_list:
-            _, si, op_code, _, _, _ = obs
-            key = (si, op_code)
-            if op_code == 0:  # mean
-                accum[key] = accum[key] + x[si]
-            elif op_code == 1:  # max
-                accum[key] = aadc.iif(x[si] > accum[key], x[si], accum[key])
-            elif op_code == 2:  # min
-                accum[key] = aadc.iif(x[si] < accum[key], x[si], accum[key])
+        for (_, _, operation, *_), acc, v in zip(obs_list, accum, sample(x)):
+            if operation == 'mean':
+                acc[0] = acc[0] + v
+            elif operation == 'max':
+                acc[0] = aadc.iif(v > acc[0], v, acc[0])
+            elif operation == 'min':
+                acc[0] = aadc.iif(v < acc[0], v, acc[0])
+            else:  # max_minus_min: [running max, running min]
+                acc[0] = aadc.iif(v > acc[0], v, acc[0])
+                acc[1] = aadc.iif(v < acc[1], v, acc[1])
 
     # Assemble cost on tape
     count = float(sim_sub + 1)
     cost_tape = aadc.idouble(0.0)
-    for obs in obs_list:
-        _, si, op_code, gt, std, w = obs
-        key = (si, op_code)
-        if op_code == 0:
-            val = accum[key] / aadc.idouble(count)
+    for (_, _, operation, gt, std, w), acc in zip(obs_list, accum):
+        if operation == 'mean':
+            val = acc[0] / aadc.idouble(count)
+        elif operation == 'max_minus_min':
+            val = acc[0] - acc[1]
         else:
-            val = accum[key]
+            val = acc[0]
         diff = val - aadc.idouble(gt)
         cost_tape = cost_tape + aadc.idouble(w) * diff * diff / (
             aadc.idouble(std * std) if std > 0 else aadc.idouble(1.0))
