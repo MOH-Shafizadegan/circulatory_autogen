@@ -20,6 +20,8 @@ from libcuflynx.schemas import (CALIBRATION_WORKFLOW_SCHEMA, MODULE_CONFIG_SCHEM
 
 def _registries():
     from libcuflynx.calibration_workflow.spec import ALLOWED_SETTINGS, PRIOR_KINDS, STEP_KINDS
+    from libcuflynx.param_id.prediction_plots import (FEATURE_KINDS, KINDS, REDUCE_MODES,
+                                                      TIME_COURSE_KINDS)
     from libcuflynx.parsers.PrimitiveParsers import PARAM_PRIOR_TYPES
     from libcuflynx.sensitivity_analysis.parameter_reduction import INDEX_TYPES
     from libcuflynx.sensitivity_analysis.sobol_ranking import CRITERIA
@@ -30,6 +32,13 @@ def _registries():
         # (schema, JSON Pointer to the enum) -> values
         (OBS_DATA_SCHEMA, '/$defs/dataItem/properties/data_type/enum'): list(VALID_DATA_TYPES),
         (OBS_DATA_SCHEMA, '/$defs/shape/oneOf/1/properties/type/enum'): list(SHAPE_TYPES),
+        (OBS_DATA_SCHEMA, '/$defs/prediction_plot/properties/kind/enum'): list(KINDS),
+        (OBS_DATA_SCHEMA, '/$defs/prediction_plot/allOf/0/if/properties/kind/enum'):
+            list(FEATURE_KINDS),
+        (OBS_DATA_SCHEMA, '/$defs/prediction_plot/allOf/1/if/properties/kind/enum'):
+            list(TIME_COURSE_KINDS),
+        (OBS_DATA_SCHEMA, '/$defs/input_reference/properties/reduce/oneOf/0/enum'):
+            list(REDUCE_MODES),
         (PARAMS_FOR_ID_SCHEMA, '/$defs/entryKeys/properties/prior/anyOf/0/enum'):
             list(PARAM_PRIOR_TYPES),
         (CALIBRATION_WORKFLOW_SCHEMA, '/$defs/step/properties/kind/enum'): list(STEP_KINDS),

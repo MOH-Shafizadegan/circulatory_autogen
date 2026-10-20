@@ -33,6 +33,18 @@ parameters file, then the supermodule's parameterisation, which now sets globals
 into the instance's file; delete them from the parameterisation afterwards. A calibration workflow
 copies the files with its module arrays, and `pack_workflow` packs them.
 
+### Added — trace inputs and time courses in `prediction_plots`
+
+- An input reference (`x`, `series`) takes an optional `reduce` that makes a trace one number:
+  `"final"`, `"mean"`, `"max"`, `"min"` or `{"at": <seconds from the start of the
+  sub-experiment>}`. A trace without `reduce` is no longer refused when the obs_data is read:
+  that experiment's point is left out with a `PredictionPlotWarning`.
+- Two kinds drawn from a simulation: `input_and_output` (per experiment, a `params_to_change`
+  input and a model output over time on two y-axes, with sub-experiment boundaries and any
+  series data for the output) and `output_vs_input` (the output against the input at the same
+  times, one line per experiment). Both take `{"name", "kind", "input": {"params_to_change"},
+  "output", "experiments"?}`; the schema enforces each kind's keys.
+
 ### Changed — a nested vessel is written by its path
 
 An output or obs_data operand names a nested vessel by its path, as a host parameter already
