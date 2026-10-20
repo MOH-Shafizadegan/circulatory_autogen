@@ -544,9 +544,9 @@ def test_nesting_cycles_are_detected(registry):
 @pytest.mark.integration
 def test_an_instance_named_heart_does_not_trigger_the_heart_special_cases(
         tmp_path, super_library_dir):
-    """The parser adds pulmonary vessels to a vessel named 'heart' with fewer than two
-    outputs, and the CellML generator checks a 'heart' vessel's venous inputs. Neither may
-    fire for a supermodule instance named 'heart', which is gone after expansion."""
+    """The CellML generator checks a heart's venous inputs, finding the heart by its
+    module_type. It may not fire for a supermodule instance named 'heart', which is gone after
+    expansion, and no pulmonary vessels appear."""
     params = HOST_PARAMS + _flowpair_defaults('heart')
     flattened = _generate(tmp_path / 'flat', super_library_dir, 'jv_heart',
                           _flowpair_flattened('heart', join='_'), params)
@@ -904,9 +904,8 @@ def test_the_schema_rejects_a_name_with_whitespace():
 
 @pytest.mark.integration
 def test_extra_keys_in_a_json_array_do_not_change_the_model(tmp_path):
-    """Extra keys become extra columns of the generator's frame. The rows libcuflynx appends
-    itself (here the heart's pulmonary circuit, for a heart with one output) were fixed
-    5-element lists, so any extra key failed with "cannot set a row with mismatched columns"."""
+    """Extra keys become extra columns of the generator's frame, and the model generated from
+    a JSON array with an extra key is the one generated from the CSV."""
     prefix = 'simple_physiological'
     ok, reference = _generate_resource(tmp_path / 'csv', prefix, 'csv')
     assert ok

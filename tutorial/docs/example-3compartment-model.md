@@ -42,7 +42,8 @@ These files define the variables of each module and the connection ports that al
     1. aorta
     2. pulmonary artery
 
-    A simple two-vessel pulmonary system will be used if the pulmonary vessels are not included.
+    Nothing is added for the heart: list the pulmonary artery and vein in the module array. A port
+    left unconnected is a boundary condition, which needs a value in the parameters file.
 
 !!! Tip
     Currently, the terminal vessels should only have a module_subtype starting with *"pp"*.

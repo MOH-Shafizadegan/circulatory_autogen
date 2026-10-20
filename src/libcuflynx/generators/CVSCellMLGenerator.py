@@ -475,11 +475,31 @@ class CVS0DCellMLGenerator(object):
                   f'the "_unfinished" ending of the file name, then rerun the model generation \n'
                   f'with the new parameters file as input.\n')
         df = pd.DataFrame(self.model.parameters_array)
+        if not self.all_parameters_defined:
+            print(self.__missing_parameters_report(
+                df.loc[df["value"] == 'EMPTY_MUST_BE_FILLED', "variable_name"]))
         df = df.drop(columns=["const_type"])
         self._write_text_file_atomic(
             file_to_create,
             lambda wf: df.to_csv(wf, index=None, header=True),
         )
+
+    def __missing_parameters_report(self, missing):
+        """The ``missing`` parameter names, one per line. A boundary_condition variable that no
+        connected module supplies is named with its module: either a port of that module is not
+        connected in the module array, or the parameter needs a value."""
+        unset_bcs = getattr(self, '_unset_bcs', {})
+        lines = ['Missing parameters:']
+        for name in missing:
+            if name in unset_bcs:
+                module, variable = unset_bcs[name]
+                lines.append(f'  {module}/{variable}: a boundary condition of "{module}" that no '
+                             f'connected module supplies. If a port of "{module}" should be '
+                             f'connected, add the module it connects to in the module array; '
+                             f'otherwise give it a value.')
+            else:
+                lines.append(f'  {name}')
+        return '\n'.join(lines) + '\n'
 
     def __copy_solver_make_files(self):
         # Copy the solver build/run scripts (src/solver1d/Make_files) into the generated model
@@ -627,6 +647,9 @@ class CVS0DCellMLGenerator(object):
         # one-to-one mapped variable pairs, and BCs computed by a sum, Multiply or junction
         self._plain_links = []
         self._bcs_supplied = set()
+        # boundary_condition variables no connected module supplies, so they are parameters:
+        # {model parameter name: (module, variable)}
+        self._unset_bcs = {}
         # set connected to false for all entrance and general ports TODO this might be a better way to check connected for exit ports too
         entrance_general_ports_connected = {}
         for module_row_idx in range(len(module_df)):
@@ -679,6 +702,9 @@ class CVS0DCellMLGenerator(object):
                     if not self.BC_set[module_df.iloc[module_row_idx]["name"]] \
                             [module_df.iloc[module_row_idx]["variables_and_units"][II][0]]:
                         module_df.iloc[module_row_idx]["variables_and_units"][II][3] = 'constant'
+                        self._unset_bcs[full_variable_name] = (
+                            module_df.iloc[module_row_idx]["name"],
+                            module_df.iloc[module_row_idx]["variables_and_units"][II][0])
                         # self.model.parameters_array[np.where(self.model.parameters_array["variable_name"] == 
                         #                                      full_variable_name)][0][2] = 'constant'
                     else:
@@ -853,9 +879,12 @@ class CVS0DCellMLGenerator(object):
                     # TODO this part is kind of hacky, but it works, there is definitely a better way to do the mapping with the
                     #  heart module!
                     if is_heart_module_type(out_module_row["module_type"]):
-                        if len(out_module_row["inp_instances"]) == 2 and self.ivc_connection_done == 0:
+                        heart_inputs = out_module_row["inp_instances"]
+                        one_vena_cava = ("venous_ivc" not in heart_inputs
+                                         or "venous_svc" not in heart_inputs)
+                        if len(heart_inputs) == 2 and one_vena_cava and self.ivc_connection_done == 0:
                             # this is the case if there is only one vc and one pulmonary
-                            # We map the ivc to a zero flow mapping
+                            # We map the ivc to a zero flow mapping (imported in __write_imports)
                             self.__write_mapping(wf, 'zero_flow_module', out_module + '_module', ['v_zero'], ['v_ivc'])
                             self.ivc_connection_done = 1
                             self.__set_bc_supplied(out_module, 'v_ivc')

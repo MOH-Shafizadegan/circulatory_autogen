@@ -491,7 +491,7 @@ class CSV0DModelParser(object):
     def load_model(self):
         # Supermodule entries of the module configs. They never join the module dataframe:
         # their instances are expanded into prefixed submodules as the module array is read,
-        # before anything below (the heart special case, the module-config join) sees it.
+        # before anything below (the heart count, the module-config join) sees it.
         supermodule_registry = self.module_sources.supermodule_registry()
         # Component entries with the config file each came from: a record's parameterisation
         # ("parameterisation", or the entry's default) is read from
@@ -518,16 +518,7 @@ class CSV0DModelParser(object):
         # the heart is found by its module_type, so it can have any name (a heart inside a
         # supermodule is <instance>__<submodule>)
         hearts = [n for n, vt in zip(vessels_df["name"], vessels_df["module_type"]) if is_heart_module_type(vt)]
-        if len(hearts) == 1:
-            heart_row = vessels_df.loc[vessels_df["name"] == hearts[0]]
-            if len(heart_row.out_instances.values[0]) == 1:
-                from libcuflynx.upgrade import hint
-                raise ValueError(
-                    f'{self.vessel_filename}: the heart "{hearts[0]}" has one output; it needs '
-                    f'the pulmonary circuit (a pulmonary artery out and vein in), which '
-                    f'libcuflynx no longer adds. '
-                    + hint('module-array', self.vessel_filename))
-        elif len(hearts) > 1:
+        if len(hearts) > 1:
             print('cannot have 2 hearts or more, we dont model octopii')
             exit()
 

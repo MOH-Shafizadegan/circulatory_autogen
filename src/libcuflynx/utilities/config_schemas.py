@@ -438,8 +438,9 @@ def normalise_per_submodule(value, where, key):
 
 def is_heart_module_type(module_type):
     """Whether ``module_type`` is the monolithic heart (heart, heart_ASD, heart_nonstiff, ...),
-    which the generators special-case: its venous (ivc/svc) and pulmonary inputs, and the
-    pulmonary circuit added when it has one output. Not the heart_effector* controllers. It is
+    which the generators special-case: its venous (ivc/svc) and pulmonary inputs (a zero flow
+    for a missing vena cava), and its coupling to 1D vessels. Not the heart_effector*
+    controllers. It is
     found by type, not by name, as a heart inside a supermodule is named
     <instance>_<submodule>."""
     module_type = str(module_type or '')

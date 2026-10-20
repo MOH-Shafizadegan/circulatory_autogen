@@ -38,8 +38,16 @@ model's module configs and module array before its parameter names.
   `multi_port: "False"` (leave it out, or `null`/`false`).
 - Module arrays (`cuflynx-upgrade module-array FILE`): the keys and columns `vessel_type`,
   `BC_type`, `inp_vessels`, `out_vessels`; `<prefix>_vessel_array.*` file names (renamed
-  `<prefix>_module_array.*`). A heart with one output no longer gets `par` and `pvn` added: the
-  array lists the pulmonary circuit, and the converter adds it.
+  `<prefix>_module_array.*`). A heart with one output no longer gets `par` and `pvn` added, by
+  the generator or the converter: a heart is a module like any other, and the array lists every
+  module. A model that relied on them adds the two rows the generator used to add,
+  `par,arterial_simple,vp,<heart>,pvn` and `pvn,arterial_simple,vp,par,<heart>`, with `par` last
+  in the heart's outputs and `pvn` last in its inputs, and their parameters. Without them the
+  heart's pulmonary ports are unconnected, so `heart/u_par` and `heart/v_pvn` are boundary
+  conditions that need values (and a heart whose inputs are `venous_ivc` and `venous_svc` gets
+  no zero-flow vena cava).
+- Generation lists the missing parameters, and names each boundary condition that no connected
+  module supplies with its module, so an unconnected port is easy to find.
 - Parameter names (`cuflynx-upgrade parameter-names --module-array ARRAY` or
   `--supermodule-config CONFIG`, with `--module-library-dir` for library modules): a host
   parameters file names a module's parameter `<vessel>/<variable>` (`aortic_root/C`), and
