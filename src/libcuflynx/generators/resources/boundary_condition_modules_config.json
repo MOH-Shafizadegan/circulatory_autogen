@@ -69,6 +69,28 @@
         ]
       },
       {
+        "module_type":"zero_flow",
+        "module_subtype":"nn",
+        "module_format":"cellml",
+        "component_file":"BG_modules.cellml",
+        "component_type":"zero_flow",
+        "entrance_ports":
+        [
+        ],
+        "exit_ports":
+        [
+          {
+            "port_type":"vessel_port",
+            "variables":["v_zero", ""]
+          }
+        ],
+        "general_ports":[],
+        "variables_and_units":
+        [
+          ["v_zero", "m3_per_s", "no_access", "variable"]
+        ]
+      },
+      {
         "module_type":"inlet_flow",
         "module_subtype":"nn_constant",
         "module_format":"cellml",

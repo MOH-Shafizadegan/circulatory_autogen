@@ -88,8 +88,8 @@ def _write_resources(resources_dir, prefix, module_type, k=0.5, x_init=2.0):
     with open(os.path.join(resources_dir, f'{prefix}_parameters.csv'), 'w') as f:
         f.write(textwrap.dedent(f"""\
             variable_name,units,value,data_reference
-            x_init_decay,dimensionless,{x_init},test
-            k_decay,lib_test_per_second,{k},test
+            decay/x_init,dimensionless,{x_init},test
+            decay/k,lib_test_per_second,{k},test
             """))
 
 

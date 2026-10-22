@@ -11,13 +11,12 @@ A step's values reach the target, and other steps, through a vessel map (``namin
 * a module array keeps its vessel names, unless its ``vessel_map`` renames them (``Renamed``).
 '''
 
-import dataclasses
 import os
 import warnings
 from dataclasses import dataclass, field
 
 from libcuflynx.calibration_workflow import naming
-from libcuflynx.utilities.parameter_names import flat_name, legacy_flat_name
+from libcuflynx.utilities.parameter_names import flat_name
 from libcuflynx.calibration_workflow.spec import WorkflowError
 from libcuflynx.parsers.PrimitiveParsers import ObsAndParamDataParser
 from libcuflynx.utilities.config_schemas import is_supermodule_entry, read_module_array_records
@@ -251,12 +250,7 @@ def resolve_workflow(workflow):
         parameters = read_calibrated_parameters(params_for_id, where)
         resolved_step = ResolvedStep(step=step, model=model, vessel_map=vessel_map,
                                      parameters=parameters, target=target)
-        for i, parameter in enumerate(parameters):
-            if not naming.is_global(parameter.vessel):
-                # a nested vessel joined with "_" as before #582 is read, with a FutureWarning
-                vessel = legacy_flat_name(parameter.vessel, model.vessels,
-                                          f'{where}: {step.params_for_id}')
-                parameter = parameters[i] = dataclasses.replace(parameter, vessel=vessel)
+        for parameter in parameters:
             if parameter.vessel not in model.vessels and not naming.is_global(parameter.vessel):
                 raise WorkflowError(
                     f'{where}: {params_for_id} names vessel "{parameter.vessel}", which '
@@ -432,11 +426,10 @@ def submodule_paths(container_entry, key, supermodules, prefix=()):
 
 
 def _matches(submodule, path):
-    '''Whether a step's ``submodule`` (``soma/i_M``, or ``soma__i_M``; the older ``soma_i_M``
-    too) names ``path``.'''
+    '''Whether a step's ``submodule`` (``soma/i_M``, or ``soma__i_M``) names ``path``.'''
     if '/' in submodule:
         return tuple(submodule.split('/')) == path
-    return submodule in (flat_name(path), '_'.join(path))
+    return submodule == flat_name(path)
 
 
 def _submodule_path(step, workflow_target, target_entry, supermodules):

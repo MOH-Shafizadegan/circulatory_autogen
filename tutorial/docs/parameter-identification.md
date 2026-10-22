@@ -70,6 +70,8 @@ its name, e.g. `data_items[2] ('systolic').value`) and what the field is for.
 
 This file defines the simulation protocol (protocol_info), and ground truth observables that will be used in the cost function for the parameter id optimisation algorithm. It also defines the measurement standard deviation, and weighting for each observable.
 
+Every obs_data is a JSON object with a `protocol_info` that has `pre_times` and `sim_times`. A bare list of data items, or an object without `protocol_info`, is refused; convert it once with `cuflynx-upgrade obs-data [file] --user-inputs [user_inputs.yaml]`, which writes a one-experiment `protocol_info` from that yaml's `pre_time` and `sim_time`.
+
 File path of the `obs_data.json` file should be defined as **param_id_obs_path** in `[CA_dir]/user_run_files/user_inputs.yaml`. This path can be absolute or relative to the location of your `user_inputs.yaml`.
 
 !!! Note
@@ -579,9 +581,11 @@ the validation uses.
 
 #### Plots across experiments (`prediction_plots`)
 
-A family of experiments, each summarised by one feature, is read as a curve: peak current
-against step potential (I–V), a feature against a dose. The optional top-level
-`prediction_plots` list draws one figure per entry:
+A family of experiments is often read as one picture: peak current against step potential
+(I–V), a feature against a dose, a clamp protocol beside the current it drives. The optional
+top-level `prediction_plots` list draws one figure per entry. There are four kinds.
+
+**Feature kinds: one point per experiment.**
 
 ```json
 "prediction_plots": [
@@ -596,16 +600,57 @@ against step potential (I–V), a feature against a dose. The optional top-level
   (written, or its default). A group has at most one item per experiment, and each item is a
   scalar feature.
 - A **point** is one experiment: y is the `y` group's item for it; x is the `x` group's item
-  for the same experiment (`feature_vs_feature`) or the number `params_to_change[key]` is set to
-  in that sub-experiment (`feature_vs_input`, which must be a number, not a trace).
+  for the same experiment (`feature_vs_feature`) or the value `params_to_change[key]` takes in
+  that sub-experiment (`feature_vs_input`).
 - `series` (an input reference, optional) draws one line per value of that input. Points are
   sorted by x; an item's `value`/`std` is drawn as error bars.
+- An **input reference** is `{"params_to_change": <key>, "subexperiment_idx": <i>}` with an
+  optional `"reduce"`. A number is used as it is. A trace (a `protocol_traces` or
+  `protocol_shapes` name) needs `reduce` to become one number: `"final"`, `"mean"`, `"max"`,
+  `"min"`, or `{"at": <seconds from the start of that sub-experiment>}`. These are taken over
+  the trace as the sub-experiment applies it (linear between its points, held past its ends,
+  cut at the end of the sub-experiment). An experiment whose input is a trace with no `reduce`
+  has no point: it is left out with a warning that names it.
 
-The structure is checked when the obs_data is read; a group that misses an experiment the
-other group has is an error, not a gap. `save_prediction_data` draws `<name>.png` in the output
-directory after a calibration, with a data_item's model value from the cost path; and
-`cuflynx-run-predictions` draws them without a calibration (a data_item there shows its data
-only).
+```json
+{"name": "Peak I vs ramp end", "kind": "feature_vs_input", "y": "I_peak",
+ "x": {"params_to_change": "clamp/V_cmd", "subexperiment_idx": 1, "reduce": "final"}}
+```
+
+**Time-course kinds: an input and a model output over time.**
+
+```json
+"prediction_plots": [
+  {"name": "Clamp and current", "kind": "input_and_output",
+   "input": {"params_to_change": "clamp/V_cmd"}, "output": "cell/membrane/I_Na",
+   "experiments": [0, 2]},
+  {"name": "I-V loop", "kind": "output_vs_input",
+   "input": {"params_to_change": "clamp/V_cmd"}, "output": "cell/membrane/I_Na"}
+]
+```
+
+- `input_and_output` draws one figure per experiment, `<name>_exp_<idx>.png`. The input is on
+  the left y-axis and the model output on the right, against the time since the end of the
+  warm-up. Sub-experiment boundaries are dashed. A data_item that has the output as a series
+  (its first operand, no operation) in that experiment is overlaid.
+- `output_vs_input` draws the output against the input sampled at the same times, one line per
+  experiment (for example an I–V loop under a voltage ramp), in `<name>.png`.
+- `input` is a `params_to_change` key. Across the experiment, a number is drawn as a step and a
+  trace as its waveform.
+- `output` is written as an obs_data operand is: `<vessel>/<variable>`, a nested vessel by its
+  path (`SN/soma/membrane/V`), or a global's bare name. It is recorded the way prediction items
+  are, in a simulation of those experiments (at the best fit, after a calibration), so any
+  model variable can be drawn. An output the model does not have is refused before anything
+  runs.
+- `experiments` (optional) lists the experiments to draw. The default is all of them.
+
+The structure is checked when the obs_data is read: a `params_to_change` key the protocol does
+not set, a `subexperiment_idx` or experiment out of range, a malformed `reduce`, an `at` after
+the end of its sub-experiment, and the wrong keys for a kind are refused. A feature group that
+misses an experiment the other group has is an error, not a gap. `save_prediction_data` draws
+the figures in the output directory after a calibration, with a data_item's model value from
+the cost path. `cuflynx-run-predictions` draws them without a calibration; a data_item point
+there shows its data only.
 
 ## Running external cellml models
 
@@ -653,14 +698,14 @@ Note:
 Before doing calibration, a solver for the model needs to be chosen
 
 - **solver** defines the solver family. Options depend on `model_type`:
-    - CellML (`model_type: cellml`): `CVODE` defaults to `CVODE_myokit` (Myokit). Use `CVODE_opencor` explicitly if you want the OpenCOR backend instead.
+    - CellML (`model_type: cellml`): `CVODE_myokit` (Myokit, the default) or `CVODE_opencor` (OpenCOR). `CVODE` is read as `CVODE_myokit`.
     - Python (`model_type: python`): `solve_ivp` with `solver_info.method` set to `RK45`, `BDF`, etc.
     - CasADi Python (`model_type: casadi_python`): `casadi_integrator` with `solver_info.method` set to `cvodes`, `idas`, `collocation`, `rk`, `semi_implicit_euler`, or `bdf`.
     - C++ (`model_type: cpp`): `CVODE`, `RK4`, or `PETSC`.
 - **solver_info** defines settings for the chosen solver:
     - **dt_solver**: solver time step (for CVODE this sets `MaximumStep` when provided)
-    - **MaximumStep**: maximum step size for adaptive solvers
-    - **MaximumNumberOfSteps**: maximum number of substeps before stepping
+    - **MaximumStep**: maximum step size (`CVODE_myokit`, `CVODE_opencor`)
+    - **MaximumNumberOfSteps**: maximum number of substeps before stepping (`CVODE_opencor` and the C++ solvers)
     - **method**: any method for `solve_ivp` or `casadi_integrator`, e.g. `RK45`, `BDF`, `cvodes`, etc.
 
 !!! note "Automatic differentiation supports `constant` and `series` observables only"
@@ -799,20 +844,13 @@ To run the parameter identification we need to set a few entries in the `[CA_dir
     - **bayesian**: Bayesian optimization using scikit-optimize (deprecated, untested)
     - **sp_minimize**: Gradient-based optimizer (L-BFGS-B, local only)
     - **multi_start_sp_minimize**: Multi-start L-BFGS-B — a gradient-based descent from many scattered starting points, so it exploits the gradient but still escapes local minima
-- **pre_time**: this is the amount of time the simulation is run to get to steady state before comparing to the observables from `obs_data.json`. IMPORTANT: THis is overwritten by the pre_times within the obs_data.json file, see the next section.
-- **sim_time**: The amount of time used to compare simulation output and observable data. This should be equal to the length of a series observable entry divided by the "sample_rate". If not, only up to the minimum length of observable data and modelled data will be compared. 
+- **pre_time**: the unlogged time a plain simulation (no obs_data) runs to reach steady state. A calibration is timed by the `pre_times` and `sim_times` in the obs_data's `protocol_info`, which every obs_data must have (see the next section).
+- **sim_time**: the logged duration of a plain simulation (no obs_data). A calibration takes its durations from the obs_data's `sim_times`. 
 - **dt**: The output (sample) time step for model outputs
 - **solver_info.dt_solver**: The solver time step for CVODE (sets MaximumStep when provided)
 - **solver_info.MaximumStep**: The CVODE maximum step size if dt_solver is not provided
 - **param_id_obs_path**: the path to the `obs_data.json` file described above (absolute or relative to your `user_inputs.yaml`).
-- **ga_options**: Legacy dictionary (deprecated, use `optimiser_options` instead):
-	- **cost_type**: "AE" or "MSE" for absolute error or mean squared error.
-	- **num_calls_to_function**: How many forward simulations of pre_time+sim_time will be run in the optimisation algorithm.
-	- **cost_convergence**: If the cost value is lower than this threshold then the calibration run is complete.
-	- **max_patience**: If the cost doesn't improve for this number of simulations, then calibration is complete (we assume that the cost has converged to the global minima or can't get out of a local minima).
-  - Note: For backwards compatibility, entries in `ga_options` are automatically merged into `optimiser_options` if not already present. It is recommended to use `optimiser_options` instead.
-
-- **optimiser_options**: Dictionary for optimizer-specific options (preferred over `ga_options`). Common options shared across optimisers:
+- **optimiser_options**: Dictionary for optimizer-specific options. Common options shared across optimisers:
     - **num_calls_to_function**: Maximum number of function evaluations (default: 10000)
     - **cost_convergence**: Convergence tolerance for cost (default: 0.0001)
     - **max_patience**: Maximum patience for convergence (default: 10)
@@ -855,8 +893,6 @@ To run the parameter identification we need to set a few entries in the `[CA_dir
         a fixed-step integrator); it is unsuitable for stiff models such as the full
         cardiovascular model. See [Optional third-party backends](getting-started.md) if you
         already hold a Matlogica licence.
-
-- **ga_options**: Legacy dictionary for optimization options. For backwards compatibility, entries in `ga_options` are automatically merged into `optimiser_options` if not already present. It is recommended to use `optimiser_options` instead.
 
 
 ## Choosing an Optimization Method
@@ -999,8 +1035,6 @@ True parameters: Vmax_GLK=226.452, Vmax_PGI=339.677, Vmax_PYK=1088.71, Vmax_GAPD
 <!-- BENCHMARK_RESULTS_END -->
 
 The stiff 3compartment cardiovascular benchmark (long warmup, Myokit/CasADi — no OpenCOR needed) runs in the same set; it is slower, so the workflow schedule is weekly. See `benchmarks/README.md`.
-
-Note: For backwards compatibility, `ga_options` can still be used and will be automatically merged into `optimiser_options`.
 
 ## Running parameter identification
 
@@ -1203,7 +1237,7 @@ generated model), and moves through the target's names:
   fixes `aortic_root` in another, and lands on `aortic_root` in the target. When the names
   differ, `vessel_map` renames the step's vessels into the target's.
 - **A library module** is generated alone as one vessel named `mod`, so its params_for_id rows
-  are `mod, <param>` (`mod_<submodule>, <param>` for a supermodule) and its obs_data operands
+  are `mod, <param>` (`mod__<submodule>, <param>` for a supermodule) and its obs_data operands
   `mod/<variable>`. In the target it is renamed to where it sits: the submodule `i_M` of a
   supermodule target (`rho_M_mod_i_M` in the model, `i_M/rho_M` in its parameterisation CSV),
   or the vessel of a module-array target that it is.
@@ -1261,8 +1295,7 @@ files its settings name under `settings/`. Paths in `settings` (`external_module
 their obs_data, params_for_id or parameters changed since); `--only X` reruns one step.
 `--write-calibrated` writes the merged set beside the target's parameters file, as
 `<name>_calibrated_parameters.csv` (`<name>` is the module array's prefix or the
-parameterisation): the target's rows with the calibrated values in place, matched whichever
-form a row is written in (`aortic_root/C` or `C_aortic_root`), and new rows written
+parameterisation): the target's rows with the calibrated values in place, and new rows written
 `<vessel>/<variable>`.
 
 ### Distributions and priors

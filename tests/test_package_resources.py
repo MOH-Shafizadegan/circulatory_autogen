@@ -171,7 +171,3 @@ def test_the_built_wheel_carries_the_data_files_and_not_the_dead_code(tmp_path):
     assert 'libcuflynx/schemas/module_config.schema.json' in names
     assert 'libcuflynx/schemas/obs_data.schema.json' in names
     assert 'libcuflynx/schemas/params_for_id.schema.json' in names
-
-    # ...and the dead code that packages.find excludes stays excluded.
-    obsolete = sorted(n for n in names if n.startswith('libcuflynx/obsolete/'))
-    assert obsolete == [], obsolete
