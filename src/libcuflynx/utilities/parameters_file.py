@@ -138,10 +138,15 @@ def _text(value):
     return str(value)
 
 
+#: what a parameter without a value is read as: generation reports it, and lists it in the
+#: unfinished parameters file it writes
+UNSET_VALUE = 'EMPTY_MUST_BE_FILLED'
+
+
 def leaf_row(name, leaf):
-    '''The row of ``leaf`` named ``name``: ``variable_name``, ``value``, ``units``,
-    ``data_reference`` (empty when absent) and any other key, all text.'''
-    row = {'variable_name': name, 'value': _text(leaf.get(VALUE, '')),
+    '''The row of ``leaf`` named ``name``: ``variable_name``, ``value`` (``UNSET_VALUE`` when it is
+    empty), ``units``, ``data_reference`` (empty when absent) and any other key, all text.'''
+    row = {'variable_name': name, 'value': _text(leaf.get(VALUE, '')).strip() or UNSET_VALUE,
            'units': str(leaf.get('units', '')), 'data_reference': str(leaf.get('data_reference', ''))}
     for key, value in leaf.items():
         if key not in row:

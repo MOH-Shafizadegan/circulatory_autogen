@@ -261,7 +261,7 @@ An instance that is itself a supermodule nests a level further (`soma` above), o
 
 A supermodule instance's values are in the model's parameters file, under its name, like any instance's: `heart/lv/E_A` is `{"heart": {"lv": {"E_A": ...}}}` in `resources/3compartment_parameters.json`.
 
-- They are copied once, when the instance is made, from its version's template: the parameterisation the record names, else the version's default, with the templates of the supermodules nested in it under them:
+- They are copied once, when the instance is made, from its version's template: the version's default parameterisation, with the one the record names over it, and the templates of the supermodules nested in it under them:
 
   ```
   cuflynx-upgrade supermodule-instances resources/3compartment_module_array.json --module-library-dir [library]
