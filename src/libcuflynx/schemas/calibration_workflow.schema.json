@@ -201,7 +201,13 @@
         "id": {
           "type": "string",
           "pattern": "^[^/\\\\]+$",
-          "description": "a label for the step, unique in the file: other steps refer to it, and it names the step's output directory"
+          "description": "a label for the step, unique in the file: other steps refer to it, and it names the step's output directory; not \".\" or \"..\"",
+          "not": {
+            "enum": [
+              ".",
+              ".."
+            ]
+          }
         },
         "kind": {
           "enum": [
@@ -353,7 +359,26 @@
             "required": [
               "model",
               "obs_data"
-            ]
+            ],
+            "anyOf": [
+              {
+                "required": [
+                  "params_for_id"
+                ]
+              },
+              {
+                "required": [
+                  "params_for_id_from"
+                ]
+              }
+            ],
+            "not": {
+              "required": [
+                "params_for_id",
+                "params_for_id_from"
+              ]
+            },
+            "description": "A step that is not a reduction names its model, obs_data and params_for_id (a calibration or emulation may take params_for_id from a reduction instead: params_for_id_from, not both)."
           }
         }
       ]

@@ -1,7 +1,7 @@
 """Machine-readable JSON Schemas of libcuflynx's input files, shipped as package data.
 
 * ``module_array.schema.json`` -- ``<prefix>_module_array.json``: a list of instance records,
-  in PhLynx or libcuflynx keys, with the optional ``per_submodule_inputs`` /
+  in the current (PhLynx) or the older libcuflynx keys, with the optional ``per_submodule_inputs`` /
   ``per_submodule_outputs`` of a supermodule instance and the optional ``parameterisation``
   (an ``instance`` key is refused).
 * ``module_config.schema.json`` -- ``*_modules_config.json``: component entries in either key
@@ -18,9 +18,14 @@
   (``libcuflynx.calibration_workflow``, whose ``spec.py`` and ``resolve.py`` check the same
   rules and those that need the library).
 
-libcuflynx does not need a JSON Schema library: the readers check the same rules when they
-load the files (``utilities/config_schemas.py`` for module configs and arrays,
-``parsers/PrimitiveParsers.py`` for obs_data and params_for_id). The schemas are for editors, other tools (PhLynx) and tests.
+Every reader checks its file against its schema when it loads it
+(:mod:`libcuflynx.schemas.validation`), so a schema is the definition of its file's structure:
+what an editor, PhLynx or CUFLynx accepts is what libcuflynx accepts. The readers check only
+what a schema cannot (that a file exists, that a vessel is in the model). For obs_data and
+params_for_id the schema runs first; module configs, module arrays and calibration workflows
+are checked by their readers first, for those readers' more specific messages, and then by
+the schema. Enums that libcuflynx keeps as registries (prior types, step kinds, data types,
+variable kinds ...) are generated into the schemas by :mod:`libcuflynx.schemas.registries`.
 Use :func:`schema_file` or :func:`load_schema` to get at them.
 """
 

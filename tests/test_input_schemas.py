@@ -23,9 +23,10 @@ from libcuflynx.parsers.PrimitiveParsers import (PARAM_PRIOR_TYPES, PARAMS_FOR_I
 from libcuflynx.generators.multi_port import normalise_port_multi_port, validate_list_multi_port
 from libcuflynx.schemas import (MODULE_ARRAY_SCHEMA, MODULE_CONFIG_SCHEMA, OBS_DATA_SCHEMA,
                                 PARAMS_FOR_ID_SCHEMA, load_schema)
-from libcuflynx.utilities.config_schemas import (PHLYNX_MODULE_ARRAY_COLUMNS, PHLYNX_MODULE_KEYS,
+from libcuflynx.utilities.config_schemas import (COMPONENT_KEYS, MODULE_ARRAY_COLUMN_ORDER,
+                                                 OLD_MODULE_ARRAY_KEYS, OLD_MODULE_CONFIG_KEYS,
                                                  normalise_module_config_entry)
-from libcuflynx.utilities.obs_data_helpers import LEGACY_OBS_ITEM_KEYS, VALID_DATA_TYPES
+from libcuflynx.utilities.obs_data_helpers import VALID_DATA_TYPES
 from libcuflynx.utilities.protocol_shapes import EVENT_KEYS, SHAPE_KEYS, SHAPE_TYPES
 
 jsonschema = pytest.importorskip('jsonschema')
@@ -124,11 +125,11 @@ def test_the_repository_params_for_id_files_validate_as_json():
 
 
 # --------------------------------------------------------------------------------------------
-# the schemas allow the keys the readers accept
+# the reader fills a default for every key the schema allows
 # --------------------------------------------------------------------------------------------
 
 def _parse_obs_data_rules(variable):
-    """The keys of the rule dict ``variable`` in ``parse_obs_data_json``."""
+    """The keys of the defaults dict ``variable`` in ``parse_obs_data_json``."""
     source = textwrap.dedent(inspect.getsource(ObsAndParamDataParser.parse_obs_data_json))
     for node in ast.walk(ast.parse(source)):
         if (isinstance(node, ast.Assign) and isinstance(node.value, ast.Dict)
@@ -139,16 +140,13 @@ def _parse_obs_data_rules(variable):
 
 def test_obs_data_keys_match_the_parser():
     defs = load_schema(OBS_DATA_SCHEMA)['$defs']
-    legacy = set(LEGACY_OBS_ITEM_KEYS)
-    # data items: the parser's keys, the renamed ones, and the series paths it reads and drops
-    assert set(defs['dataItem']['properties']) == \
-        _parse_obs_data_rules('schema') | legacy | {'vm_path', 'im_path'}
+    assert set(defs['dataItem']['properties']) == _parse_obs_data_rules('item_defaults')
     assert set(defs['predictionItem']['properties']) == \
-        _parse_obs_data_rules('prediction_entry_schema') | legacy
-    assert set(defs['protocolInfo']['properties']) == _parse_obs_data_rules('protocol_schema')
-    # data_type: the valid ones and the older spelling of series
-    assert set(defs['dataItem']['properties']['data_type']['enum']) == \
-        set(VALID_DATA_TYPES) | {'timeseries'}
+        _parse_obs_data_rules('prediction_entry_defaults')
+    # the required keys have no default
+    assert set(defs['protocolInfo']['properties']) == \
+        _parse_obs_data_rules('protocol_defaults') | set(defs['protocolInfo']['required'])
+    assert set(defs['dataItem']['properties']['data_type']['enum']) == set(VALID_DATA_TYPES)
 
     shape = defs['shape']['oneOf'][1]
     assert set(shape['properties']) == SHAPE_KEYS
@@ -174,13 +172,13 @@ def test_params_for_id_keys_match_the_parser():
 
 def test_module_config_and_array_keys_match_the_reader():
     defs = load_schema(MODULE_CONFIG_SCHEMA)['$defs']
-    assert set(defs['phlynxComponent']['required']) == set(PHLYNX_MODULE_KEYS)
-    assert set(defs['libcuflynxComponent']['required']) == set(PHLYNX_MODULE_KEYS.values())
+    assert set(defs['phlynxComponent']['required']) == set(COMPONENT_KEYS)
+    refused = {r['required'][0] for r in defs['phlynxComponent']['not']['anyOf']}
+    assert set(OLD_MODULE_CONFIG_KEYS) - {'default_parameters'} <= refused
     array_defs = load_schema(MODULE_ARRAY_SCHEMA)['$defs']
-    for rename in PHLYNX_MODULE_ARRAY_COLUMNS.items():
-        phlynx_key, libcuflynx_key = rename
-        assert phlynx_key in array_defs['phlynxRecord']['properties']
-        assert libcuflynx_key in array_defs['libcuflynxRecord']['properties']
+    assert set(MODULE_ARRAY_COLUMN_ORDER) <= set(array_defs['phlynxRecord']['properties'])
+    refused = {r['required'][0] for r in array_defs['phlynxRecord']['not']['anyOf']}
+    assert set(OLD_MODULE_ARRAY_KEYS) <= refused
 
 
 # --------------------------------------------------------------------------------------------
@@ -219,25 +217,27 @@ def test_a_valid_obs_data_document_is_accepted_by_both():
     _validator(OBS_DATA_SCHEMA).validate(doc)
 
 
+# Each refusal names where the problem is and what is wrong; the reader's error is the schema's
+# (libcuflynx.schemas.validation), except where the reader advises on a removed value.
 @pytest.mark.parametrize('doc, message', [
-    (_obs_doc([_item(colour='red')]), 'Unknown data_item keys'),
+    (_obs_doc([_item(colour='red')]), r"at data_items\[0\][^:]*: .*'colour' was unexpected"),
     (_obs_doc(predictions=[{'data_item_name': 'y', 'operands': ['a/y'], 'unit': 'm',
-                            'colour': 'red'}]), 'Unknown keys in prediction_items'),
-    (_obs_doc(sim_time=[[1.0]]), 'Unknown protocol_info keys'),
-    (_obs_doc([_item(unit=None)]), 'Missing required data_item keys'),
-    (_obs_doc([_item(data_type='prob_dist')]), 'prob_dist'),
-    (_obs_doc([_item(value=[1.0, 2.0])]), "data_type 'constant'"),
-    (_obs_doc([_item(std=None)]), 'needs a ground truth'),
+                            'colour': 'red'}]), r"at prediction_items\[0\][^:]*: .*'colour'"),
+    (_obs_doc(sim_time=[[1.0]]), r"at protocol_info: .*'sim_time' was unexpected"),
+    (_obs_doc([_item(unit=None)]), r"at data_items\[0\][^:]*: 'unit' is a required property"),
+    (_obs_doc([_item(value=[1.0, 2.0])]), r"(?s)at data_items\[0\][^:]*\.value: .*A constant's "
+                                          r"value and std are single numbers"),
+    (_obs_doc([_item(std=None)]), r"(?s)'std' is a required property.*needs a ground truth"),
     (_obs_doc([_item(data_type='series', operation=None, value=[1.0, 2.0], std=None,
-                     obs_dt=0.5)]), "requires 'std'"),
+                     obs_dt=0.5)]), r"(?s)'std' is a required property.*it needs std"),
     (_obs_doc([_item(data_type='series', operation=None, value=[1.0, 2.0], std=0.1)]),
-     'needs obs_dt'),
+     r"(?s)'obs_dt' is a required property.*Required for a series"),
     (_obs_doc(predictions=[{'data_item_name': 'y', 'operands': ['a/y'], 'unit': 'm',
-                            'value': 1.0}]), 'needs data_type'),
+                            'value': 1.0}]), r"(?s)'data_type' is a required.*needs data_type"),
     (_obs_doc(protocol_shapes={'stim': {'events': [{'level': 1.0, 'length': 0.1, 'x': 1}]}},
-              params_to_change={'a/I': [['stim']]}), 'unknown keys'),
+              params_to_change={'a/I': [['stim']]}), r"events\[0\]: .*'x' was unexpected"),
     (_obs_doc(protocol_shapes={'stim': {'type': 'ramp', 'from': 0.0}},
-              params_to_change={'a/I': [['stim']]}), "needs 'to'"),
+              params_to_change={'a/I': [['stim']]}), r"(?s)'to' is a required.*Required for a ramp"),
 ])
 def test_obs_data_the_parser_refuses_the_schema_refuses(doc, message):
     with pytest.raises(ValueError, match=message):
@@ -272,20 +272,21 @@ def test_a_valid_params_for_id_document_is_accepted_by_both():
 
 
 @pytest.mark.parametrize('doc, message', [
-    (_params(dict(GOOD_ENTRY, colour='red')), 'unknown key'),
-    (_params(GOOD_ENTRY, defaults={'colour': 'red'}), 'unknown key'),
-    (_params(dict(GOOD_ENTRY, modifies=['b/R'])), 'both "targets" and "modifies"'),
-    (_params(dict(GOOD_ENTRY, modifier='scale')), 'has no "modifies"'),
+    (_params(dict(GOOD_ENTRY, colour='red')), r"at params\[0\]: .*'colour' was unexpected"),
+    (_params(GOOD_ENTRY, defaults={'colour': 'red'}), r"at defaults: .*'colour' was unexpected"),
+    (_params(dict(GOOD_ENTRY, modifies=['b/R'])), r"(?s)not allowed.*targets\) or a modifier"),
+    (_params(dict(GOOD_ENTRY, modifier='scale')), r'(?s)not allowed.*modifier entries only'),
     (_params({'modifies': ['b/R'], 'modifier': 'scale', 'operation': 'scale', 'min': 0.5,
-              'max': 2}), 'both "modifier" and "operation"'),
-    (_params(dict(GOOD_ENTRY, targets=['C'])), "not a 'component/param' name"),
-    (_params(dict(GOOD_ENTRY, prior='beta')), 'unknown prior'),
+              'max': 2}), r"'operation' was unexpected"),
+    (_params(dict(GOOD_ENTRY, targets=['C'])), r"(?s)targets\[0\]: 'C' is not in the form.*"
+                                               r"component/param"),
+    (_params(dict(GOOD_ENTRY, prior='beta')), r"prior: 'beta' is not one of"),
     (_params(dict(GOOD_ENTRY, prior='normal', prior_params={'prior_std': -1})),
-     'greater than zero'),
-    (_params(dict(GOOD_ENTRY, min='low')), 'min and max are required'),
-    (_params(dict(GOOD_ENTRY, unbounded='maybe')), 'must be true/false'),
-    (_params(GOOD_ENTRY, version=2), 'version 2 is not supported'),
-    ({'version': 1, 'params': []}, 'non-empty "params" list'),
+     r'prior_std: -1 is less than or equal to the minimum of 0'),
+    (_params(dict(GOOD_ENTRY, min='low')), r"min: 'low' is not in the form"),
+    (_params(dict(GOOD_ENTRY, unbounded='maybe')), r"unbounded: 'maybe' is not one of"),
+    (_params(GOOD_ENTRY, version=2), r'version: 2 is not one of'),
+    ({'version': 1, 'params': []}, r'params: \[\] should be non-empty'),
 ])
 def test_params_for_id_the_parser_refuses_the_schema_refuses(doc, message):
     with pytest.raises(ValueError, match=message):
@@ -294,7 +295,7 @@ def test_params_for_id_the_parser_refuses_the_schema_refuses(doc, message):
 
 
 def _component(**port):
-    return {'vessel_type': 'v', 'BC_type': 'nn', 'module_file': 'm.cellml', 'module_type': 'v_type',
+    return {'module_type': 'v', 'module_subtype': 'nn', 'component_file': 'm.cellml', 'component_type': 'v_type',
             'module_format': 'cellml',
             'entrance_ports': [dict({'port_type': 'flow_port', 'variables': ['q']}, **port)],
             'exit_ports': [], 'variables_and_units': [['q', 'm3_per_s', 'access', 'variable']]}
@@ -340,7 +341,7 @@ def test_module_config_variables_and_units_rows_have_four_fields(variable):
 def test_module_array_names_may_have_surrounding_whitespace_only():
     from libcuflynx.utilities.config_schemas import normalise_vessel_record
     validator = _validator(MODULE_ARRAY_SCHEMA)
-    record = {'name': ' a ', 'vessel_type': 'v', 'BC_type': 'nn'}
+    record = {'name': ' a ', 'module_type': 'v', 'module_subtype': 'nn'}
     assert normalise_vessel_record(record)['name'] == 'a'
     assert validator.is_valid([record])
     record = dict(record, name='a b')

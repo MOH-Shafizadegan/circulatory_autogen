@@ -1,16 +1,8 @@
-"""Issue #421: a distribution is a ground truth, not a data_type.
+"""A distribution is a ground truth, not a data_type.
 
-``prob_dist`` used to be a fourth ``data_type`` beside ``constant``, ``series`` and
-``frequency``. The other three describe the shape of the *simulated data* -- a scalar, a trace,
-an FFT. ``prob_dist`` did not: it described the shape of the *ground truth*, while the feature it
-produced was an ordinary scalar, filed into a parallel vector by an otherwise identical branch.
-
-The cost of that split was not tidiness. Anything that works on scalar features indexes by
-``const_idx_to_obs_idx``, so a ``prob_dist`` item had no slot in it and was invisible to the
-emulator and to FD sensitivities -- which is what made the bimodal UQ case impossible to emulate.
-
-These tests pin the replacement: such an item is a ``constant`` whose ``cost_type`` scores it
-against ``prob_dist_params``, chosen from the cost func's own signature.
+An observable compared against a distribution is a ``constant`` whose ``cost_type`` scores it
+against ``prob_dist_params``, chosen from the cost func's own signature. It is indexed like any
+other scalar feature, so the emulator and FD sensitivities see it.
 """
 import json
 
@@ -71,7 +63,7 @@ def _parse(items, tmp_path):
     path = tmp_path / "obs_data.json"
     path.write_text(json.dumps(_obs_data(items)))
     parser = ObsAndParamDataParser()
-    parsed = parser.parse_obs_data_json(param_id_obs_path=str(path), pre_time=0.0, sim_time=1.0,
+    parsed = parser.parse_obs_data_json(param_id_obs_path=str(path),
                                         model_type="cellml")
     return parser.process_obs_info(gt_df=parsed["gt_df"], output_dir=str(tmp_path), dt=0.01)
 
@@ -80,20 +72,11 @@ def _parse(items, tmp_path):
 # the data_type is gone
 # ---------------------------------------------------------------------------
 @pytest.mark.unit
-def test_prob_dist_is_not_an_advertised_data_type():
-    """CUFLynx populates its data_type menu from this tuple, so a removed type must leave it."""
-    assert "prob_dist" not in VALID_DATA_TYPES
+def test_the_data_types_are_constant_series_and_frequency(tmp_path):
+    """CUFLynx populates its data_type menu from this tuple."""
     assert VALID_DATA_TYPES == ("constant", "series", "frequency")
-
-
-@pytest.mark.unit
-def test_an_obs_data_still_using_prob_dist_is_told_what_to_write_instead(tmp_path):
-    """Silently ignoring it would score the item with an unweighted, unread cost."""
-    with pytest.raises(ValueError) as excinfo:
-        _parse([_kde_item(data_type="prob_dist", value=1.0, std=0.1)], tmp_path)
-    message = str(excinfo.value)
-    assert '"constant"' in message
-    assert "prob_dist_params" in message
+    with pytest.raises(ValueError, match="'prob_dist' is not one of"):
+        _parse([_kde_item(data_type="prob_dist")], tmp_path)
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +137,7 @@ def test_an_obs_data_with_no_data_items_is_still_valid(tmp_path):
     path = tmp_path / "obs_data.json"
     path.write_text(json.dumps(_obs_data([])))
     parsed = ObsAndParamDataParser().parse_obs_data_json(
-        param_id_obs_path=str(path), pre_time=0.0, sim_time=1.0, model_type="cellml")
+        param_id_obs_path=str(path), model_type="cellml")
 
     assert len(parsed["gt_df"]) == 0
 
@@ -243,8 +226,7 @@ def test_cost_calc_scores_a_distribution_item_in_the_constant_loop(tmp_path):
 
     parser = ObsAndParamDataParser()
     parsed = parser.parse_obs_data_json(
-        obs_data_dict=_obs_data([_kde_item(cost_kwargs={"bandwidth": 0.1}), _gaussian_item()]),
-        pre_time=0.0, sim_time=1.0)
+        obs_data_dict=_obs_data([_kde_item(cost_kwargs={"bandwidth": 0.1}), _gaussian_item()]))
     obs_info = parser.process_obs_info(gt_df=parsed["gt_df"], output_dir=str(tmp_path), dt=0.01)
     protocol_info = parser.process_protocol_and_weights(
         gt_df=parsed["gt_df"], protocol_info=parsed["protocol_info"], dt=0.01)
@@ -277,8 +259,7 @@ def test_a_distribution_cost_cannot_be_differentiated_symbolically(tmp_path):
     ca = pytest.importorskip('casadi')
 
     parser = ObsAndParamDataParser()
-    parsed = parser.parse_obs_data_json(obs_data_dict=_obs_data([_kde_item()]),
-                                        pre_time=0.0, sim_time=1.0)
+    parsed = parser.parse_obs_data_json(obs_data_dict=_obs_data([_kde_item()]))
     obs_info = parser.process_obs_info(gt_df=parsed["gt_df"], output_dir=str(tmp_path), dt=0.01)
     protocol_info = parser.process_protocol_and_weights(
         gt_df=parsed["gt_df"], protocol_info=parsed["protocol_info"], dt=0.01)

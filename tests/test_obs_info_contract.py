@@ -161,7 +161,7 @@ def mixed():
     parser = ObsAndParamDataParser()
     doc = {"data_items": MIXED_ITEMS,
            "protocol_info": {"pre_times": [0.0], "sim_times": [[1.0]]}}
-    parsed = parser.parse_obs_data_json(obs_data_dict=doc, pre_time=0.0, sim_time=1.0)
+    parsed = parser.parse_obs_data_json(obs_data_dict=doc)
     with tempfile.TemporaryDirectory() as out_dir:
         obs_info = parser.process_obs_info(gt_df=parsed["gt_df"], output_dir=out_dir, dt=0.01)
     counts = {
@@ -257,7 +257,7 @@ def test_prediction_info_publishes_its_contract():
            "prediction_items": [{"data_item_name": "p/y", "operands": ["main/y"],
                                  "unit": "mV", "trace_name_for_plotting": "y"}],
            "protocol_info": {"pre_times": [0.0], "sim_times": [[1.0]]}}
-    parsed = parser.parse_obs_data_json(obs_data_dict=doc, pre_time=0.0, sim_time=1.0)
+    parsed = parser.parse_obs_data_json(obs_data_dict=doc)
     pred = parsed["prediction_info"]
 
     assert set(pred) == set(PREDICTION_INFO_CONTRACT), (
@@ -311,7 +311,7 @@ def test_an_obs_data_with_only_protocol_info_still_parses(tmp_path):
     was a KeyError and such a file could not be loaded."""
     parser = ObsAndParamDataParser()
     doc = {"data_items": [], "protocol_info": {"pre_times": [0.0], "sim_times": [[1.0]]}}
-    parsed = parser.parse_obs_data_json(obs_data_dict=doc, pre_time=0.0, sim_time=1.0)
+    parsed = parser.parse_obs_data_json(obs_data_dict=doc)
     obs_info = parser.process_obs_info(
         gt_df=parsed["gt_df"], output_dir=str(tmp_path), dt=0.01)
 
@@ -343,7 +343,7 @@ def test_a_prediction_can_carry_held_out_data():
                 "obs_dt": 0.5},
                {"data_item_name": "z", "operands": ["main/z"], "unit": "mV"}],
            "protocol_info": {"pre_times": [0.0], "sim_times": [[1.0]]}}
-    parsed = parser.parse_obs_data_json(obs_data_dict=doc, pre_time=0.0, sim_time=1.0)
+    parsed = parser.parse_obs_data_json(obs_data_dict=doc)
     pred = parsed["prediction_info"]
     assert pred["values"] == [[1.0, 2.0, 3.0], None]
     assert pred["obs_dts"] == [0.5, None]
@@ -353,8 +353,8 @@ def test_a_prediction_can_carry_held_out_data():
 
 @pytest.mark.unit
 @pytest.mark.parametrize("item, message", [
-    ({"value": [1.0, 2.0]}, "needs data_type"),
-    ({"value": [1.0, 2.0], "data_type": "series"}, "needs obs_dt"),
+    ({"value": [1.0, 2.0]}, r"'data_type' is a required property"),
+    ({"value": [1.0, 2.0], "data_type": "series"}, r"'obs_dt' is a required property"),
 ])
 def test_held_out_data_on_a_prediction_must_say_what_it_is(item, message):
     parser = ObsAndParamDataParser()
@@ -362,7 +362,7 @@ def test_held_out_data_on_a_prediction_must_say_what_it_is(item, message):
            "prediction_items": [{"data_item_name": "y_v", "operands": ["main/y"], "unit": "mV", **item}],
            "protocol_info": {"pre_times": [0.0], "sim_times": [[1.0]]}}
     with pytest.raises(ValueError, match=message):
-        parser.parse_obs_data_json(obs_data_dict=doc, pre_time=0.0, sim_time=1.0)
+        parser.parse_obs_data_json(obs_data_dict=doc)
 
 
 @pytest.mark.unit
@@ -378,7 +378,7 @@ def test_a_prediction_can_carry_an_operation():
                 "operation": "subtraction"},
                {"data_item_name": "z", "operands": ["main/z"], "unit": "mV", "operation": "None"}],
            "protocol_info": {"pre_times": [0.0], "sim_times": [[1.0]]}}
-    pred = parser.parse_obs_data_json(obs_data_dict=doc, pre_time=0.0, sim_time=1.0)["prediction_info"]
+    pred = parser.parse_obs_data_json(obs_data_dict=doc)["prediction_info"]
     assert pred["operations"] == ["max", "subtraction", None]
     assert pred["operation_kwargs"] == [{}, {}, {}]
     assert pred["operands"][1] == ["main/p", "main/q"]
@@ -388,7 +388,7 @@ def test_a_prediction_can_carry_an_operation():
 @pytest.mark.unit
 @pytest.mark.parametrize("item, message", [
     ({"operation_kwargs": {"x": 1}}, "operation_kwargs but no operation"),
-    ({"operation": 3}, "Invalid prediction_items value types"),
+    ({"operation": 3}, r"operation: 3 is not of type"),
     ({"operation": "max", "operation_kwargs": {"ref": "a/c0"}}, "references data_item"),
 ])
 def test_a_prediction_operation_is_checked_at_parse_time(item, message):
@@ -398,7 +398,7 @@ def test_a_prediction_operation_is_checked_at_parse_time(item, message):
                                  **item}],
            "protocol_info": {"pre_times": [0.0], "sim_times": [[1.0]]}}
     with pytest.raises(ValueError, match=message):
-        parser.parse_obs_data_json(obs_data_dict=doc, pre_time=0.0, sim_time=1.0)
+        parser.parse_obs_data_json(obs_data_dict=doc)
 
 
 @pytest.mark.unit
@@ -410,7 +410,7 @@ def test_a_prediction_may_reference_only_an_earlier_prediction():
     doc = {"data_items": [_const("c0")], "prediction_items": [first, later],
            "protocol_info": {"pre_times": [0.0], "sim_times": [[1.0]]}}
     with pytest.raises(ValueError, match="not earlier in prediction_items"):
-        parser.parse_obs_data_json(obs_data_dict=doc, pre_time=0.0, sim_time=1.0)
+        parser.parse_obs_data_json(obs_data_dict=doc)
 
 
 @pytest.mark.unit
@@ -424,7 +424,7 @@ def test_a_prediction_operation_kwargs_key_is_checked_like_a_data_items():
            "prediction_items": [{"data_item_name": "p", "operands": ["main/p"], "unit": "mV",
                                  "operation": "max", "operation_kwargs": {"not_a_kwarg": 1}}],
            "protocol_info": {"pre_times": [0.0], "sim_times": [[1.0]]}}
-    pred = parser.parse_obs_data_json(obs_data_dict=doc, pre_time=0.0, sim_time=1.0)["prediction_info"]
+    pred = parser.parse_obs_data_json(obs_data_dict=doc)["prediction_info"]
     funcs = scriptFunctionParser().get_operation_funcs_dict("numpy")
     with pytest.raises(ValueError, match="has no keyword argument 'not_a_kwarg'"):
         validate_operation_kwargs(pred, funcs)
@@ -434,12 +434,12 @@ def test_a_prediction_operation_kwargs_key_is_checked_like_a_data_items():
 # One item is a scalar or a series, never both
 # ---------------------------------------------------------------------------
 _SHAPE_CASES = [
-    ({"data_type": "constant", "value": [1.0, 2.0], "std": 0.1}, "must be a single number"),
-    ({"data_type": "constant", "value": 1.0, "std": [0.1, 0.1]}, "std must be a single number"),
-    ({"data_type": "series", "value": 1.0, "std": 0.1, "obs_dt": 0.1}, "must be a list"),
+    ({"data_type": "constant", "value": [1.0, 2.0], "std": 0.1}, r"value: .* is not of type 'number'"),
+    ({"data_type": "constant", "value": 1.0, "std": [0.1, 0.1]}, r"std: .* is not of type 'number'"),
+    ({"data_type": "series", "value": 1.0, "std": 0.1, "obs_dt": 0.1}, r"value: 1.0 is not of type 'array'"),
     ({"data_type": "series", "value": [1.0, 2.0], "std": [0.1, 0.1, 0.1], "obs_dt": 0.1},
      r"2 values but has 3 stds|length \(3\) does not match series length \(2\)"),
-    ({"data_type": "series", "value": [1.0, 2.0], "std": 0.1}, "needs obs_dt"),
+    ({"data_type": "series", "value": [1.0, 2.0], "std": 0.1}, r"'obs_dt' is a required property"),
 ]
 
 
@@ -450,7 +450,7 @@ def test_a_data_item_is_a_scalar_or_a_series(fields, message):
     item = {"data_item_name": "bad", "operands": ["a/x"], "unit": "mV", **fields}
     doc = {"data_items": [item], "protocol_info": {"pre_times": [0.0], "sim_times": [[1.0]]}}
     with pytest.raises(ValueError, match=message) as info:
-        parser.parse_obs_data_json(obs_data_dict=doc, pre_time=0.0, sim_time=1.0)
+        parser.parse_obs_data_json(obs_data_dict=doc)
     assert "'bad'" in str(info.value)
 
 
@@ -463,7 +463,7 @@ def test_a_prediction_item_is_a_scalar_or_a_series(fields, message):
                                  **fields}],
            "protocol_info": {"pre_times": [0.0], "sim_times": [[1.0]]}}
     with pytest.raises(ValueError, match=message) as info:
-        parser.parse_obs_data_json(obs_data_dict=doc, pre_time=0.0, sim_time=1.0)
+        parser.parse_obs_data_json(obs_data_dict=doc)
     assert "'bad'" in str(info.value)
 
 
@@ -476,7 +476,7 @@ def test_a_series_prediction_may_have_an_operation():
                                  "unit": "mV", "operation": "addition", "data_type": "series",
                                  "value": [1.0, 2.0], "std": 0.1, "obs_dt": 0.5}],
            "protocol_info": {"pre_times": [0.0], "sim_times": [[1.0]]}}
-    pred = parser.parse_obs_data_json(obs_data_dict=doc, pre_time=0.0, sim_time=1.0)["prediction_info"]
+    pred = parser.parse_obs_data_json(obs_data_dict=doc)["prediction_info"]
     assert pred["operations"] == ["addition"] and pred["data_types"] == ["series"]
 
 
@@ -491,14 +491,14 @@ def test_a_prediction_subexperiment_defaults_to_the_last_and_is_checked():
                {"data_item_name": "c", "operands": ["main/y"], "unit": "mV", "experiment_idx": 1,
                 "subexperiment_idx": 0}],
            "protocol_info": protocol}
-    pred = parser.parse_obs_data_json(obs_data_dict=doc, pre_time=0.0, sim_time=1.0)["prediction_info"]
+    pred = parser.parse_obs_data_json(obs_data_dict=doc)["prediction_info"]
     assert pred["subexperiment_idxs"] == [0, 2, 0]
     for bad, message in (({"subexperiment_idx": 3, "experiment_idx": 1}, "subexperiment_idx 3"),
                          ({"experiment_idx": 2}, "experiment_idx 2")):
         doc["prediction_items"] = [{"data_item_name": "x", "operands": ["main/y"], "unit": "mV",
                                     **bad}]
         with pytest.raises(ValueError, match=message):
-            parser.parse_obs_data_json(obs_data_dict=doc, pre_time=0.0, sim_time=1.0)
+            parser.parse_obs_data_json(obs_data_dict=doc)
 
 
 @pytest.mark.unit
@@ -512,7 +512,7 @@ def test_an_experiment_without_data_items_is_not_a_cost_experiment(tmp_path, cap
                                  "experiment_idx": 1, "data_type": "constant", "value": 1.0}],
            "protocol_info": {"pre_times": [0.0, 0.0], "sim_times": [[1.0], [2.0]],
                              "params_to_change": {"a/p": [[1.0], [2.0]]}}}
-    parsed = parser.parse_obs_data_json(obs_data_dict=doc, pre_time=0.0, sim_time=1.0)
+    parsed = parser.parse_obs_data_json(obs_data_dict=doc)
     protocol = parser.process_protocol_and_weights(
         gt_df=parsed["gt_df"], protocol_info=parsed["protocol_info"], dt=0.01)
     assert cost_experiment_idxs(protocol) == [0]
@@ -520,8 +520,24 @@ def test_an_experiment_without_data_items_is_not_a_cost_experiment(tmp_path, cap
     assert not np.any(protocol["scaled_weight_const_from_exp_sub"][1][0])
 
     doc["data_items"].append(dict(_const("c1"), experiment_idx=1))
-    parsed = parser.parse_obs_data_json(obs_data_dict=doc, pre_time=0.0, sim_time=1.0)
+    parsed = parser.parse_obs_data_json(obs_data_dict=doc)
     protocol = parser.process_protocol_and_weights(
         gt_df=parsed["gt_df"], protocol_info=parsed["protocol_info"], dt=0.01)
     assert cost_experiment_idxs(protocol) == [0, 1]
     assert "no data_items" not in capsys.readouterr().out
+
+
+@pytest.mark.unit
+def test_experiment_indices_are_integers_when_some_items_leave_them_out():
+    """pandas makes the column float when an item leaves the key out; the indices index lists
+    (plot_reconstruction_pages slices with them), so they come back as int."""
+    parser = ObsAndParamDataParser()
+    item = {"data_item_name": "a", "operands": ["main/x"], "unit": "m", "data_type": "constant",
+            "value": 1.0, "std": 0.1, "operation": "max"}
+    doc = {"protocol_info": {"pre_times": [0.0, 0.0], "sim_times": [[1.0], [1.0, 1.0]],
+                             "params_to_change": {}},
+           "data_items": [dict(item, experiment_idx=1, subexperiment_idx=1),
+                          dict(item, data_item_name="b")]}
+    gt_df = parser.parse_obs_data_json(obs_data_dict=doc)["gt_df"]
+    assert list(gt_df["experiment_idx"]) == [1, 0]
+    assert all(isinstance(v, (int, np.integer)) for v in gt_df["subexperiment_idx"])
