@@ -31,7 +31,7 @@ one.
 | File | Purpose |
 |---|---|
 | `oscillator_model.py` | The model class plus `SIM_HELPER = Oscillator`. |
-| `oscillator_params_for_id.csv` | Parameters to calibrate / sweep (`c`, `k`) with bounds. |
+| `oscillator_params_for_id.json` | Parameters to calibrate / sweep (`c`, `k`) with bounds. |
 | `oscillator_parameters.json` | Default parameter values (the calibration start point). |
 | `oscillator_obs_data.json` | The `protocol_info` (the run window) plus target observables — `mean(x)`, `min(x)`, `range(v)` at the "true" `c=0.7, k=5.0`. |
 
@@ -81,8 +81,8 @@ class MyModel:
 SIM_HELPER = MyModel      # required: the class object, at module level
 ```
 
-Names are `component/variable`, matching the `params_for_id` CSV columns
-(`vessel_name`/`param_name`) and the obs_data `operands`.
+Names are `component/variable`, matching the `params_for_id` `targets` and the obs_data
+`operands`.
 
 **Time is CA's, not yours.** `pre_time` is spin-up that `run()` must perform and CA discards; the
 logged trace starts at the end of it. `run()` always starts from the initial condition — there is

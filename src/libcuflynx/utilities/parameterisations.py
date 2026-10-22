@@ -10,7 +10,7 @@ A module library (e.g. circulatory-autogen-modules) lays a module out as::
         parameterisations/<name>/
             <name>_parameters.json    nested parameter values (utilities/parameters_file.py)
             <name>_obs_data.json      optional; "obs_data_name": "<name>"
-            <name>_params_for_id.csv  optional
+            <name>_params_for_id.json optional
 
 A module-array record names its parameterisation with ``"parameterisation"``; ``"instance"``
 there is an error, since an instance is the record itself. A version directory with the

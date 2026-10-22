@@ -229,7 +229,7 @@ _MODEL_PREFIX = '3compartment'
 _MODEL_FILES = (
     f'{_MODEL_PREFIX}_module_array.csv',
     f'{_MODEL_PREFIX}_parameters.json',
-    f'{_MODEL_PREFIX}_params_for_id.csv',
+    f'{_MODEL_PREFIX}_params_for_id.json',
     f'{_MODEL_PREFIX}_obs_data.json',
 )
 

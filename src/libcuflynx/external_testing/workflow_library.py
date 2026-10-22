@@ -41,7 +41,7 @@ obs_data / params_for_id named freely. ``chain_array.json``: ``a_only`` calibrat
 import json
 import os
 
-from libcuflynx.utilities import parameters_file
+from libcuflynx.utilities import parameters_file, params_for_id_file
 
 Y_A, STD_A = 8.0, 0.08
 Y_B, STD_B = 27.0, 0.27
@@ -154,9 +154,9 @@ def _obs(name, items):
 
 
 def _params_for_id(path, rows):
-    _write(path, 'vessel_name,param_name,min,max,name_for_plotting\n'
-           + ''.join(f'{vessel},{param},{lo},{hi},{param}_{vessel}\n'
-                     for vessel, param, lo, hi in rows))
+    params_for_id_file.write_params_for_id(path, [
+        {'targets': [params_for_id_file.target_name(vessel, param)], 'min': lo, 'max': hi,
+         'name_for_plotting': f'{param}_{vessel}'} for vessel, param, lo, hi in rows])
 
 
 def _parameterisation(modules, module_type, parameterisation, parameters, obs=None,
@@ -169,7 +169,7 @@ def _parameterisation(modules, module_type, parameterisation, parameters, obs=No
         _write_json(os.path.join(directory, f'{parameterisation}_obs_data.json'),
                     _obs(parameterisation, obs))
     if params_for_id is not None:
-        _params_for_id(os.path.join(directory, f'{parameterisation}_params_for_id.csv'),
+        _params_for_id(os.path.join(directory, f'{parameterisation}_params_for_id.json'),
                        params_for_id)
     return directory
 
@@ -186,7 +186,7 @@ def _library_step(step_id, module_type, directory, workflow_dir, **extra):
                  'obs_data': os.path.relpath(os.path.join(directory, f'{name}_obs_data.json'),
                                              workflow_dir),
                  'params_for_id': os.path.relpath(
-                     os.path.join(directory, f'{name}_params_for_id.csv'), workflow_dir)},
+                     os.path.join(directory, f'{name}_params_for_id.json'), workflow_dir)},
                 **extra)
 
 
@@ -304,7 +304,7 @@ def build_workflow_library(root, settings=None):
             dict(screened_step('ia', kind='identifiability', result_from='fit',
                                settings={'ia_options': IA_OPTIONS}),
                  params_for_id=os.path.relpath(
-                     os.path.join(paths['chain/rest'], 'rest_params_for_id.csv'), screened)),
+                     os.path.join(paths['chain/rest'], 'rest_params_for_id.json'), screened)),
         ]})
 
     paths['chain/pipeline'] = _parameterisation(
@@ -355,10 +355,10 @@ def build_workflow_library(root, settings=None):
     _parameters(os.path.join(arrays, 'chain_parameters.json'),
                 [('A/p', 1.0), ('C/q', 1.0), ('C/k', 1.0, K_SOURCE)])
     _write_json(os.path.join(arrays, 'data', 'a_obs.json'), _obs('a', [('y_a', 'A/y', Y_A, STD_A)]))
-    _params_for_id(os.path.join(arrays, 'data', 'a_params.csv'), [('A', 'p', 0.1, 5.0)])
+    _params_for_id(os.path.join(arrays, 'data', 'a_params.json'), [('A', 'p', 0.1, 5.0)])
     _write_json(os.path.join(arrays, 'data', 'chain_obs.json'),
                 _obs('chain', [('z_c', 'C/z', Z_C, STD_C)]))
-    _params_for_id(os.path.join(arrays, 'data', 'chain_params.csv'), [('C', 'q', 0.1, 10.0)])
+    _params_for_id(os.path.join(arrays, 'data', 'chain_params.json'), [('C', 'q', 0.1, 10.0)])
     paths['chain_array'] = os.path.join(arrays, 'chain_array.json')
     _write_json(paths['chain_array'], {
         'schema_version': 1, 'workflow_name': 'chain_array',
@@ -367,8 +367,8 @@ def build_workflow_library(root, settings=None):
         'settings': settings,
         'target': 'chain_module_array.json',
         'steps': [{'id': 'a-alone', 'model': 'a_only_module_array.json',
-                   'obs_data': 'data/a_obs.json', 'params_for_id': 'data/a_params.csv'},
+                   'obs_data': 'data/a_obs.json', 'params_for_id': 'data/a_params.json'},
                   {'id': 'chain', 'model': 'chain_module_array.json',
-                   'obs_data': 'data/chain_obs.json', 'params_for_id': 'data/chain_params.csv',
+                   'obs_data': 'data/chain_obs.json', 'params_for_id': 'data/chain_params.json',
                    'fixed_from': ['a-alone']}]})
     return paths

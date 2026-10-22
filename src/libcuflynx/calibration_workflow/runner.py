@@ -11,7 +11,7 @@ Output layout (``output_dir``)::
         step_result.json           calibrated values, fixed values and priors used, input hashes
         model/                     the generated step model (resources/, generated_models/)
         param_id/                  the normal param_id outputs (best_param_vals.npy, ...)
-        <step_id>_params_for_id.csv   a reduction's choice, or a step's own with the
+        <step_id>_params_for_id.json  a reduction's choice, or a step's own with the
                                    parameters priors_from adds
         distribution/              only with store_distribution (see distributions.py)
         sensitivity/               a sensitivity step's outputs (sa_options.output_dir)
@@ -331,7 +331,7 @@ class _Run:
                     f'({generated["parameters_path"]}).')
         if priors:
             source_path = params_for_id
-            params_for_id = os.path.join(step_dir, f'{step.id}_params_for_id.csv')
+            params_for_id = os.path.join(step_dir, f'{step.id}_params_for_id.json')
             _write_params_for_id_with_priors(source_path, params_for_id, priors, step.id)
         units = {k: v.get('units', '') for k, v in model_rows.items()}
         return generated, params_for_id, units, fixed, priors
@@ -704,7 +704,7 @@ def _model_files(model):
 
 def reduced_params_for_id_path(output_dir, step_id):
     '''The params_for_id a reduction step writes.'''
-    return os.path.join(output_dir, step_id, f'{step_id}_params_for_id.csv')
+    return os.path.join(output_dir, step_id, f'{step_id}_params_for_id.json')
 
 
 def emulator_dir(output_dir, step_id):
@@ -736,37 +736,20 @@ def write_calibrated_parameters(target, merged_parameters, workflow_name):
 
 
 def _write_params_for_id_with_priors(source_path, out_path, priors, step_id):
-    '''The step's own params_for_id plus one ``uniform`` row (for the bounds) per parameter a
+    '''The step's own params_for_id plus one ``uniform`` entry (for the bounds) per parameter a
     prior is given for; the prior's density itself is added as a joint prior.'''
-    import csv
-    with open(source_path, newline='', encoding='utf-8-sig') as f:
-        reader = csv.DictReader(f)
-        columns = list(reader.fieldnames)
-        rows = [dict(r) for r in reader]
-    for column in ('vessel_name', 'param_name', 'min', 'max', 'name_for_plotting'):
-        if column not in columns:
-            columns.append(column)
+    from libcuflynx.utilities import params_for_id_file as pfi
+    doc = pfi.read_params_for_id(source_path, f'step "{step_id}": ')
+    entries = list(doc.get('params') or [])
     for prior, distribution in priors:
         for par in distribution.parameters:
-            params = {p for _, p in par.targets}
-            if len(params) != 1:
-                raise WorkflowError(f'step "{step_id}": a prior from "{prior.step}" is over a '
-                                    f'grouped parameter with targets {par.targets} of '
-                                    f'different names, which params_for_id cannot express.')
             if not (np.isfinite(par.min) and np.isfinite(par.max)):
                 raise WorkflowError(f'step "{step_id}": the prior from "{prior.step}" over '
                                     f'{par.model_names()} has no finite bounds.')
-            row = {c: '' for c in columns}
-            row.update(vessel_name=' '.join(v for v, _ in par.targets), param_name=params.pop(),
-                       min=repr(par.min), max=repr(par.max),
-                       name_for_plotting=par.model_names()[0])
-            if 'prior' in columns:
-                row['prior'] = 'uniform'
-            rows.append(row)
-    with open(out_path, 'w', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=columns, extrasaction='ignore')
-        writer.writeheader()
-        writer.writerows(rows)
+            entries.append({'targets': [pfi.target_name(v, p) for v, p in par.targets],
+                            'min': par.min, 'max': par.max,
+                            'name_for_plotting': par.model_names()[0], 'prior': 'uniform'})
+    pfi.write_params_for_id(out_path, dict(doc, params=entries))
 
 
 # --------------------------------------------------------------------------------------------

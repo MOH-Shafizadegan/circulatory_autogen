@@ -46,7 +46,7 @@ def _make_resources(temp_output_dir):
     resources_dir = os.path.join(temp_output_dir, 'resources')
     if comm.Get_rank() == 0:
         os.makedirs(resources_dir, exist_ok=True)
-        for name in ('oscillator_params_for_id.csv', 'oscillator_parameters.json',
+        for name in ('oscillator_params_for_id.json', 'oscillator_parameters.json',
                      'oscillator_obs_data.json'):
             shutil.copy(os.path.join(_EXAMPLE_DIR, name), os.path.join(resources_dir, name))
     if comm.Get_size() > 1:

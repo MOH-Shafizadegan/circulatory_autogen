@@ -335,7 +335,7 @@ modules/<category>/<module_type>/versions/<version>/
     parameterisations/<name>/
         <name>_parameters.json                      nested parameter values, rooted at the module
         <name>_obs_data.json                        optional; "obs_data_name": "<name>"
-        <name>_params_for_id.csv                    optional
+        <name>_params_for_id.json                   optional
 ```
 
 !!! Note

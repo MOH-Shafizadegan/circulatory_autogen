@@ -10,7 +10,7 @@
 
 The Circulatory_Autogen project (`[project_dir]`) contains five folders as presented below:       
 
-- **resources**: Contains example files that define models (`[file_prefix]_module_array.csv`), parameter values (`[file_prefix]_parameters.json`), parameters to calibrate (`[file_prefix]_params_for_id.csv`), and ground truth data to calibrate towards (`[file_prefix]_obs_data.json`) for generating and calibrating models.
+- **resources**: Contains example files that define models (`[file_prefix]_module_array.csv`), parameter values (`[file_prefix]_parameters.json`), parameters to calibrate (`[file_prefix]_params_for_id.json`), and ground truth data to calibrate towards (`[file_prefix]_obs_data.json`) for generating and calibrating models.
 - **src**: Containts the source code for autogeneration, parameter id, and other utilities.
 - **user_run_files**: Includes bash run files for the user and the `user_inputs.yaml` file, which is the main config file for the run settings.
 - **funcs_user**: Where *you* put your own functions for calculating output features from model outputs (operations), your own cost functions, and your own modifier functions. Name the file in `user_inputs.yaml` with `operation_funcs_external_path` / `cost_funcs_external_path` / `modifier_funcs_external_path`; copy one of the `*_funcs_example.py` templates to start, and see `funcs_user/README.md`. The built-in operations and costs ship inside the package, at `[project_dir]/src/libcuflynx/param_id/operation_funcs.py` and `[project_dir]/src/libcuflynx/funcs/`.
@@ -20,7 +20,7 @@ The Circulatory_Autogen project (`[project_dir]`) contains five folders as prese
     For recommended use, the user should create a separate `[CA_user_dir]` for the specific model they are creating. In this dir there should be the following:
 
     - **[file_prefix]_user_inputs.yaml**
-    - **resources**: Contains the files that define the model connection network ([file_prefix]_module_array.csv) and parameter values ([file_prefix]_parameters.json) that will be generated and config files to prescribe the parameters to calibrate ([file_prefix]_params_for_id.csv) and the ground truth to calibrate towards ([file_prefix]_obs_data.json).
+    - **resources**: Contains the files that define the model connection network ([file_prefix]_module_array.csv) and parameter values ([file_prefix]_parameters.json) that will be generated and config files to prescribe the parameters to calibrate ([file_prefix]_params_for_id.json) and the ground truth to calibrate towards ([file_prefix]_obs_data.json).
 
 !!! Note 
     Set `external_modules_dir` to a directory where you store additional `*_modules.cellml` and `*_modules_config.json` files if you want modules external to the repo. This path can be relative to your `user_inputs.yaml` location. To load a whole module library (one module per subdirectory), use `module_library_dirs`, and set `use_builtin_modules: false` to use it instead of the built-in modules; see [Designing a model](design-model.md).

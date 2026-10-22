@@ -56,6 +56,30 @@ A model's parameter values are `<prefix>_parameters.json` beside its module arra
   generated model, named as the model names them. A model with missing values gets
   `<prefix>_parameters_unfinished.json` in its resources directory.
 
+### Changed — params_for_id is JSON
+
+A calibration's parameters are `<prefix>_params_for_id.json` (schema `params_for_id.schema.json`), a
+flat list of entries, not nested by instance: an entry groups parameters or modifies them, so it is
+not one parameter.
+
+```json
+{"version": 1,
+ "params": [
+  {"targets": ["aortic_root/C"], "min": 1e-9, "max": 5e-8, "name_for_plotting": "C_{ao}"},
+  {"targets": ["heart/lv/E_A", "heart/rv/E_A"], "min": 1e8, "max": 5e8},
+  {"name": "R_scale", "modifies": ["venous_svc/R", "venous_ivc/R"], "modifier": "scale", "min": 0.5, "max": 2}]}
+```
+
+- Parameters are named as users write them: `<vessel>/<variable>`, a nested vessel by its path
+  (`heart/lv/E_A`, read as the model's `heart__lv`) and a global as `global/<variable>`.
+- A params_for_id CSV is refused (`params_for_id_file`, the default `<prefix>_params_for_id.*`, a
+  workflow step's `params_for_id`). `cuflynx-upgrade params-for-id <CSV | directory>` writes the
+  `.json` beside each CSV and removes it: one entry per row, `vessel_name "a b"` with `param_name "C"`
+  as `"targets": ["a/C", "b/C"]`, the `prior_*` columns under `prior_params`, numbers as written.
+  `ObsAndParamDataParser.params_for_id_csv_to_json` returns the same document.
+- Calibration workflows write a step's params_for_id with its priors' parameters, and a reduction's,
+  as `<step>_params_for_id.json`; a prior over parameters of different names is no longer refused.
+
 ### Added — trace inputs and time courses in `prediction_plots`
 
 - An input reference (`x`, `series`) takes an optional `reduce` that makes a trace one number:

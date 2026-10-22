@@ -99,13 +99,6 @@ def test_the_examples_validate():
     assert seen == set(ALL_SCHEMAS)
 
 
-def test_the_example_params_for_id_csv_converts_to_its_json():
-    converted = ObsAndParamDataParser.params_for_id_csv_to_json(
-        os.path.join(EXAMPLES, 'SN_simple_params_for_id.csv'))
-    with open(os.path.join(EXAMPLES, 'SN_simple_params_for_id.json')) as f:
-        assert converted == json.load(f)
-
-
 def test_the_repository_obs_data_files_validate():
     files = _repo_files('*obs_data*.json')
     assert len(files) > 10
@@ -126,12 +119,14 @@ def test_the_repository_parameters_files_validate():
         assert not errors, (path, jsonschema.exceptions.best_match(errors).message)
 
 
-def test_the_repository_params_for_id_files_validate_as_json():
-    files = _repo_files('*params_for_id*.csv')
+def test_the_repository_params_for_id_files_are_json_and_validate():
+    assert not _repo_files('*params_for_id*.csv')
+    files = _repo_files('*params_for_id*.json')
     assert len(files) > 10
     validator = _validator(PARAMS_FOR_ID_SCHEMA)
     for path in files:
-        doc = ObsAndParamDataParser.params_for_id_csv_to_json(path)
+        with open(path) as f:
+            doc = json.load(f)
         errors = list(validator.iter_errors(doc))
         assert not errors, (path, jsonschema.exceptions.best_match(errors).message)
 
@@ -291,7 +286,7 @@ def test_a_valid_params_for_id_document_is_accepted_by_both():
     (_params({'modifies': ['b/R'], 'modifier': 'scale', 'operation': 'scale', 'min': 0.5,
               'max': 2}), r"'operation' was unexpected"),
     (_params(dict(GOOD_ENTRY, targets=['C'])), r"(?s)targets\[0\]: 'C' is not in the form.*"
-                                               r"component/param"),
+                                               r"<vessel>/<variable>"),
     (_params(dict(GOOD_ENTRY, prior='beta')), r"prior: 'beta' is not one of"),
     (_params(dict(GOOD_ENTRY, prior='normal', prior_params={'prior_std': -1})),
      r'prior_std: -1 is less than or equal to the minimum of 0'),

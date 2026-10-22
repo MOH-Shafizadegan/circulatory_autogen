@@ -5,7 +5,7 @@ The parameter identification part of Circulatory_Autogen is designed to allow ca
 - **params_for_id**
 - **param id observables**
 
-Those files should be added to the `[CA_dir]/resources` directory (or your custom `resources_dir`). Proper names of the files are **[file_prefix]_params_for_id.csv** and **[file_prefix]_obs_data.json**, respectively. You can also set `params_for_id_file` in `user_inputs.yaml` if you want to use a non-standard filename.
+Those files should be added to the `[CA_dir]/resources` directory (or your custom `resources_dir`). Proper names of the files are **[file_prefix]_params_for_id.json** and **[file_prefix]_obs_data.json**, respectively. You can also set `params_for_id_file` in `user_inputs.yaml` if you want to use a non-standard filename.
 
 ## Prerequisites
 
@@ -16,55 +16,70 @@ Those files should be added to the `[CA_dir]/resources` directory (or your custo
 
 ## Creating params_for_id file
 
-This file defines which parameters (constants and initial_states) within your model that you will vary in the parameter id process and their allowed ranges (prior distribution). Following is an example of the `params_for_id.csv` file.
+This file defines which parameters (constants and initial_states) within your model that you will vary in the parameter id process and their allowed ranges (prior distribution). It is JSON, a flat list of entries, one per calibrated value:
 
-![params_for_id.csv](images/params-for-id.png)
+```json
+{
+ "version": 1,
+ "params": [
+  {"targets": ["global/q_lv_init"], "min": 200e-6, "max": 1500e-6, "param_type": "const", "name_for_plotting": "q_{sbv}"},
+  {"targets": ["aortic_root/C"], "min": 1e-9, "max": 5e-8, "param_type": "const", "name_for_plotting": "C_{ao}"},
+  {"targets": ["heart/lv/E_A", "heart/rv/E_A"], "min": 1e8, "max": 5e8, "name_for_plotting": "E_A"},
+  {"name": "R_scale", "modifies": ["venous_svc/R", "venous_ivc/R"], "modifier": "scale", "min": 0.5, "max": 2.0}
+ ]
+}
+```
 
-The entries in the file are detailed as follows:
+The keys of an entry:
 
-- **vessel_name**: the name of the vessel/module the parameter is in
-- **param_name**: the name of the parameter in the cellml module (the variable, without its vessel: `C` of `aortic_root/C` in the `[file_prefix]_parameters.json` file).
-- **param_type**: **"state"** or **"const"**; whether the parameter is the initial value of a state or a const. 
-- **min**: The minimimum of the range of possible values (min of the uniform distribution).
-- **max**: The maximum of the range of possible values (max of the uniform distribution).
-- **data_item_name**: The unique name of this prediction, as for a `data_item`.
-- **trace_name_for_plotting**: The name (latex format) used when automatically plotting
-  comparisons with observables and predictions.
+- **targets**: the model parameters this calibrated value sets, all to the same value, named as in the `[file_prefix]_parameters.json` file: `<vessel>/<variable>` (`aortic_root/C`), a nested vessel by its path (`heart/lv/E_A`, a supermodule instance's submodule) and a global constant as `global/<variable>`.
+- **modifies**, **modifier**, **inputs** (instead of **targets**): a modifier entry, whose calibrated value acts on the parameters it lists through a modifier function (`scale`, `remainder`, or your own, see `modifier_funcs_external_path`).
+- **name**: the entry's name, unique in the file; by default its first target.
+- **min**, **max**: the range of possible values (the uniform prior's bounds, the optimiser's search box).
+- **param_type**: **"state"** or **"const"**; whether the parameter is the initial value of a state or a const.
+- **name_for_plotting**: the name (latex format) used in plots.
+- **prior**, **prior_params**, **unbounded**, **comment**: see below.
+
+The file is flat, not nested by instance like the parameters file, because an entry is not one parameter: it groups parameters or modifies them. An optional `"defaults"` object gives keys every entry takes unless it sets its own.
 
 !!! Note
     **param_type** will be deprecated. All should be **"const"**. Initial values that need to identified should be defined as constants within the cellml module.
 
+A params_for_id CSV (`vessel_name,param_name,min,max,...`, the older form) is refused. Convert it once with
+
+```
+cuflynx-upgrade params-for-id <params_for_id CSV | directory>...
+```
+
+which writes the `.json` beside each CSV and removes the CSV: each row becomes one entry, `vessel_name "a b"` with `param_name "C"` becomes `"targets": ["a/C", "b/C"]` (a nested `heart__lv` as its path, `heart/lv/C`), and the `prior_*` columns go under `"prior_params"`. Name the `.json` wherever the CSV was named (`params_for_id_file`, a workflow step's `params_for_id`).
+
 ### Priors
 
-Without further columns every parameter has a uniform prior on `[min, max]`. An optional
-**prior** column chooses another, with its settings in further columns:
+Without further keys every parameter has a uniform prior on `[min, max]`. An optional
+**prior** chooses another, with its settings in **prior_params**:
 
-| `prior` | Columns | Notes |
+| `prior` | `prior_params` | Notes |
 |---|---|---|
 | `uniform` (default) | — | flat on `[min, max]` |
 | `normal` | `prior_mean`, `prior_std` | default mean: the middle of the range; default std: a sixth of it |
 | `exponential` | `prior_scale` (or `prior_lambda`), `prior_origin` | decays from `prior_origin`; scale defaults to `max / prior_lambda` |
 
-Each prior is truncated to `[min, max]` unless the **unbounded** column is set, in which case
+Each prior is truncated to `[min, max]` unless **unbounded** is `true`, in which case
 the range is derived from the prior. Priors shape the log posterior, so they affect MCMC (`do_uq`)
 and optimisers run with `objective_function: likelihood` (the genetic algorithm); a calibration
 that minimises the cost does not see them. A calibration workflow can also give a step a prior
 over several parameters at once, from an earlier step's posterior (see
 [Calibration workflows](#calibration-workflows)).
 
-### JSON form and schemas
+### Schemas
 
-`params_for_id` may also be written as JSON (`[file_prefix]_params_for_id.json`); a CSV is
-converted to that form when it is read (`ObsAndParamDataParser.params_for_id_csv_to_json`), each
-row becoming one entry of `"params"` with `vessel_name "a b"` and `param_name "C"` as
-`"targets": ["a/C", "b/C"]` and the `prior_*` columns under `"prior_params"`. The JSON form also
-takes a `"defaults"` block and modifier entries (`"modifies"`, `"modifier"`, `"inputs"`). Every
-input file has a JSON Schema shipped in `libcuflynx/schemas/` (`params_for_id.schema.json`,
-`obs_data.schema.json`, `module_config.schema.json`, `module_array.schema.json`; load one with
-`libcuflynx.schemas.load_schema`), describing each key and its default. libcuflynx checks every
-file against its schema when it reads it, so editors and other tools validating against the
-schema agree with libcuflynx. An error lists every problem, each with where it is (an item by
-its name, e.g. `data_items[2] ('systolic').value`) and what the field is for.
+Every input file has a JSON Schema shipped in `libcuflynx/schemas/` (`params_for_id.schema.json`,
+`obs_data.schema.json`, `parameters.schema.json`, `module_config.schema.json`,
+`module_array.schema.json`; load one with `libcuflynx.schemas.load_schema`), describing each key
+and its default. libcuflynx checks every file against its schema when it reads it, so editors and
+other tools validating against the schema agree with libcuflynx. An error lists every problem,
+each with where it is (an item by its name, e.g. `data_items[2] ('systolic').value`) and what the
+field is for.
 
 ## Creating param id observables file
 
@@ -1133,11 +1148,11 @@ identifiability analysis to it (see [Step kinds](#step-kinds)).
     {"id": "aorta-compliance",
      "model": "resources/aorta_only_module_array.csv",
      "obs_data": "data/aorta_obs_data.json",
-     "params_for_id": "data/aorta_params_for_id.csv"},
+     "params_for_id": "data/aorta_params_for_id.json"},
     {"id": "whole-circulation",
      "model": "resources/circulation_module_array.csv",
      "obs_data": "data/circulation_obs_data.json",
-     "params_for_id": "data/circulation_params_for_id.csv",
+     "params_for_id": "data/circulation_params_for_id.json",
      "fixed_from": ["aorta-compliance"]}
   ]
 }
@@ -1198,18 +1213,18 @@ The keys that pass something on, each naming one step of the kind shown:
 
 A **reduction** ranks the sensitivity step's parameters by the `criterion` (`max`, default, or
 `mean`) over the observables of their `index_type` index (`ST`, total, default, or `S1`), keeps
-the `top_n` best, dropping any scoring below `threshold`, and writes those rows of the sensitivity
-step's params_for_id -- bounds and all -- as `<step_id>/<step_id>_params_for_id.csv`:
+the `top_n` best, dropping any scoring below `threshold`, and writes those entries of the sensitivity
+step's params_for_id -- bounds and all -- as `<step_id>/<step_id>_params_for_id.json`:
 
 ```json
 {"id": "screen", "kind": "sensitivity", "model": {...}, "obs_data": "...",
- "params_for_id": "candidates_params_for_id.csv",
+ "params_for_id": "candidates_params_for_id.json",
  "settings": {"sa_options": {"method": "sobol", "num_samples": 256}}},
 {"id": "keep-5", "kind": "reduction", "sensitivity_from": "screen",
  "reduction": {"top_n": 5, "index_type": "ST", "criterion": "max", "threshold": 0.01}},
 {"id": "fit", "model": {...}, "obs_data": "...", "params_for_id_from": "keep-5"},
 {"id": "ia", "kind": "identifiability", "model": {...}, "obs_data": "...",
- "params_for_id": "fitted_params_for_id.csv", "result_from": "fit",
+ "params_for_id": "fitted_params_for_id.json", "result_from": "fit",
  "settings": {"ia_options": {"method": "Laplace", "gradient_source": "FD"}}}
 ```
 
@@ -1221,7 +1236,7 @@ can also be used on its own:
 ```python
 from libcuflynx.sensitivity_analysis.parameter_reduction import SobolReduction
 SobolReduction(top_n=5, threshold=0.01).reduce(
-    'sa/all_outputs_n256_Sobol_indices.csv', 'candidates_params_for_id.csv', 'kept.csv')
+    'sa/all_outputs_n256_Sobol_indices.csv', 'candidates_params_for_id.json', 'kept.json')
 ```
 
 An emulator can be trained on the kept parameters alone, and MCMC run on it: an `emulation`
@@ -1236,10 +1251,10 @@ generated model), and moves through the target's names:
 - **A module array** keeps its vessel names. A value calibrated on `aortic_root` in one model
   fixes `aortic_root` in another, and lands on `aortic_root` in the target. When the names
   differ, `vessel_map` renames the step's vessels into the target's.
-- **A library module** is generated alone as one vessel named `mod`, so its params_for_id rows
-  are `mod, <param>` (`mod__<submodule>, <param>` for a supermodule) and its obs_data operands
+- **A library module** is generated alone as one vessel named `mod`, so its params_for_id targets
+  are `mod/<param>` (`mod/<submodule>/<param>` for a supermodule) and its obs_data operands
   `mod/<variable>`. In the target it is renamed to where it sits: the submodule `i_M` of a
-  supermodule target (`rho_M_mod_i_M` in the model, `i_M/rho_M` in its parameterisation CSV),
+  supermodule target (`rho_M_mod__i_M` in the model, `i_M/rho_M` in its parameterisation),
   or the vessel of a module-array target that it is.
 
 `--dry-run` checks that every calibrated parameter lands on a vessel the target has, and prints
@@ -1272,7 +1287,7 @@ prior.
     <step_id>/sensitivity/            a sensitivity step's indices and plots
     <step_id>/emulator/               an emulation step's emulator
     <step_id>/<step_id>_laplace_*.npy an identifiability step's Laplace mean and covariance (also in step_result.json)
-    <step_id>/<step_id>_params_for_id.csv  a reduction's params_for_id
+    <step_id>/<step_id>_params_for_id.json a reduction's params_for_id
     _target/model/                    the target generated with every calibrated value
     <workflow_name>_cuflynx_study.json  the study manifest CUFLynx opens (below)
 ```

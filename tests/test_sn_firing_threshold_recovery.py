@@ -35,6 +35,7 @@ import pytest
 from libcuflynx.param_id.paramID import CVS0DParamID
 from libcuflynx.parsers.PrimitiveParsers import YamlFileParser
 from libcuflynx.scripts.script_generate_with_new_architecture import generate_with_new_architecture
+from _params_for_id import write_params_for_id
 
 try:
     from mpi4py import MPI
@@ -114,9 +115,9 @@ def _resources(resources_dir, work_dir):
     os.makedirs(out, exist_ok=True)
     for name in ("SN_simple_module_array.csv", "SN_simple_parameters.json"):
         shutil.copy(os.path.join(resources_dir, name), out)
-    with open(os.path.join(out, "SN_simple_params_for_id.csv"), "w") as handle:
-        handle.write("vessel_name, param_name, min, max, name_for_plotting\n")
-        handle.write(f"soma_SN, g_Na1_6, {PARAM_MIN}, {PARAM_MAX}, g_{{Na1.6}}\n")
+    write_params_for_id(os.path.join(out, "SN_simple_params_for_id.json"), [
+        {"targets": ["soma_SN/g_Na1_6"], "min": PARAM_MIN, "max": PARAM_MAX,
+         "name_for_plotting": "g_{Na1.6}"}])
     return out
 
 
@@ -125,7 +126,7 @@ def _config(base_user_inputs, work_dir, resources, obs_path, **overrides):
     config.update({
         "file_prefix": "SN_simple",
         "input_param_file": "SN_simple_parameters.json",
-        "params_for_id_file": "SN_simple_params_for_id.csv",
+        "params_for_id_file": "SN_simple_params_for_id.json",
         "model_type": "cellml",
         "solver": "CVODE_myokit",
         "param_id_method": "genetic_algorithm",
