@@ -17,6 +17,31 @@ next release; add to that section as you land a change.
   times, one line per experiment). Both take `{"name", "kind", "input": {"params_to_change"},
   "output", "experiments"?}`; the schema enforces each kind's keys.
 
+### Changed — the heart is connected like any other module
+
+Nothing in generation depends on a module being a heart or on an instance's name:
+- A module's inputs take its entrance ports of one `port_type` in the order its
+  `inp_instances` lists them (instances with no port of that type skipped), as its outputs
+  already took its exit ports in `out_instances` order. The rows' order no longer decides it:
+  a junction with two entrance ports of a type took its inputs in the order of their rows.
+  A model whose junction inputs were listed against their rows' order lists them in the order
+  it was generated with (CA's `physiological`, `control_phys*`, `cerebral*`, `elic`,
+  `FinalModel` arrays are reordered; their models are unchanged).
+- No zero-flow vena cava is added for a heart with one vena cava. List a `zero_flow`
+  instance (`module_type` `zero_flow`, `module_subtype` `nn`, a new built-in module with a
+  `vessel_port` exit) first among the heart's vessel inputs, as `3compartment` now does.
+  Otherwise its two vessel inputs take the `v_ivc` and `v_svc` ports, and `heart/v_pvn` is a
+  boundary condition to fill, named in the missing-parameters report. The `zero_flow` component
+  is in a model's `_modules.cellml` only when an instance uses it.
+- A model may have more than one heart.
+- A 1D vessel is coupled to the port of its 0D neighbour that joins them, found as above,
+  in the cpp generator and in `convert_0d_to_1d` (which takes the module sources as
+  `module_sources_inputs`); a heart's 1D outflow vessel no longer needs `aorta` in its name,
+  nor its venous inputs `ivc`, `svc` or `pvn`.
+- The CasADi solver diagnostics report, for each stiff mode, the inertance `I_<module>` of the
+  module of its dominant state and the inertance that would make it steppable, in place of the
+  `par` and `systemic_T` estimates.
+
 ### Changed — `solver: CVODE` for a cellml model is `CVODE_myokit`
 
 `solver: CVODE` (or `solver_info.solver: CVODE`) with `model_type: cellml` is read as
@@ -53,8 +78,7 @@ model's module configs and module array before its parameter names.
   `par,arterial_simple,vp,<heart>,pvn` and `pvn,arterial_simple,vp,par,<heart>`, with `par` last
   in the heart's outputs and `pvn` last in its inputs, and their parameters. Without them the
   heart's pulmonary ports are unconnected, so `heart/u_par` and `heart/v_pvn` are boundary
-  conditions that need values (and a heart whose inputs are `venous_ivc` and `venous_svc` gets
-  no zero-flow vena cava).
+  conditions that need values.
 - Generation lists the missing parameters, and names each boundary condition that no connected
   module supplies with its module, so an unconnected port is easy to find.
 - Parameter names (`cuflynx-upgrade parameter-names --module-array ARRAY` or

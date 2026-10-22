@@ -14,6 +14,8 @@ import csv
 from pathlib import Path
 from libcuflynx.utilities.config_schemas import (dump_vessel_records, read_module_array_records,
                                                  module_array_path, vessel_records_to_string_frame)
+from libcuflynx.utilities.module_library import ModuleSources
+from libcuflynx.generators.port_order import neighbour_port_index
 
 
 def _write_json_records(source_path, source_records, df_vess, out_path):
@@ -34,7 +36,40 @@ def _write_json_records(source_path, source_records, df_vess, out_path):
         f.write(dump_vessel_records(records))
 
 
-def convert_0d_to_1d(model, folder_0d, param_file_0d, folder_hyb=None, vess_1d_list=[]):
+def _coupling_variable(df_vess, registry, vess, vess1d, side):
+    """The variable of 0D module ``vess`` that a 1D vessel ``vess1d`` sets through the port
+    joining them: the port is found from ``vess``'s module config (generators/port_order.py),
+    and of its (flow, pressure) variables the one ``vess``'s boundary condition at that end
+    takes. ``side`` is "exit" when ``vess`` feeds ``vess1d``, "entrance" when it is fed by it."""
+    row = df_vess.loc[df_vess['name'] == vess].iloc[0]
+    key = (row['module_type'], row['module_subtype'])
+    if key not in registry:
+        raise ValueError(f'No module config for {key} (module "{vess}"): the 1D coupling '
+                         f'variable is read from its ports.')
+    ports = registry[key][f'{side}_ports']
+    neighbours = row['out_instances' if side == 'exit' else 'inp_instances'].split()
+    facing = ('entrance_ports', 'general_ports') if side == 'exit' else ('exit_ports', 'general_ports')
+
+    def port_types(name):
+        rows = df_vess.loc[df_vess['name'] == name]
+        if rows.empty:
+            return []
+        entry = registry.get((rows.iloc[0]['module_type'], rows.iloc[0]['module_subtype']), {})
+        return [p['port_type'] for k in facing for p in entry.get(k, [])]
+
+    idx = neighbour_port_index(ports, neighbours, vess1d, 'vessel_port', port_types)
+    if idx is None:
+        idx = next(i for i, p in enumerate(ports) if p['port_type'] == 'vessel_port')
+    flow, pressure = ports[idx]['variables'][:2]
+    bc_letter = row['module_subtype'][1 if side == 'exit' else 0]
+    return (pressure, 'J_per_m3') if bc_letter == 'p' else (flow, 'm3_per_s')
+
+
+def convert_0d_to_1d(model, folder_0d, param_file_0d, folder_hyb=None, vess_1d_list=[],
+                     module_sources_inputs=None):
+    """``module_sources_inputs``: the module source settings (``module_library_dirs``,
+    ``use_builtin_modules``, ``external_modules_dir``) whose module configs give each 0D
+    neighbour's coupling port; default the built-in modules."""
 
     if len(vess_1d_list) == 0:
         print(f"Warning :: No vessels to convert from 0D to 1D for model {model}. Use fully 0D model input files.")
@@ -55,6 +90,8 @@ def convert_0d_to_1d(model, folder_0d, param_file_0d, folder_hyb=None, vess_1d_l
     source_records = read_module_array_records(source_path)
     df_vess = vessel_records_to_string_frame(source_records)
     df_params = pd.read_csv(folder_0d / param_file_0d)
+
+    registry = ModuleSources(module_sources_inputs or {}).component_registry()
 
     n1d = len(vess_1d_list)
     nV = df_vess.shape[0]
@@ -96,17 +133,10 @@ def convert_0d_to_1d(model, folder_0d, param_file_0d, folder_hyb=None, vess_1d_l
                     sys.exit(f"Error :: Input vessel {vess} not found for 1D vessel {vess1d}.")
 
                 idxV = idxs[0]
-                if df_vess.at[idxV, 'module_type'] != 'FV1D_vessel':
-                    if df_vess.at[idxV, 'module_subtype'].startswith(('vp', 'pp')):
-                        if vess=='heart':
-                            if vess1d=='par':
-                                df_params.loc[df_params.shape[0]] = [vess+'/u_par', 'J_per_m3', 0.0, 'WONT_BE_USED']
-                            else: # aortic root
-                                df_params.loc[df_params.shape[0]] = [vess+'/u_root', 'J_per_m3', 0.0, 'WONT_BE_USED']
-                        else:
-                            df_params.loc[df_params.shape[0]] = [vess+'/u_out', 'J_per_m3', 0.0, 'WONT_BE_USED']
-                    elif df_vess.at[idxV, 'module_subtype'].startswith(('pv', 'vv')):
-                        df_params.loc[df_params.shape[0]] = [vess+'/v_out', 'm3_per_s', 0.0, 'WONT_BE_USED']
+                if df_vess.at[idxV, 'module_type'] != 'FV1D_vessel' and \
+                        df_vess.at[idxV, 'module_subtype'].startswith(('vp', 'pp', 'pv', 'vv')):
+                    variable, units = _coupling_variable(df_vess, registry, vess, vess1d, 'exit')
+                    df_params.loc[df_params.shape[0]] = [vess+'/'+variable, units, 0.0, 'WONT_BE_USED']
 
             for vess in out_vess:
                 idxs = df_vess.index[df_vess['name'] == vess].tolist()
@@ -114,19 +144,10 @@ def convert_0d_to_1d(model, folder_0d, param_file_0d, folder_hyb=None, vess_1d_l
                     sys.exit(f"Error :: Output vessel {vess} not found for 1D vessel {vess1d}.")
 
                 idxV = idxs[0]
-                if df_vess.at[idxV, 'module_type'] != 'FV1D_vessel':
-                    if df_vess.at[idxV, 'module_subtype'].startswith(('pv', 'pp')):
-                        df_params.loc[df_params.shape[0]] = [vess+'/u_in', 'J_per_m3', 0.0, 'WONT_BE_USED']
-                    elif df_vess.at[idxV, 'module_subtype'].startswith(('vp', 'vv')):
-                        if vess=='heart':
-                            if vess1d=='pvn':
-                                df_params.loc[df_params.shape[0]] = [vess+'/v_pvn', 'm3_per_s', 0.0, 'WONT_BE_USED']
-                            elif 'ivc' in vess1d:
-                                df_params.loc[df_params.shape[0]] = [vess+'/v_ivc', 'm3_per_s', 0.0, 'WONT_BE_USED']
-                            elif 'svc' in vess1d:
-                                df_params.loc[df_params.shape[0]] = [vess+'/v_svc', 'm3_per_s', 0.0, 'WONT_BE_USED']
-                        else:
-                            df_params.loc[df_params.shape[0]] = [vess+'/v_in', 'm3_per_s', 0.0, 'WONT_BE_USED']
+                if df_vess.at[idxV, 'module_type'] != 'FV1D_vessel' and \
+                        df_vess.at[idxV, 'module_subtype'].startswith(('vp', 'pp', 'pv', 'vv')):
+                    variable, units = _coupling_variable(df_vess, registry, vess, vess1d, 'entrance')
+                    df_params.loc[df_params.shape[0]] = [vess+'/'+variable, units, 0.0, 'WONT_BE_USED']
 
     if str(source_path).endswith('.json'):
         # JSON in, JSON out: a CSV cannot hold a supermodule instance's per_submodule_* links

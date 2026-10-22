@@ -16,7 +16,7 @@ from libcuflynx.utilities.package_resources import package_data_dir
 from libcuflynx.utilities.paths import default_resources_dir
 from libcuflynx.utilities.module_library import (ModuleSources, ModuleShadowWarning, collect_units,
                                                  CELLML_1_1_NS)
-from libcuflynx.utilities.config_schemas import is_heart_module_type
+from libcuflynx.generators.port_order import neighbour_port_index
 from libcuflynx.utilities.vessel_bc import is_vessel_module
 
 generators_dir = os.path.dirname(__file__)
@@ -81,9 +81,6 @@ class CVS0DCellMLGenerator(object):
         self.BC_set = {}
         self.all_units = []
         self.DEBUG = inp_data_dict['DEBUG'] 
-
-        # this is a temporary hack to include zero flow ivc if only one input to heart TODO make more robust
-        self.ivc_connection_done = 0
 
         # this is a list of converter components that are used to convert units
         self.unit_converter_components = []
@@ -556,7 +553,7 @@ class CVS0DCellMLGenerator(object):
 
             # A set, built once: this is tested on every line of every module file, and with
             # pandas 3 a test against `.values` (a StringArray) costs ~2 s per generation.
-            used_component_types = set(self.model.vessels_df.component_type) | {'zero_flow'}
+            used_component_types = set(self.model.vessels_df.component_type)
             for II, module_file_path in enumerate(self.module_scripts):
                 with open(module_file_path, 'r') as rf:
                     # skip first lines that are either intro lines written above or comments.
@@ -621,23 +618,6 @@ class CVS0DCellMLGenerator(object):
                 # if not cellml then don't do anything for this vessel/module
                 continue
             self.__write_import(wf, vessel_tup)
-
-        # the heart is found by its module_type, so it can have any name (a heart inside a
-        # supermodule is <instance>_<submodule>)
-        hearts = [n for n, vt in zip(vessel_df["name"], vessel_df["module_type"]) if is_heart_module_type(vt)]
-        if len(hearts) == 1:
-            heart_inputs = vessel_df.loc[vessel_df["name"] == hearts[0]].inp_instances.values[0]
-            # add a zero mapping to heart ivc or svc flow input if only one input is specified
-            if "venous_ivc" not in heart_inputs or "venous_svc" not in heart_inputs:
-                wf.writelines([f'<import xlink:href="{self.file_prefix}_modules.cellml">\n',
-                               f'    <component component_ref="zero_flow" name="zero_flow_module"/>\n',
-                               '</import>\n'])
-            if "venous_ivc" not in heart_inputs and "venous_svc" not in heart_inputs:
-                print('either venous_ivc, or venous_svc, or both must be inputs to the heart, exiting')
-                exit()
-        elif len(hearts) > 1:
-            print('you have declared more that one heart module, exiting')
-            exit()
 
     def __write_module_mappings(self, wf, module_df):
         """This function maps between ports of the modules in a module dataframe."""
@@ -830,6 +810,17 @@ class CVS0DCellMLGenerator(object):
                 for II in range(len(entrance_port_types)):
                     if entrance_port_types[II]["port_type"] == port_types[port_type_idx]["port_type"]:
                         entrance_port_type_idx = II
+                        # several entrance ports of this type: the module's inputs take them in
+                        # the order its inp_instances lists them (generators/port_order.py)
+                        ordered_idx = None
+                        if out_module in entrance_general_ports_connected:
+                            ordered_idx = self.__ordered_entrance_port(
+                                out_module_row, main_module, port_types[port_type_idx]["port_type"],
+                                module_df)
+                        if ordered_idx is not None and \
+                                not entrance_general_ports_connected[out_module][ordered_idx]:
+                            entrance_port_idx = ordered_idx
+                            break
                         for JJ in entrance_port_types[II]["entrance_port_idxs"]:
                             if out_module in entrance_general_ports_connected: #XXX Bea's addition
                                 if not entrance_general_ports_connected[out_module][JJ]:
@@ -875,28 +866,6 @@ class CVS0DCellMLGenerator(object):
                     #         if out_module_row["inp_instances"][II] == main_module:
                     #             entrance_port_idx = entrance_port_types[entrance_port_type_idx]["entrance_port_idxs"][II]
                     #             break
-
-                    # TODO this part is kind of hacky, but it works, there is definitely a better way to do the mapping with the
-                    #  heart module!
-                    if is_heart_module_type(out_module_row["module_type"]):
-                        heart_inputs = out_module_row["inp_instances"]
-                        one_vena_cava = ("venous_ivc" not in heart_inputs
-                                         or "venous_svc" not in heart_inputs)
-                        if len(heart_inputs) == 2 and one_vena_cava and self.ivc_connection_done == 0:
-                            # this is the case if there is only one vc and one pulmonary
-                            # We map the ivc to a zero flow mapping (imported in __write_imports)
-                            self.__write_mapping(wf, 'zero_flow_module', out_module + '_module', ['v_zero'], ['v_ivc'])
-                            self.ivc_connection_done = 1
-                            self.__set_bc_supplied(out_module, 'v_ivc')
-                            # TODO the above isnt robust
-
-                        for heart_inp_idx in range(3):
-                            # there are three vessel_port entrances to the heart, ivc, svc, and pulmonary
-                            # in the module_array file, they must be ordered ivc, svc, pulmonary
-                            if main_module == out_module_row["inp_instances"][heart_inp_idx]:
-                                # if the ivc connection was done artificially, then we need to skip it
-                                entrance_port_idx = heart_inp_idx + self.ivc_connection_done
-                                break
 
                     module_exit_general_ports = module_row["exit_ports"] + module_row["general_ports"]
                     out_module_entrance_general_ports = out_module_row["entrance_ports"] + out_module_row["general_ports"]
@@ -1172,6 +1141,22 @@ class CVS0DCellMLGenerator(object):
             self.__write_mapping(wf, comp1, comp2, vars_1, vars_2, check_unit=True)
 
         return entrance_general_ports_connected
+
+    @staticmethod
+    def __ordered_entrance_port(out_module_row, main_module, port_type, module_df):
+        '''The index of the entrance port of ``out_module_row`` that ``main_module`` connects to
+        through ``port_type``, when the module has several single entrance ports of that type:
+        the n-th input (in inp_instances) with a port of the type takes the n-th of them.
+        None otherwise.'''
+        def facing_port_types(name):
+            rows = module_df.loc[module_df["name"] == name]
+            if rows.empty:
+                return []
+            row = rows.iloc[0]
+            return [p["port_type"] for p in list(row["exit_ports"]) + list(row["general_ports"])]
+        return neighbour_port_index(out_module_row["entrance_ports"],
+                                    out_module_row["inp_instances"], main_module, port_type,
+                                    facing_port_types)
 
     @staticmethod
     def __is_per_variable_pair(main_port, out_port):

@@ -6,8 +6,7 @@ Created on 29/10/2021
 
 
 from libcuflynx.parsers.PrimitiveParsers import CSVFileParser, JSONFileParser
-from libcuflynx.utilities.config_schemas import (is_heart_module_type,
-                                                 load_expanded_vessel_records, load_module_array,
+from libcuflynx.utilities.config_schemas import (load_expanded_vessel_records, load_module_array,
                                                  vessel_records_to_string_frame)
 from libcuflynx.models.LumpedModels import CVS0DModel
 from libcuflynx.utilities.parameter_names import host_model_names
@@ -491,7 +490,7 @@ class CSV0DModelParser(object):
     def load_model(self):
         # Supermodule entries of the module configs. They never join the module dataframe:
         # their instances are expanded into prefixed submodules as the module array is read,
-        # before anything below (the heart count, the module-config join) sees it.
+        # before anything below (the module-config join) sees it.
         supermodule_registry = self.module_sources.supermodule_registry()
         # Component entries with the config file each came from: a record's parameterisation
         # ("parameterisation", or the entry's default) is read from
@@ -514,13 +513,6 @@ class CSV0DModelParser(object):
                 extra_param_rows = self.split_0d_1d_module_array(supermodule_registry,
                                                                  component_registry)
                 vessels_df, _ = load_module_array(self.vessel_filename_0d)
-
-        # the heart is found by its module_type, so it can have any name (a heart inside a
-        # supermodule is <instance>__<submodule>)
-        hearts = [n for n, vt in zip(vessels_df["name"], vessels_df["module_type"]) if is_heart_module_type(vt)]
-        if len(hearts) > 1:
-            print('cannot have 2 hearts or more, we dont model octopii')
-            exit()
 
 
         # a type several module sources define comes from the most specific one
