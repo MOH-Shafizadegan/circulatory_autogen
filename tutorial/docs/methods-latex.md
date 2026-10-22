@@ -29,7 +29,7 @@ Each command writes `<prefix>_variable_mapping.csv` beside the model. For a cali
 | `component`, `units` | Where the variable is defined, and its units. |
 | any other | Kept as it is. A CellDL editor or `bgtool --variable-mapping` adds `bondgraph`, each variable's bond graph name. |
 
-The file's structure is defined by `src/libcuflynx/schemas/variable_mapping.schema.json`, the JSON form a CSV is converted to when it is read (`variable_mapping_document`). Only `variable_name` and `latex` are required. An empty `kind` or `units` is filled in from the model when the file is refreshed. Reading or writing a file the schema refuses raises an error that names the row and the problem.
+The file's structure is defined by `src/libcuflynx/schemas/variable_mapping.schema.json`, the JSON form a CSV is converted to when it is read (`variable_mapping_document`). Only `variable_name` and `latex` are required. An empty `kind` or `units` is filled in from the model when the file is refreshed. Reading or writing a file the schema refuses raises an error that gives each problem and where it is: the row's index among the non-blank rows, counting from 0, and the column (`variables[1].kind`).
 
 The default symbols follow a simple rule, meant to be edited:
 

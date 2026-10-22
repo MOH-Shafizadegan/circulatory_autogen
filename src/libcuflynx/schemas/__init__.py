@@ -25,12 +25,15 @@
 Every reader checks its file against its schema when it loads it
 (:mod:`libcuflynx.schemas.validation`), so a schema is the definition of its file's structure:
 what an editor, PhLynx or CUFLynx accepts is what libcuflynx accepts. The readers check only
-what a schema cannot (that a file exists, that a vessel is in the model). For obs_data,
-params_for_id and variable mappings the schema runs first; module configs, module arrays and calibration workflows
-are checked by their readers first, for those readers' more specific messages, and then by
-the schema. Enums that libcuflynx keeps as registries (prior types, step kinds, data types,
-variable kinds ...) are generated into the schemas by :mod:`libcuflynx.schemas.registries`.
-Use :func:`schema_file` or :func:`load_schema` to get at them.
+what a schema cannot (that a file exists, that a vessel is in the model). For obs_data and
+params_for_id the schema runs first. A variable mapping's reader first checks that the CSV has
+the ``variable_name`` and ``latex`` columns, then the schema, then for a name given twice; its
+writer first checks for an empty or repeated ``variable_name``, then the schema. Module
+configs, module arrays and calibration workflows are checked by their readers first, for those
+readers' more specific messages, and then by the schema. Enums that libcuflynx keeps as
+registries (prior types, step kinds, data types, variable kinds ...) are generated into the
+schemas by :mod:`libcuflynx.schemas.registries`. Use :func:`schema_file` or
+:func:`load_schema` to get at them.
 """
 
 import json
