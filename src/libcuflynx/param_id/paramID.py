@@ -137,25 +137,6 @@ except ImportError:                                          # pragma: no cover 
     from numpy import trapz as integrate_trapezoid
 
 
-def _resolve_UQ_options(UQ_options, mcmc_options):
-    """Accept the deprecated ``mcmc_options=`` kwarg wherever ``UQ_options=`` is now taken.
-
-    MCMC is one method of uncertainty quantification rather than the whole of it, so the options
-    moved to ``UQ_options`` with a ``method`` key. Callers passing the old name keep working and
-    are told once. Passing both is refused: the two can disagree, and picking a winner would
-    silently discard one from a caller who believes it is in effect.
-    """
-    if mcmc_options is None:
-        return UQ_options
-    if UQ_options is not None:
-        raise ValueError(
-            "pass either UQ_options or the deprecated mcmc_options, not both -- they are the "
-            "same setting and their values can disagree.")
-    print("WARNING: the 'mcmc_options' argument is deprecated; use 'UQ_options' instead "
-          "(MCMC is now selected with UQ_options={'method': 'mcmc', ...}).")
-    return mcmc_options
-
-
 def ensure_mle_cost_type_for_bayesian_inner(inner, inp_data_dict):
     """
     Make sure every observable uses an ``@is_MLE`` cost (required for ``ln L = -cost`` in
@@ -173,10 +154,8 @@ def ensure_mle_cost_type_for_bayesian_inner(inner, inp_data_dict):
     outlier component and went back to paying hundreds of nats for a wrong branch. Both are
     MLE costs; neither needed replacing.
 
-    The consequence for the legacy spelling: a ``cost_type`` named in ``UQ_options`` no
-    longer forces a cost onto observables that already name a valid one. It is the fallback
-    for those that do not, which is what the key is for now that ``cost_type`` lives per
-    data_item.
+    A ``cost_type`` named in ``UQ_options`` is the fallback for observables that do not name
+    an MLE cost of their own.
     """
     if inner is None or getattr(inner, "obs_info", None) is None:
         return
@@ -185,13 +164,9 @@ def ensure_mle_cost_type_for_bayesian_inner(inner, inp_data_dict):
     option_dicts = []
     if inp_data_dict.get("DEBUG"):
         option_dicts.append(inp_data_dict.get("debug_optimiser_options") or {})
-        option_dicts.append(inp_data_dict.get("debug_UQ_options")
-                            or inp_data_dict.get("debug_mcmc_options") or {})
+        option_dicts.append(inp_data_dict.get("debug_UQ_options") or {})
     option_dicts.append(inp_data_dict.get("optimiser_options") or {})
-    # The legacy spelling is still read here: parse_user_inputs_file normalises it, but this is
-    # also reachable with a hand-built dict that never went through the parser.
-    option_dicts.append(inp_data_dict.get("UQ_options")
-                        or inp_data_dict.get("mcmc_options") or {})
+    option_dicts.append(inp_data_dict.get("UQ_options") or {})
     for src in option_dicts:
         if not isinstance(src, dict):
             continue
@@ -213,9 +188,6 @@ def ensure_mle_cost_type_for_bayesian_inner(inner, inp_data_dict):
     inner.obs_info["cost_type"] = resolved
     inner.cost_type = resolved
 
-
-# Re-exported for backwards compatibility; the canonical definition is in param_id.aadc_backend.
-TAPE_CONSISTENT_AADC_METHODS = aadc_backend.TAPE_CONSISTENT_METHODS
 
 # The CasADi symbolic cost/gradient/observable machinery lives in param_id.casadi_backend; the
 # methods below delegate to it. require_casadi/as_casadi_column are re-bound to their previous
@@ -274,8 +246,7 @@ class CVS0DParamID():
         solver_info: Solver config dict (defaults to ``{"solver": "CVODE_myokit"}``).
         UQ_options: Options dict for uncertainty quantification (used when
             ``mcmc_instead=True``): ``method`` (only ``'mcmc'`` so far), ``library``,
-            ``num_steps``, ``num_walkers``, ``burn_in``. ``mcmc_options`` is accepted as a
-            deprecated alias.
+            ``num_steps``, ``num_walkers``, ``burn_in``.
         optimiser_options: Options dict for the optimiser (e.g. ``cost_convergence``,
             ``max_patience``, ``num_calls_to_function``, ``cost_type``). Sensible
             defaults are used if omitted.
@@ -298,7 +269,7 @@ class CVS0DParamID():
                  do_ad=False, DEBUG=False,
                  param_id_output_dir=None, resources_dir=None, one_rank=False,
                  operation_funcs_external_path=None, cost_funcs_external_path=None,
-                 modifier_funcs_external_path=None, mcmc_options=None,
+                 modifier_funcs_external_path=None,
                  use_emulator=False, emulator_dir=None, emulator_settings=None,
                  study_name=None, write_cuflynx_study=True, user_inputs_path=None):
         self.model_path = model_path
@@ -322,7 +293,7 @@ class CVS0DParamID():
         self.rank = self.comm.Get_rank()
         self.num_procs = self.comm.Get_size()
 
-        self.UQ_options = _resolve_UQ_options(UQ_options, mcmc_options)
+        self.UQ_options = UQ_options
         if solver_info is None:
             self.solver_info = {"solver": "CVODE_myokit"}
         else:
@@ -401,8 +372,6 @@ class CVS0DParamID():
             # self.__set_obs_names_and_df(param_id_obs_path, sim_time=sim_time, pre_time=pre_time)
             parsed_data = self.obs_and_param_parser.parse_obs_data_json(
                 param_id_obs_path=param_id_obs_path,
-                pre_time=pre_time,
-                sim_time=sim_time,
                 model_type=model_type,
                 method=(solver_info or {}).get('method'),
             )
@@ -644,7 +613,7 @@ class CVS0DParamID():
                                        {'dir': self.output_dir, 'method': method,
                                         'status': status})
 
-    def run_UQ(self, UQ_options=None, mcmc_options=None):
+    def run_UQ(self, UQ_options=None):
         """Run uncertainty quantification (MCMC) on **this** object.
 
         Callable whether or not the instance was built with ``mcmc_instead=True``:
@@ -655,10 +624,8 @@ class CVS0DParamID():
           compiled instead of building a second CVS0DParamID for it (CUFLynx #217).
 
         ``UQ_options`` overrides the options the object was built with; omit it to keep them.
-        ``mcmc_options`` is a deprecated alias.
         """
         self._require_data_items('uncertainty quantification')
-        UQ_options = _resolve_UQ_options(UQ_options, mcmc_options)
         global mcmc_object
         if not self.mcmc_instead:
             if getattr(self, 'param_id', None) is None:
@@ -673,10 +640,6 @@ class CVS0DParamID():
         with self._run_recorded('mcmc'):
             mcmc_object.run()
 
-    def run_mcmc(self):
-        """Deprecated alias of :meth:`run_UQ`, kept so existing scripts keep working."""
-        return self.run_UQ()
-    
     def _require_data_items(self, what):
         """Refuse to calibrate (or sample a posterior) against an obs_data with no data_items.
 
@@ -841,8 +804,6 @@ class CVS0DParamID():
             print(f'Setting ground truth data: {obs_data_dict}')
         parsed_data = self.obs_and_param_parser.parse_obs_data_json(
             obs_data_dict=obs_data_dict,
-            pre_time=self.pre_time,
-            sim_time=self.sim_time,
             model_type=self.model_type,
         )
         self.gt_df = parsed_data["gt_df"]
@@ -1734,10 +1695,16 @@ class CVS0DParamID():
             from libcuflynx.param_id import prediction_plots
             model_values = dict(features)
             model_values.update(self._data_item_feature_values(self.prediction_plots))
+            info = self.param_id.param_id_info
+            time_courses = prediction_plots.record_time_courses(
+                self.param_id._protocol_executor, self.protocol_info, self.prediction_plots,
+                id_param_names=info['param_names'],
+                id_param_vals=expand_modifier_param_vals(info, self._best_fit()))
             for path in prediction_plots.plot_prediction_plots(
                     self.prediction_plots, self.gt_df, self.prediction_info, self.protocol_info,
                     model_values, self.output_dir, funcs=self.param_id.operation_funcs_dict,
-                    units=prediction_plots.group_units(self.gt_df, self.prediction_info)):
+                    units=prediction_plots.group_units(self.gt_df, self.prediction_info),
+                    time_courses=time_courses):
                 print(f'prediction plot saved in {path}')
 
     def set_bayesian_parameters(self, n_calls, n_initial_points, acq_func, random_state, acq_func_kwargs={}):
@@ -3875,7 +3842,7 @@ A caller that steps through the segments in order does so inside
         ``gradient_sources()`` and the Laplace ``gradient_source`` -- the arm's own name, so a
         front-end can offer it, disable it, and report back which one ran:
 
-        * ``None`` / ``'auto'`` / ``'analytic'`` (default) -- the analytic arm for this
+        * ``None`` / ``'auto'`` (default) -- the analytic arm for this
           backend, raising when there is none. Deliberately still not a silent fall back to
           FD: a result quietly computed a different way, at a different cost and accuracy,
           is not the same result.
@@ -3900,7 +3867,7 @@ A caller that steps through the segments in order does so inside
         if self.emulates_features:
             # Over an emulator, FD is the only honest arm: the analytic ones differentiate the
             # real model, which is not the function being evaluated. It is also free here.
-            if method not in ('', 'ANALYTIC', 'AUTO', 'FD'):
+            if method not in ('', 'AUTO', 'FD'):
                 raise ValueError(
                     f"gradient_method '{gradient_method}' differentiates the real model, but "
                     f"this run evaluates an emulator (use_emulator: true). Only 'FD' is "
@@ -3911,12 +3878,12 @@ A caller that steps through the segments in order does so inside
         if method == 'FD':
             kwargs = {} if fd_rel_step is None else {'h': float(fd_rel_step)}
             return fd_backend.observable_feature_sensitivities(self, param_vals, **kwargs)
-        if method not in ('', 'ANALYTIC', 'AUTO', 'AD', 'FSA'):
+        if method not in ('', 'AUTO', 'AD', 'FSA'):
             raise ValueError(
                 f"unknown gradient_method '{gradient_method}' for local sensitivity analysis. "
                 "Valid values are 'AD' (exact CasADi jacobian, casadi_python), 'FSA' (Myokit "
                 "CVODES forward sensitivities, cellml + CVODE_myokit + do_ad), 'FD' "
-                "(central finite differences, any backend), or None/'auto'/'analytic' (this "
+                "(central finite differences, any backend), or None/'auto' (this "
                 "backend's analytic arm).")
 
         solver_info = getattr(self, 'solver_info', None)
@@ -4260,17 +4227,17 @@ class MCMC(ParamID):
 
     def __init__(self, model_path,
                  obs_info, param_id_info, protocol_info, prediction_info, solver_info,
-                 dt=0.01, UQ_options=None, DEBUG=False, model_type=None, mcmc_options=None,
+                 dt=0.01, UQ_options=None, DEBUG=False, model_type=None,
                  use_emulator=False, emulator_dir=None, emulator_settings=None):
         super().__init__(model_path, "MCMC",
                 obs_info, param_id_info, protocol_info, prediction_info, solver_info,
                 dt=dt, DEBUG=DEBUG, model_type=model_type,
                 use_emulator=use_emulator, emulator_dir=emulator_dir,
                 emulator_settings=emulator_settings)
-        self._init_mcmc(_resolve_UQ_options(UQ_options, mcmc_options), DEBUG=DEBUG)
+        self._init_mcmc(UQ_options, DEBUG=DEBUG)
 
     @classmethod
-    def from_param_id(cls, engine, UQ_options=None, mcmc_options=None):
+    def from_param_id(cls, engine, UQ_options=None):
         """Adopt an already-built ``ParamID`` instead of constructing a second one.
 
         Building an engine compiles the model. Because ``mcmc_instead`` selects the inner
@@ -4290,8 +4257,7 @@ class MCMC(ParamID):
         obj = cls.__new__(cls)
         obj.__dict__.update(engine.__dict__)
         obj.param_id_method = "MCMC"
-        obj._init_mcmc(_resolve_UQ_options(UQ_options, mcmc_options),
-                       DEBUG=getattr(engine, 'DEBUG', False))
+        obj._init_mcmc(UQ_options, DEBUG=getattr(engine, 'DEBUG', False))
         return obj
 
     def _init_mcmc(self, UQ_options, DEBUG=False):
@@ -4865,18 +4831,6 @@ class MCMC(ParamID):
         # idxs of output are [exp_idx][sim_idx, pred_idx, time_idx]
         return pred_arrays_per_exp_list
 
-#: The names these two classes had until they were renamed. Neither ever had anything to
-#: do with OpenCOR: they are the parameter-identification and MCMC engines, and they run
-#: against myokit/CVODE, casadi and trained emulators as readily as against OpenCOR. The
-#: name came from the one backend that existed when they were written.
-#:
-#: Kept because they are imported by name from outside this repository -- CUFLynx reaches
-#: for ``OpencorParamID`` through its ca_import shim -- and a rename that breaks a
-#: downstream import on upgrade is a rename that gets reverted. They are aliases, not
-#: subclasses, so isinstance and pickling behave identically.
-OpencorParamID = ParamID
-OpencorMCMC = MCMC
-
 
 class MCMC_plotter:
     """
@@ -4887,7 +4841,7 @@ class MCMC_plotter:
                  params_for_id_path=None, num_calls_to_function=1000,
                  param_id_obs_path=None, sim_time=2.0, pre_time=20.0, 
                  solver_info=None, 
-                 dt=0.01, UQ_options=None, mcmc_options=None,
+                 dt=0.01, UQ_options=None,
                  param_id_output_dir=None, resources_dir=None,
                  DEBUG=False):
 
@@ -4933,7 +4887,7 @@ class MCMC_plotter:
         self.best_param_vals = None
         self.best_param_names = None
 
-        self.UQ_options = _resolve_UQ_options(UQ_options, mcmc_options)
+        self.UQ_options = UQ_options
 
         # thresholds for identifiability TODO optimise these
         self.threshold_param_importance = 0.1

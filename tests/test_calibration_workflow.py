@@ -277,14 +277,14 @@ def test_a_step_must_land_in_the_target(library):
 @pytest.mark.unit
 def test_an_ambiguous_submodule_must_be_named(library):
     version_dir = os.path.join(library['modules'], 'double', 'versions', 'v1')
-    os.makedirs(os.path.join(version_dir, 'instances', 'default'))
+    os.makedirs(os.path.join(version_dir, 'parameterisations', 'default'))
     sub = {'module_type': 'lin_a', 'module_subtype': 'v1', 'parameterisation': 'default',
            'inp_instances': [], 'out_instances': []}
     _write_json(os.path.join(version_dir, 'double_v1_modules_config.json'), [{
         'module_type': 'double', 'module_subtype': 'v1', 'module_format': 'supermodule',
         'default_parameterisation': 'default',
         'submodules': [dict(sub, name='A1'), dict(sub, name='A2')]}])
-    with open(os.path.join(version_dir, 'instances', 'default', 'default_parameters.csv'),
+    with open(os.path.join(version_dir, 'parameterisations', 'default', 'default_parameters.csv'),
               'w') as f:
         f.write('variable_name,units,value,data_reference\n')
     raw = {'workflow_name': 'double', 'module_library_dirs': [library['modules']],
@@ -459,7 +459,7 @@ def test_calibrating_independent_parts_apart_matches_calibrating_them_together(l
     # the merged target model and the jointly calibrated model predict the same observables
     calibrated_joint = generate_parameterisation(
         Target('twin', 'v1', 'joint'), str(tmp_path / 'joint_calibrated'), 'joint_calibrated',
-        [{'variable_name': f'p_mod_{sub}', 'units': 'dimensionless',
+        [{'variable_name': f'mod__{sub}/p', 'units': 'dimensionless',
           'value': repr(joint[f'{sub}/p']), 'data_reference': 'joint calibration'}
          for sub in ('A', 'B')],
         library_inputs={'module_library_dirs': [library['modules']]})
@@ -644,7 +644,7 @@ def test_a_tab_shows_each_model_with_the_values_available_so_far(library, tmp_pa
 
 
 @pytest.mark.unit
-def test_calibrated_values_replace_rows_written_in_either_name_form(tmp_path):
+def test_calibrated_values_replace_their_rows_and_new_ones_are_added(tmp_path):
     from libcuflynx.calibration_workflow.runner import write_calibrated_parameters
 
     class _Target:
@@ -657,7 +657,7 @@ def test_calibrated_values_replace_rows_written_in_either_name_form(tmp_path):
 
     with open(_Target.parameters_path, 'w') as f:
         f.write('variable_name,units,value,data_reference\n'
-                'p_A,dimensionless,1.0,old form\nC/q,dimensionless,1.0,slash form\n')
+                'A/p,dimensionless,1.0,a\nC/q,dimensionless,1.0,c\n')
     merged = [{'model_name': 'p_mod__A', 'parameterisation_name': 'A/p', 'value': 2.0,
                'units': 'dimensionless', 'from_step': 'fit_a'},
               {'model_name': 'q_mod__C', 'parameterisation_name': 'C/q', 'value': 3.0,
@@ -667,7 +667,7 @@ def test_calibrated_values_replace_rows_written_in_either_name_form(tmp_path):
     path = write_calibrated_parameters(_Target(), merged, 'wf')
     with open(path, newline='') as f:
         rows = {r['variable_name']: float(r['value']) for r in csv.DictReader(f)}
-    assert rows == {'p_A': 2.0, 'C/q': 3.0, 'A/r': 4.0}
+    assert rows == {'A/p': 2.0, 'C/q': 3.0, 'A/r': 4.0}
 
 
 @pytest.mark.unit
@@ -685,8 +685,10 @@ def test_a_nested_submodule_is_named_as_a_path():
                                model=Target('M', 'v', 'p'))
 
     workflow_target = Target('T', 'v', 'p')
-    for name in ('soma/i_M', 'soma__i_M', 'soma_i_M'):
+    for name in ('soma/i_M', 'soma__i_M'):
         assert _submodule_path(step(name), workflow_target, target, supermodules) == 'soma__i_M'
+    with pytest.raises(WorkflowError, match='"submodule" is "soma_i_M"'):
+        _submodule_path(step('soma_i_M'), workflow_target, target, supermodules)
     assert _submodule_path(step('x'), workflow_target, target, supermodules) == 'x'
     with pytest.raises(WorkflowError, match=r"is at \['soma/i_M', 'x'\]"):
         _submodule_path(step('i_M'), workflow_target, target, supermodules)

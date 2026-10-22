@@ -137,7 +137,8 @@ def run_prediction_items(model, obs, dt, solver_info=None, solver='CVODE_myokit'
     calibrated parameter set) are applied at the start of each experiment. ``model_type`` is
     needed for a model that is not CellML. With ``plot_dir``, the obs_data's
     ``prediction_plots`` are drawn there (``result.plots`` lists them); a data_item point shows
-    its data only, as there is no calibration to evaluate it.
+    its data only, as there is no calibration to evaluate it, and the time-course kinds are
+    simulated with the same parameters.
     """
     from libcuflynx.param_id.operation_funcs import get_operation_funcs_dict_for_mode
     from libcuflynx.parsers.PrimitiveParsers import ObsAndParamDataParser
@@ -157,8 +158,12 @@ def run_prediction_items(model, obs, dt, solver_info=None, solver='CVODE_myokit'
                         id_param_names=param_names, id_param_vals=param_vals)
     if plot_dir is not None and parsed['prediction_plots']:
         from libcuflynx.param_id import prediction_plots
+        time_courses = prediction_plots.record_time_courses(
+            runner._executor, protocol_info, parsed['prediction_plots'],
+            id_param_names=param_names, id_param_vals=param_vals)
         result.plots = prediction_plots.plot_prediction_plots(
             parsed['prediction_plots'], parsed['gt_df'], prediction_info, protocol_info,
             result.features, plot_dir, funcs=funcs,
-            units=prediction_plots.group_units(parsed['gt_df'], prediction_info))
+            units=prediction_plots.group_units(parsed['gt_df'], prediction_info),
+            time_courses=time_courses)
     return result

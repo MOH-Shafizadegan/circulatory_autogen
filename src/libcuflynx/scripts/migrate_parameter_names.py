@@ -1,5 +1,5 @@
 '''
-``cuflynx-migrate-parameter-names``: rewrite parameter names written ``{variable}_{vessel}`` as
+``cuflynx-upgrade parameter-names``: rewrite parameter names written ``{variable}_{vessel}`` as
 ``<vessel>/<variable>`` (see ``utilities/parameter_names.py``).
 
 Two kinds of file:
@@ -7,7 +7,7 @@ Two kinds of file:
 * a host parameters file, with ``--module-array <prefix>_module_array.json|csv``: each name
   ``{var}_{vessel}`` of a vessel in the (expanded) module array becomes ``<vessel>/<var>``,
   written ``<record>/<submodule>/<var>`` for a supermodule's expanded vessel;
-* a supermodule's parameterisation files and default_parameters, with ``--supermodule-config
+* a supermodule's parameterisation files, with ``--supermodule-config
   <its *_modules_config.json>``: ``{var}_{sub}`` becomes ``<sub>/<var>``, and
   ``<sub>/<subsub>/<var>`` for a nested submodule.
 
@@ -37,9 +37,9 @@ EPILOG = (
     "Not a pipeline stage: it does not read user_inputs.yaml. Give the files' module array or\n"
     "supermodule config, and the module libraries their modules come from.\n"
     "\n"
-    "  cuflynx-migrate-parameter-names --module-array resources/m_module_array.json \\\n"
+    "  cuflynx-upgrade parameter-names --module-array resources/m_module_array.json \\\n"
     "      --module-library-dir ../circulatory-autogen-modules/modules\n"
-    "  cuflynx-migrate-parameter-names --supermodule-config \\\n"
+    "  cuflynx-upgrade parameter-names --supermodule-config \\\n"
     "      modules/heart/versions/v1/heart_v1_modules_config.json --module-library-dir modules\n"
     "\n"
     "--dry-run prints the changes without writing them."
@@ -153,17 +153,14 @@ def supermodule_files(config_path):
     entry = dict(entries[0], config_path=os.path.abspath(config_path))
     files = [parameterisation_parameters_path(config_path, name)
              for name in available_parameterisations(config_path)]
-    if entry.get('default_parameters'):
-        files.append(os.path.join(os.path.dirname(os.path.abspath(config_path)),
-                                  entry['default_parameters']))
     return entry, files
 
 
 def build_parser():
     parser = argparse.ArgumentParser(
+        prog='cuflynx-upgrade parameter-names',
         description='Rewrite {variable}_{vessel} parameter names as <vessel>/<variable>, in a '
-                    'host parameters file or in a supermodule\'s parameterisation and default '
-                    'parameters files.',
+                    'host parameters file or in a supermodule\'s parameterisation files.',
         epilog=EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
     kind = parser.add_mutually_exclusive_group(required=True)
     kind.add_argument('--module-array', help='the host model\'s module array')
@@ -209,15 +206,14 @@ def run(args):
 
 def _host_parameters(module_array):
     directory, name = os.path.split(module_array)
-    for suffix in ('_module_array.json', '_module_array.csv', '_vessel_array.json',
-                   '_vessel_array.csv'):
+    for suffix in ('_module_array.json', '_module_array.csv'):
         if name.endswith(suffix):
             return os.path.join(directory, name[:-len(suffix)] + '_parameters.csv')
     raise ValueError(f'{module_array}: not a <prefix>_module_array file; give --parameters')
 
 
 def main(argv=None):
-    """Entry point for the ``cuflynx-migrate-parameter-names`` command."""
+    """``cuflynx-upgrade parameter-names``."""
     args = build_parser().parse_args(argv)
     return run(args)
 

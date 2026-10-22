@@ -6,11 +6,10 @@ Created on 29/10/2021
 
 
 from libcuflynx.parsers.PrimitiveParsers import CSVFileParser, JSONFileParser
-from libcuflynx.utilities.config_schemas import (is_heart_module_type,
-                                                 load_expanded_vessel_records, load_module_array,
+from libcuflynx.utilities.config_schemas import (load_expanded_vessel_records, load_module_array,
                                                  vessel_records_to_string_frame)
 from libcuflynx.models.LumpedModels import CVS0DModel
-from libcuflynx.utilities.parameter_names import LEVEL_SEPARATOR, host_model_names
+from libcuflynx.utilities.parameter_names import host_model_names
 from libcuflynx.checks.LumpedModelChecks import LumpedCompositeCheck, LumpedBCVesselCheck, LumpedIDParamsCheck, LumpedPortVariableCheck
 import pandas as pd
 import numpy as np
@@ -42,17 +41,17 @@ def _vessel_variables(vessels_df):
 
 
 def _with_model_names(parameters_array, vessels_df, source):
-    '''``parameters_array`` with any ``<vessel>/<variable>`` names turned into model names, and
-    names whose nested vessel is joined with a single ``_`` (before #582) read as the current
-    ones.'''
+    '''``parameters_array`` with its ``<vessel>/<variable>`` names turned into model names
+    (``parameter_names.host_model_names``, which refuses the older forms). Global names are
+    checked only in a model without 1D vessels: the 1D generator reads its own rows (``rho``,
+    ``mu``, vessel geometry) from the parameters file by name.'''
     fields = parameters_array.dtype.names or ()
     if 'variable_name' not in fields or not len(parameters_array):
         return parameters_array
     names = parameters_array['variable_name'].tolist()
-    if not any('/' in str(n) for n in names) and \
-            not any(LEVEL_SEPARATOR in str(v) for v in vessels_df['name']):
-        return parameters_array
-    model_names = host_model_names(names, _vessel_variables(vessels_df), source)
+    has_1d = 'module_type' in vessels_df and (vessels_df['module_type'] == 'FV1D_vessel').any()
+    model_names = host_model_names(names, _vessel_variables(vessels_df), source,
+                                   check_globals=not has_1d)
     width = max(len(n) for n in model_names)
     dtype = [(f, f'<U{max(width, parameters_array.dtype[f].itemsize // 4)}')
              if f == 'variable_name' else (f, parameters_array.dtype[f]) for f in fields]
@@ -119,10 +118,6 @@ class CSV0DModelParser(object):
 
         self.conn_1d_0d_info = None
 
-    def split_0d_1d_vessel_array(self, supermodule_registry=None, component_registry=None):
-        """The old name of split_0d_1d_module_array (vessel arrays are now module arrays)."""
-        warnings.warn('split_0d_1d_vessel_array is now split_0d_1d_module_array', FutureWarning, stacklevel=2)
-        return self.split_0d_1d_module_array(supermodule_registry, component_registry)
 
     def split_0d_1d_module_array(self, supermodule_registry=None, component_registry=None):
         '''
@@ -495,7 +490,7 @@ class CSV0DModelParser(object):
     def load_model(self):
         # Supermodule entries of the module configs. They never join the module dataframe:
         # their instances are expanded into prefixed submodules as the module array is read,
-        # before anything below (the heart special case, the module-config join) sees it.
+        # before anything below (the module-config join) sees it.
         supermodule_registry = self.module_sources.supermodule_registry()
         # Component entries with the config file each came from: a record's parameterisation
         # ("parameterisation", or the entry's default) is read from
@@ -518,29 +513,6 @@ class CSV0DModelParser(object):
                 extra_param_rows = self.split_0d_1d_module_array(supermodule_registry,
                                                                  component_registry)
                 vessels_df, _ = load_module_array(self.vessel_filename_0d)
-        
-
-        # TODO remove the below:
-        #  Temporarily we add a pulmonary system if there isnt one defined, this should be defined by
-        #   the user but we include this to improve backwards compatitibility.
-
-        # the heart is found by its module_type, so it can have any name (a heart inside a
-        # supermodule is <instance>_<submodule>)
-        hearts = [n for n, vt in zip(vessels_df["name"], vessels_df["module_type"]) if is_heart_module_type(vt)]
-        if len(hearts) == 1:
-            heart = hearts[0]
-            heart_row = vessels_df.loc[vessels_df["name"] == heart]
-            if len(heart_row.out_instances.values[0]) < 2:
-                # if the heart only has one output we assume it doesn't have an output to a pulmonary artery
-                # add pulmonary vein and artery to df
-                _append_vessel_row(vessels_df, 'par', 'vp', 'arterial_simple', [heart], ['pvn'], blank=[])
-                _append_vessel_row(vessels_df, 'pvn', 'vp', 'arterial_simple', ['par'], [heart], blank=[])
-                # add pulmonary artery (par) to output of heart and pvn to input
-                vessels_df.loc[vessels_df["name"] == heart].out_instances.values[0].append('par')
-                vessels_df.loc[vessels_df["name"] == heart].inp_instances.values[0].append('pvn')
-        elif len(hearts) > 1:
-            print('cannot have 2 hearts or more, we dont model octopii')
-            exit()
 
 
         # a type several module sources define comes from the most specific one

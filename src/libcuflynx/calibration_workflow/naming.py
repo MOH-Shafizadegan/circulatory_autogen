@@ -51,6 +51,12 @@ def model_name(vessel, param):
     return param_name_for_gen(vessel, param)
 
 
+def host_row_name(vessel, param):
+    '''``param`` of ``vessel`` as a host parameters file names it: ``mod__A/p``, or ``p`` for
+    a global.'''
+    return param if is_global(vessel) else f'{vessel}/{param}'
+
+
 def parameterisation_name(vessel, param, submodule_paths=(), step_vessel=STEP_VESSEL):
     '''The name of ``param`` of ``vessel`` in the parameterisation parameters CSV of the module
     generated as ``step_vessel``, whose submodules are ``submodule_paths`` (tuples, as

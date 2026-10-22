@@ -110,8 +110,9 @@ class Symbols:
             return vessel
 
     def variable(self, name):
-        '''An obs_data operand ``vessel/variable``.'''
-        vessel, sep, variable = str(name).partition('/')
+        '''An obs_data operand ``vessel/variable``, the vessel maybe written by its path.'''
+        from libcuflynx.utilities.parameter_names import output_model_name
+        vessel, sep, variable = output_model_name(name).partition('/')
         if not sep:
             return _tt(name)
         from libcuflynx.parsers.PrimitiveParsers import model_qname_candidates
@@ -230,7 +231,7 @@ def _observed(item):
 
 
 def observables_text(obs, symbols, default_cost):
-    items = obs if isinstance(obs, list) else (obs.get('data_items') or [])
+    items = obs.get('data_items') or []
     if not items:
         return 'No data items.'
     lines = [r'\begin{center}', r'\small', r'\begin{tabular}{lllll}', r'\toprule',

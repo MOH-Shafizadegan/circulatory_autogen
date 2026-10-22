@@ -13,7 +13,7 @@ A schematic view of this model is shown above with details of boundary condition
 
 ![Module array file of 3compartment model](images/3compartment-parameters.png)
 
-In the `module_array` file, there are five columns: **name**, **module_subtype**, **module_type**, **inp_instances**, and **out_instances** (older names: BC_type, vessel_type, inp_vessels, out_vessels). 
+In the `module_array` file, there are five columns: **name**, **module_subtype**, **module_type**, **inp_instances**, and **out_instances** 
 
 **name** is the user-chosen module's name, for example *"heart"* or *"aortic_root"*. 
 
@@ -29,7 +29,9 @@ These files define the variables of each module and the connection ports that al
 **inp_instances** and **out_instances** are the inputs and outputs of each module, respectively. Some modules have multiple inputs and outputs, like split_type vessels that split from one to two vessels.
 
 !!! Note
-    The order of input and output vessels is important for the **heart** module. The order must be:
+    A module's inputs take its entrance ports of one port type in the order **inp_instances**
+    lists them, and its outputs its exit ports in **out_instances** order. The **heart** module's
+    vessel ports are, in order:
 
     **inp_instances**:
 
@@ -42,7 +44,10 @@ These files define the variables of each module and the connection ports that al
     1. aorta
     2. pulmonary artery
 
-    A simple two-vessel pulmonary system will be used if the pulmonary vessels are not included.
+    This model has no inferior vena cava, so its heart lists a `zero_flow` instance first, which
+    sets the first port's flow to zero. Nothing is added for the heart: every module it connects
+    to is in the module array. A port left unconnected is a boundary condition, which needs a
+    value in the parameters file.
 
 !!! Tip
     Currently, the terminal vessels should only have a module_subtype starting with *"pp"*.
