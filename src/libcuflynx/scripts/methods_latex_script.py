@@ -12,7 +12,7 @@ import sys
 EPILOG = (
     "Two sources:\n"
     "  --workflow calibration_workflow.json [--run-dir DIR]   a calibration workflow\n"
-    "  --model M.cellml --obs-data O.json --params-for-id P.csv [--settings user_inputs.yaml]\n"
+    "  --model M.cellml --obs-data O.json --params-for-id P.json [--settings user_inputs.yaml]\n"
     "                                                          one calibration; its method,\n"
     "                                                          solver and UQ settings are read\n"
     "                                                          from the user_inputs.yaml given\n"
@@ -34,7 +34,7 @@ def build_parser():
                         default=[], metavar='DIR', help='module library (with --workflow)')
     parser.add_argument('--model', help='a CellML model (one calibration)')
     parser.add_argument('--obs-data', help='its obs_data.json')
-    parser.add_argument('--params-for-id', help='its params_for_id (.csv or .json)')
+    parser.add_argument('--params-for-id', help='its params_for_id (.json)')
     parser.add_argument('--settings', metavar='YAML',
                         help='a user_inputs.yaml with the param_id settings that were used')
     parser.add_argument('--run-dir', help="a workflow's output directory, or a param_id run "
