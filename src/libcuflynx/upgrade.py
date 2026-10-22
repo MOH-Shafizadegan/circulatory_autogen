@@ -57,7 +57,8 @@ What each converts:
 * ``supermodule-instances``: writes the values of each supermodule instance of a model into the
   model's parameters file (``<prefix>_parameters.json`` beside its module array, made if
   needed), under the instance's name: a copy of its version's template, its default
-  parameterisation with the parameterisation the record names over it (and the templates of the
+  parameterisation, or the parameterisation the record names in its place, which must set every
+  instance value the default sets (and the templates of the
   supermodules nested in it under them). It is how a new supermodule instance gets its values. An instance the file has an
   entry for keeps it; ``--instance`` picks instances and ``--replace`` writes theirs again from the
   version.
@@ -362,7 +363,41 @@ def _submodules_to_versions(config_path, entry, dry_run, module_library_dirs, bu
             for var, leaf in values.items():
                 _set_path(node, var.split('/'), leaf)
         write_parameters_file(path, doc)
+    # a named parameterisation replaces the default as an instance's values, where the older
+    # form layered it over them: it takes the default's instance values it does not set
+    for name in targets:
+        if name == own:
+            continue
+        completed = _complete_parameterisation(config_path, own, name, dry_run)
+        if completed:
+            changes.append(f'parameterisation "{name}" completed with the default\'s values of '
+                           f'{completed}')
     return changes
+
+
+def _complete_parameterisation(config_path, default, name, dry_run):
+    '''Add to the supermodule parameterisation ``name`` every instance value its default
+    parameterisation ``default`` sets and it does not (nothing in a dry run). Returns the paths
+    added (``sub/var``).'''
+    from libcuflynx.utilities.parameters_file import (MODULE, get_leaf, parameter_rows,
+                                                      read_parameters_file, set_leaf,
+                                                      write_parameters_file, GLOBAL)
+    json_path = os.path.splitext(_parameterisation_file(config_path, name))[0] + '.json'
+    default_json = os.path.splitext(_parameterisation_file(config_path, default))[0] + '.json'
+    if dry_run or not os.path.isfile(json_path) or not os.path.isfile(default_json):
+        return []
+    base = read_parameters_file(default_json, kind=MODULE)
+    doc = read_parameters_file(json_path, kind=MODULE)
+    added = []
+    for row in parameter_rows(base, MODULE):
+        path = row['variable_name'].split('/')
+        if path[0] == GLOBAL or get_leaf(doc, path) is not None:
+            continue
+        set_leaf(doc, path, get_leaf(base, path))
+        added.append(row['variable_name'])
+    if added:
+        write_parameters_file(json_path, doc)
+    return added
 
 
 def _set_path(node, parts, leaf):

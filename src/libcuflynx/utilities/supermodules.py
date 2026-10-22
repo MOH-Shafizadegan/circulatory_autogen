@@ -48,8 +48,8 @@ A supermodule instance's values are in the model's parameters file, under its na
 (``heart/lv/E_A``, ``SN/soma/i_M/rho_M`` for a nested one), as the host's own rows; its
 parameter ``<var>`` of submodule ``sub`` is ``{var}_{instance}__{sub}`` in the model. They are
 copied once, when the instance is made, from its version's template -- its default
-parameterisation, with the parameterisation the record names over it -- with the templates of the
-supermodules nested in it under them (``write_instance_parameters``; ``cuflynx-upgrade supermodule-instances``). Generation
+parameterisation, or the parameterisation the record names in its place, which must then set
+every instance value the default sets -- with the templates of the supermodules nested in it under them (``write_instance_parameters``; ``cuflynx-upgrade supermodule-instances``). Generation
 refuses a supermodule instance the model's parameters file has no entry for
 (``check_model_instances``). Of the supermodule's parameterisation it reads only the globals; a
 parameter neither sets comes from the submodule version's ``default_parameterisation``
@@ -207,19 +207,45 @@ def _merge(under, over):
     return out
 
 
+def parameterisation_missing(supermodule, parameterisation, where=''):
+    '''The instance values the default parameterisation of the supermodule version
+    ``supermodule`` sets and its parameterisation ``parameterisation`` does not, named as they are
+    written in a parameterisation (``lv/E_A``), in the default's order. Globals are not instance
+    values: generation reads them from the parameterisation an instance's record names.'''
+    names = []
+    for name in (supermodule.get('default_parameterisation'), parameterisation):
+        used, rows = parameterisation_rows(supermodule, name, where)
+        names.append([r['variable_name'] for r in rows if not is_global_row(r)] if used else [])
+    default, named = names
+    return [n for n in default if n not in set(named)]
+
+
 def instance_values_from_version(supermodule, registry=None, parameterisation=None, where='',
                                  _depth=0):
     '''A new instance's values, ``{sub: {var: parameter}, nested sub: {its sub: ...}}``, of the
     supermodule version ``supermodule`` (a registry entry): its template, the values of its
-    ``default_parameterisation`` with those of the parameterisation ``parameterisation`` (when
-    another is named) over them, with each nested supermodule instance's own version's template
+    ``default_parameterisation`` or, when another is named, of the parameterisation
+    ``parameterisation`` alone, with each nested supermodule instance's own version's template
     under the values the template gives it. Every instance of the version has an entry, ``{}``
-    when nothing sets its values.'''
+    when nothing sets its values.
+
+    A named parameterisation replaces the default, so it must set every instance value the
+    default sets: ValueError naming those it lacks.'''
     where = where or f'supermodule {_key(supermodule)}'
-    template = _template(supermodule, None, where, registry)
-    if parameterisation is not None and parameterisation != supermodule.get(
-            'default_parameterisation'):
-        template = _merge(template, _template(supermodule, parameterisation, where, registry))
+    default = supermodule.get('default_parameterisation')
+    if parameterisation is not None and parameterisation != default:
+        missing = parameterisation_missing(supermodule, parameterisation, where)
+        if missing:
+            raise ValueError(
+                f'{where}: parameterisation "{parameterisation}" of supermodule '
+                f'{_key(supermodule)[0]} {_key(supermodule)[1]} does not set {missing}, which its '
+                f'default parameterisation "{default}" sets. A named supermodule parameterisation '
+                f'replaces the default as a new instance\'s values, so it must set every one of '
+                f'them: add them to '
+                f'{parameterisation_parameters_path(supermodule["config_path"], parameterisation)}.')
+        template = _template(supermodule, parameterisation, where, registry)
+    else:
+        template = _template(supermodule, None, where, registry)
     values = {}
     for sub in supermodule['submodules']:
         nested = (registry or {}).get(_key(sub))
@@ -278,8 +304,8 @@ def write_instance_parameters(array_path, registry, instances=None, replace=Fals
     ``array_path`` (those named in ``instances``, default all) into the model's parameters file
     (``parameters``, default ``config_schemas.model_parameters_path``, made when it does not
     exist), under the instance's name: a copy of its version's template
-    (``instance_values_from_version``: the version's default parameterisation, with the one the
-    record names over it).
+    (``instance_values_from_version``: the version's default parameterisation, or the one the
+    record names in its place).
 
     An instance the file has an entry for keeps it unless ``replace``. Returns ``[(name, path,
     action)]``, ``action`` "written", "replaced" or "kept". ``registry`` is the supermodule

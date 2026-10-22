@@ -40,7 +40,8 @@ A model's parameter values are `<prefix>_parameters.json` beside its module arra
 - A supermodule instance's values are in the model's file under its name. `cuflynx-upgrade
   supermodule-instances <module array> --module-library-dir <library> [--instance N] [--replace]
   [--parameters FILE]` copies them once from the version's template (its default parameterisation,
-  with the one the record names over it, and nested supermodules' templates under it); an instance that
+  or the one the record names in its place, which must set every instance value the default sets,
+  and nested supermodules' templates under it); an instance that
   has an entry keeps it. Generation refuses a supermodule instance the file has no entry for, naming that command.
   Of a supermodule's parameterisation it reads only the globals; a value the model's file lacks comes
   from the submodule version's `default_parameterisation`.

@@ -272,13 +272,14 @@ An instance that is itself a supermodule nests a level further (`soma` above), o
 
 A supermodule instance's values are in the model's parameters file, under its name, like any instance's: `heart/lv/E_A` is `{"heart": {"lv": {"E_A": ...}}}` in `resources/3compartment_parameters.json`.
 
-- They are copied once, when the instance is made, from its version's template: the version's default parameterisation, with the one the record names over it, and the templates of the supermodules nested in it under them:
+- They are copied once, when the instance is made, from its version's template: the version's default parameterisation, or the one the record names in its place, and the templates of the supermodules nested in it under them:
 
   ```
   cuflynx-upgrade supermodule-instances resources/3compartment_module_array.json --module-library-dir [library]
   ```
 
   (with `--external-modules-dir` and `--no-builtin-modules` as the model is generated with, and `--parameters [file]` for a parameters file that is not `[prefix]_parameters.json` beside the array). It writes the values of each supermodule instance the file has no entry for, and leaves the others; `--instance [name]` picks instances and `--replace` writes theirs again from the version, over the model's values.
+- A named supermodule parameterisation replaces the default, so it sets every instance value the default sets; an instance made from one that lacks some is refused, naming them. (Its globals are read from it at generation; a global it lacks comes from the submodule version's default.)
 - After that the model's file holds the instance's values, so editing or calibrating one model changes no other. Generation refuses a supermodule instance the file has no entry for, naming that command.
 - Of the supermodule's parameterisation, generation reads only the globals. A value the model's file does not set comes from the submodule version's `default_parameterisation`.
 - A calibration of the model (a calibration workflow, or a selection of a nested instance) writes its values to the model's file. In a module library, `calibrate apply` of a submodule version writes every instance of it, in the supermodule versions' default parameterisations and in every system model's parameters file.

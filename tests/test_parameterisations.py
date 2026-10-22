@@ -177,9 +177,12 @@ PULSE_INSTANCES = {
 }
 PAIR_INSTANCES = {
     'base': [('global/omega', 'per_s', '5.0')],
-    'alt': [],
-    # a template of its own: one submodule's value
-    'named': [('b/amp', 'dimensionless', '0.1')],
+    # a named parameterisation sets every instance value the default (base, with the template)
+    # sets: alt the template's values and no globals, named its own
+    'alt': [('a/amp', 'dimensionless', '0.7'), ('b/amp', 'dimensionless', '0.2')],
+    'named': [('a/amp', 'dimensionless', '0.6'), ('b/amp', 'dimensionless', '0.1')],
+    # not complete: no a/amp
+    'partial': [('b/amp', 'dimensionless', '0.1')],
 }
 
 
@@ -576,8 +579,8 @@ def test_a_named_supermodule_parameterisation_replaces_its_default_s_globals(tmp
     # synthetic: the real supermodules have one parameterisation each
     _, values = _load_effective(tmp_path, library, _pair_host(parameterisation='alt'))
     assert values == {
-        # the template: base's values, alt setting none of its own
-        'amp_pr__a': ('0.7', 'file_ref'), 'amp_pr__b': ('0.2', 'file_ref'),
+        # alt's instance values, which are base's
+        'amp_pr__a': ('0.7', 'alt_ref'), 'amp_pr__b': ('0.2', 'alt_ref'),
         # nothing of base's globals: omega and mean are the submodules' version default's
         'omega': ('6.0', 'default_ref'),
         'mean_pr__a': ('1e-05', 'default_ref'), 'mean_pr__b': ('1e-05', 'default_ref'),
@@ -633,9 +636,9 @@ def test_a_supermodule_instance_without_values_is_refused_naming_the_command(tmp
 
 @pytest.mark.unit
 def test_making_an_instance_copies_the_parameterisation_its_record_names(tmp_path, library):
-    """cuflynx-upgrade supermodule-instances: the template is the default parameterisation with
-    the one the record names over it; an instance the file has an entry for is kept unless
-    replaced."""
+    """cuflynx-upgrade supermodule-instances: a parameterisation the record names replaces the
+    default parameterisation as the instance's values; an instance the file has an entry for is
+    kept unless replaced."""
     path = str(tmp_path / 'm_module_array.json')
     _write_json(path, _pair_host(parameterisation='named'))
     supermodules = load_supermodule_registry(_config_files(library))
@@ -643,7 +646,7 @@ def test_making_an_instance_copies_the_parameterisation_its_record_names(tmp_pat
     assert [(n, a) for n, _, a in done] == [('pr', 'written')]
     doc = parameters_file.read_parameters_file(_model_file(tmp_path))
     assert doc['pr'] == {
-        'a': {'amp': {'value': '0.7', 'units': 'dimensionless', 'data_reference': 'file_ref'}},
+        'a': {'amp': {'value': '0.6', 'units': 'dimensionless', 'data_reference': 'named_ref'}},
         'b': {'amp': {'value': '0.1', 'units': 'dimensionless', 'data_reference': 'named_ref'}}}
     doc['pr']['a']['amp'] = {'value': '0.9', 'units': 'dimensionless', 'data_reference': 'mine'}
     parameters_file.write_parameters_file(_model_file(tmp_path), doc)
@@ -653,9 +656,23 @@ def test_making_an_instance_copies_the_parameterisation_its_record_names(tmp_pat
     assert [a for _, _, a in write_instance_parameters(path, supermodules, replace=True)] == \
         ['replaced']
     assert parameters_file.read_parameters_file(_model_file(tmp_path))['pr']['a']['amp'][
-        'value'] == '0.7'
+        'value'] == '0.6'
     with pytest.raises(ValueError, match=r"\['coll'\] are not supermodule instances there"):
         write_instance_parameters(path, supermodules, instances=['coll'])
+
+
+@pytest.mark.unit
+def test_an_instance_from_an_incomplete_named_parameterisation_is_refused(tmp_path, library):
+    """A named parameterisation replaces the default: one without a value the default sets
+    (partial has no a/amp) is refused, naming the value, and nothing is written."""
+    path = str(tmp_path / 'm_module_array.json')
+    _write_json(path, _pair_host(parameterisation='partial'))
+    supermodules = load_supermodule_registry(_config_files(library))
+    with pytest.raises(ValueError, match=r'parameterisation "partial" of supermodule pair v1 does '
+                                         r"not set \['a/amp'\], which its default "
+                                         r'parameterisation "base" sets.*partial_parameters\.json'):
+        write_instance_parameters(path, supermodules)
+    assert not os.path.exists(_model_file(tmp_path))
 
 
 @pytest.mark.unit
