@@ -545,7 +545,7 @@ def test_list_form_multiply_scales_each_variable_by_its_own_factor(tmp_path, lib
             ("s2", "pair_src", [], ["rs"]), ("rs", "pair_reader_sum", ["s", "s2"], []),
             ("sa", "pair_src_mul_all", [], ["ra"]), ("ra", "pair_reader", ["sa"], [])]
     params = (_prescribed_params("s", 1.0e-5, 0.5, 3.0) + _prescribed_params("s2", 2.0e-5, 0.4, 8.0)
-              + _prescribed_params("sa", 3.0e-5, 0.3, 5.0) + [("ya_rs", "m3_per_s", 0.0)])
+              + _prescribed_params("sa", 3.0e-5, 0.3, 5.0) + [("rs/ya", "m3_per_s", 0.0)])
     path = _generate(str(tmp_path), library_dir, "schema_list_mul", rows, params)
     res = _simulate(path, ["s/a", "s/b", "r/a_seen", "r/b_seen", "s2/b", "rs/b_seen",
                            "sa/a", "sa/b", "ra/a_seen", "ra/b_seen"])
