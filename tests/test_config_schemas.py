@@ -1,9 +1,9 @@
 """Module configs and module arrays, and PhLynx's multi_port semantics.
 
 Module configs and arrays use PhLynx's key names (#163); the keys libcuflynx used before
-(``vessel_type``, ``BC_type``, ``module_file``, ``inp_vessels``, ``out_vessels``), the older
-array name ``<prefix>_vessel_array.*`` and a one-output heart are refused with the
-``cuflynx-upgrade`` command that converts them (utilities/config_schemas.py).
+(``vessel_type``, ``BC_type``, ``module_file``, ``inp_vessels``, ``out_vessels``) and the older
+array name ``<prefix>_vessel_array.*`` are refused with the ``cuflynx-upgrade`` command that
+converts them (utilities/config_schemas.py).
 
 multi_port values are case-insensitive. A whole-port "Sum" on a port other than a
 volume_port makes the port's single variable the sum of the neighbours' variables (read as
