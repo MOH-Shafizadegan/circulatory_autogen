@@ -739,7 +739,7 @@ def _write_params_for_id_with_priors(source_path, out_path, priors, step_id):
     '''The step's own params_for_id plus one ``uniform`` entry (for the bounds) per parameter a
     prior is given for; the prior's density itself is added as a joint prior.'''
     from libcuflynx.utilities import params_for_id_file as pfi
-    doc = pfi.read_params_for_id(source_path, f'step "{step_id}": ')
+    doc = pfi.read_params_for_id(source_path, f'step "{step_id}": ', keep_text=True)
     entries = list(doc.get('params') or [])
     for prior, distribution in priors:
         for par in distribution.parameters:

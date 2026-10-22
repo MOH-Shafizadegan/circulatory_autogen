@@ -61,11 +61,15 @@ def refuse_csv(path, where=''):
         f'as params_for_id_file).')
 
 
-def read_params_for_id(path, where=''):
+def read_params_for_id(path, where='', keep_text=False):
     '''The params_for_id document at ``path``, as JSON. A CSV is refused, naming the converter;
-    the document is checked by ``ObsAndParamDataParser.resolve_params_for_id_doc``.'''
+    the document is checked by ``ObsAndParamDataParser.resolve_params_for_id_doc``. With
+    ``keep_text`` each number is kept as its text, so ``write_params_for_id`` writes it back as
+    it was written (for a file that is rewritten, not read).'''
     refuse_csv(path, where)
     with open(path, encoding='utf-8-sig') as f:
+        if keep_text:
+            return json.load(f, parse_float=_Number, parse_int=_Number)
         return json.load(f)
 
 

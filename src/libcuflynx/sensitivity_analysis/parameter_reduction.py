@@ -69,7 +69,7 @@ class SobolReduction:
         from libcuflynx.parsers.PrimitiveParsers import (ObsAndParamDataParser,
                                                          param_entry_labels)
         from libcuflynx.utilities import params_for_id_file as pfi
-        doc = pfi.read_params_for_id(source_path)
+        doc = pfi.read_params_for_id(source_path, keep_text=True)
         entries = list(doc.get('params') or [])
         labels = param_entry_labels(ObsAndParamDataParser().get_param_id_info(source_path))
         if len(labels) != len(entries):

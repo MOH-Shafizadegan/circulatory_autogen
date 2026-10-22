@@ -218,6 +218,13 @@ def build_workflow_library(root, settings=None):
         return {'name': name, 'module_type': module_type, 'module_subtype': 'v1',
                 'inp_instances': list(inp), 'out_instances': list(out)}
 
+    # each supermodule's default parameterisation: its instances' values, the template a new
+    # instance of it is copied from
+    template_values = {'twin': {'A': [('p', 1.0)], 'B': [('p', 1.0)]},
+                       'chain': {'A': [('p', 1.0)], 'C': [('q', 1.0), ('k', 1.0, K_SOURCE)]}}
+    template_rows = {module_type: [(f'{sub}/{row[0]}',) + tuple(row[1:])
+                                   for sub, rows in values.items() for row in rows]
+                     for module_type, values in template_values.items()}
     for module_type, submodules in (
             ('twin', [submodule('A', 'lin_a'), submodule('B', 'lin_b')]),
             ('chain', [submodule('A', 'lin_a', out=['C']), submodule('C', 'lin_c', inp=['A'])])):
@@ -229,13 +236,7 @@ def build_workflow_library(root, settings=None):
                       'submodule_versions': [{'module_type': t, 'module_subtype': s}
                                              for t, s in versions]}])
         _write_json(os.path.join(version_dir, f'{module_type}_v1_module_array.json'), submodules)
-        # the supermodule's default parameterisation: its instances' values, the template a
-        # new instance of it is copied from
-        values = {'twin': {'A': [('p', 1.0)], 'B': [('p', 1.0)]},
-                  'chain': {'A': [('p', 1.0)], 'C': [('q', 1.0), ('k', 1.0, K_SOURCE)]}}[module_type]
-        _parameterisation(modules, module_type, 'default',
-                          [(f'{sub}/{row[0]}',) + tuple(row[1:])
-                           for sub, rows in values.items() for row in rows])
+        _parameterisation(modules, module_type, 'default', template_rows[module_type])
 
     paths = {'modules': modules}
     paths['lin_a/fit_a'] = _parameterisation(modules, 'lin_a', 'fit_a', [('p', 1.0)],
@@ -244,9 +245,9 @@ def build_workflow_library(root, settings=None):
     paths['lin_b/fit_b'] = _parameterisation(modules, 'lin_b', 'fit_b', [('p', 1.0)],
                                              obs=[('y_b', 'mod/y', Y_B, STD_B)],
                                              params_for_id=[('mod', 'p', 0.1, 5.0)])
-    # a named supermodule parameterisation holds its instances' values too; these leave them
-    # to the instances' own versions' default parameterisations
-    twin_rows = []
+    # a named supermodule parameterisation replaces the default as its instances' values, so it
+    # sets every one of them; these set the default's
+    twin_rows = template_rows['twin']
     paths['twin/joint'] = _parameterisation(
         modules, 'twin', 'joint', twin_rows,
         obs=[('y_a', 'mod__A/y', Y_A, STD_A), ('y_b', 'mod__B/y', Y_B, STD_B)],
@@ -262,7 +263,7 @@ def build_workflow_library(root, settings=None):
         'steps': [_library_step('fit_a', 'lin_a', paths['lin_a/fit_a'], paths['twin/split']),
                   _library_step('fit_b', 'lin_b', paths['lin_b/fit_b'], paths['twin/split'])]})
 
-    chain_rows = []
+    chain_rows = template_rows['chain']
     paths['chain/rest'] = _parameterisation(modules, 'chain', 'rest', chain_rows,
                                             obs=[('z_c', 'mod__C/z', Z_C, STD_C)],
                                             params_for_id=[('mod__C', 'q', 0.1, 10.0)])
