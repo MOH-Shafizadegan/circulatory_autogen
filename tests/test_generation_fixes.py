@@ -28,14 +28,16 @@ def _read_resource(filename):
 
 def _generate(tmp_path, prefix, module_array, parameters, model_type='cellml',
               external_modules_dir=None):
-    """Write ``{prefix}_module_array.csv`` / ``_parameters.csv`` and generate the model.
+    """Write ``{prefix}_module_array.csv`` / ``_parameters.json`` (``parameters`` laid out as
+    CSV rows) and generate the model.
 
     Returns the directory the model was generated into.
     """
     resources_dir = tmp_path / 'resources'
     resources_dir.mkdir(exist_ok=True)
     (resources_dir / f'{prefix}_module_array.csv').write_text(textwrap.dedent(module_array))
-    (resources_dir / f'{prefix}_parameters.json').write_text(textwrap.dedent(parameters))
+    from _parameters import write_parameters
+    write_parameters(resources_dir / f'{prefix}_parameters.json', textwrap.dedent(parameters))
     config = {
         'file_prefix': prefix,
         'input_param_file': f'{prefix}_parameters.json',

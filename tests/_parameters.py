@@ -16,8 +16,13 @@ def rows_from_csv(text):
 
 
 def write_parameters(path, rows, kind=MODEL):
-    """Write ``rows`` (dicts, or CSV text) as the parameters file ``path``; returns ``path``.
-    In a parameterisation (``kind`` MODULE) a global is named ``global/<variable>``."""
+    """Write ``rows`` (dicts, CSV text, or the text of a parameters file) as the parameters file
+    ``path``; returns ``path``. In a parameterisation (``kind`` MODULE) a global is named
+    ``global/<variable>``."""
+    if isinstance(rows, str) and rows.lstrip().startswith('{'):
+        with open(path, 'w') as f:
+            f.write(rows)
+        return path
     if isinstance(rows, str):
         rows = rows_from_csv(rows)
     pf.write_parameter_rows(str(path), list(rows), kind)

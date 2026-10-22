@@ -215,7 +215,8 @@ def _generate(tmp_path, prefix, module_array, parameters, library_dir, use_built
     resources_dir = tmp_path / 'resources'
     resources_dir.mkdir(parents=True, exist_ok=True)
     (resources_dir / f'{prefix}_module_array.csv').write_text(textwrap.dedent(module_array))
-    (resources_dir / f'{prefix}_parameters.json').write_text(textwrap.dedent(parameters))
+    from _parameters import write_parameters
+    write_parameters(resources_dir / f'{prefix}_parameters.json', textwrap.dedent(parameters))
     config = {
         'file_prefix': prefix,
         'input_param_file': f'{prefix}_parameters.json',

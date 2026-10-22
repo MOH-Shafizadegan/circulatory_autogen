@@ -525,3 +525,16 @@ def test_a_library_s_parameterisations_and_version_files_are_converted(tmp_path)
         'b': {}}
     registry = load_supermodule_registry([str(sup / 'sup_v1_modules_config.json')])
     assert _flat(instance_values_from_version(registry[('sup', 'v1')], registry)) == {'a/k': '3'}
+
+
+def test_a_parameters_file_read_and_written_again_reads_back_the_same(tmp_path):
+    """schema_version stays the integer the schema requires; every value keeps its text."""
+    path = tmp_path / 'm_parameters.json'
+    path.write_text('{"schema_version": 1, "global": {"R": {"value": 8.314, "units": "u"}},\n'
+                    ' "a": {"C": {"value": 1.2e-8, "units": "m", "data_reference": "r"},\n'
+                    '       "n": {"value": 366575000, "units": "m", "sourced": "yes"}}}\n')
+    doc = parameters_file.read_parameters_file(str(path))
+    assert doc['schema_version'] == 1 and doc['a']['C']['value'] == '1.2e-8'
+    parameters_file.write_parameters_file(str(path), doc)
+    assert '"schema_version": 1,' in path.read_text() and '"value": 1.2e-8' in path.read_text()
+    assert parameters_file.read_parameters_file(str(path)) == doc

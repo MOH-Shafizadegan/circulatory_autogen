@@ -26,6 +26,7 @@ import numpy as np
 import pytest
 
 from _supermodules import write_supermodule
+from _parameters import MODULE, read_parameters, write_parameters
 from libcuflynx.calibration_workflow import (StoredDistribution, WorkflowError,
                                              generate_parameterisation, load_workflow,
                                              load_workflow_run, plan_workflow, resolve_workflow,
@@ -284,9 +285,8 @@ def test_an_ambiguous_submodule_must_be_named(library):
         'module_type': 'double', 'module_subtype': 'v1', 'module_format': 'supermodule',
         'default_parameterisation': 'default',
         'submodules': [dict(sub, name='A1'), dict(sub, name='A2')]})
-    with open(os.path.join(version_dir, 'parameterisations', 'default', 'default_parameters.json'),
-              'w') as f:
-        f.write('variable_name,units,value,data_reference\n')
+    write_parameters(os.path.join(version_dir, 'parameterisations', 'default',
+                                  'default_parameters.json'), [], MODULE)
     raw = {'workflow_name': 'double', 'module_library_dirs': [library['modules']],
            'target': {'module_type': 'double', 'version': 'v1', 'parameterisation': 'default'},
            'steps': [_library_step(library, 'fit_a', 'lin_a', 'fit_a')]}
@@ -500,7 +500,8 @@ def test_fixed_values_flow_into_the_supermodule_and_editing_obs_data_redoes_it(l
 
     rest = _read_json(os.path.join(out, 'rest', 'step_result.json'))
     assert [(f['model_name'], f['from_step']) for f in rest['fixed']] == [('p_mod__A', 'fit_a')]
-    with open(os.path.join(os.path.dirname(rest['model_path']), 'rest_parameters.json')) as f:
+    # the generated step model's parameters, named as the model names them
+    with open(os.path.join(os.path.dirname(rest['model_path']), 'rest_parameters.csv')) as f:
         generated = {r['variable_name']: float(r['value']) for r in csv.DictReader(f)}
     assert generated['p_mod__A'] == pytest.approx(merged['A/p'], rel=1e-12)
 
@@ -527,8 +528,8 @@ def test_fixed_values_flow_into_the_supermodule_and_editing_obs_data_redoes_it(l
     assert _merged(result)['C/q'] == pytest.approx(4.0, rel=1e-4)
 
     # the merged set, in the target parameterisation's naming, next to its parameters
-    with open(result['calibrated_parameters_file']) as f:
-        written = {r['variable_name']: r for r in csv.DictReader(f)}
+    written = {r['variable_name']: r
+               for r in read_parameters(result['calibrated_parameters_file'], MODULE)}
     assert result['calibrated_parameters_file'] == os.path.join(
         library['chain/rest'], 'rest_calibrated_parameters.json')
     assert float(written['A/p']['value']) == pytest.approx(1.5, rel=1e-6)
@@ -655,19 +656,27 @@ def test_calibrated_values_replace_their_rows_and_new_ones_are_added(tmp_path):
         def file(self, suffix):
             return str(tmp_path / f'rest_{suffix}')
 
-    with open(_Target.parameters_path, 'w') as f:
-        f.write('variable_name,units,value,data_reference\n'
-                'A/p,dimensionless,1.0,a\nC/q,dimensionless,1.0,c\n')
+    write_parameters(_Target.parameters_path, 'variable_name,units,value,data_reference,sourced\n'
+                     'A/p,dimensionless,1.0,a,yes\nC/q,dimensionless,1.0,c,\n'
+                     'global/T,kelvin,300,t,\n', MODULE)
+    before = open(_Target.parameters_path).read()
     merged = [{'model_name': 'p_mod__A', 'parameterisation_name': 'A/p', 'value': 2.0,
                'units': 'dimensionless', 'from_step': 'fit_a'},
               {'model_name': 'q_mod__C', 'parameterisation_name': 'C/q', 'value': 3.0,
                'units': 'dimensionless', 'from_step': 'rest'},
               {'model_name': 'r_mod__A', 'parameterisation_name': 'A/r', 'value': 4.0,
-               'units': 'dimensionless', 'from_step': 'fit_a'}]
+               'units': 'dimensionless', 'from_step': 'fit_a'},
+              {'model_name': 'T', 'parameterisation_name': 'global/T', 'value': 310.0,
+               'units': 'kelvin', 'from_step': 'rest'}]
     path = write_calibrated_parameters(_Target(), merged, 'wf')
-    with open(path, newline='') as f:
-        rows = {r['variable_name']: float(r['value']) for r in csv.DictReader(f)}
-    assert rows == {'A/p': 2.0, 'C/q': 3.0, 'A/r': 4.0}
+    assert path == str(tmp_path / 'rest_calibrated_parameters.json')
+    rows = {r['variable_name']: r for r in read_parameters(path, MODULE)}
+    assert {n: float(r['value']) for n, r in rows.items()} == \
+        {'global/T': 310.0, 'A/p': 2.0, 'C/q': 3.0, 'A/r': 4.0}
+    # a calibrated value is no longer sourced; its data_reference says where it came from
+    assert rows['A/p']['sourced'] == 'no' and 'step fit_a' in rows['A/p']['data_reference']
+    assert rows['A/r']['units'] == 'dimensionless'
+    assert open(_Target.parameters_path).read() == before
 
 
 @pytest.mark.unit
@@ -715,8 +724,8 @@ def test_a_vessel_map_renames_a_module_array_into_the_target(library):
     _write_json(os.path.join(arrays, 'aorta_module_array.json'), [
         {'name': 'aorta', 'module_type': 'lin_a', 'module_subtype': 'v1',
          'parameterisation': 'default', 'inp_instances': [], 'out_instances': []}])
-    with open(os.path.join(arrays, 'aorta_parameters.json'), 'w') as f:
-        f.write('variable_name,units,value,data_reference\naorta/p,dimensionless,1.0,x\n')
+    write_parameters(os.path.join(arrays, 'aorta_parameters.json'),
+                     'variable_name,units,value,data_reference\naorta/p,dimensionless,1.0,x\n')
     with open(os.path.join(arrays, 'data', 'aorta_params.csv'), 'w') as f:
         f.write('vessel_name,param_name,min,max,name_for_plotting\naorta,p,0.1,5.0,p\n')
     raw = _raw(library, 'chain_array')
@@ -758,8 +767,7 @@ def test_a_workflow_of_module_arrays_runs_and_writes_beside_the_target(library, 
     assert set(chain['inputs']) == {'obs_data', 'params_for_id', 'parameters', 'module_array'}
     assert result['calibrated_parameters_file'] == os.path.join(
         library['arrays'], 'chain_calibrated_parameters.json')
-    with open(result['calibrated_parameters_file']) as f:
-        written = {r['variable_name']: r for r in csv.DictReader(f)}
+    written = {r['variable_name']: r for r in read_parameters(result['calibrated_parameters_file'])}
     # the target's own rows take the values; the uncalibrated k keeps its own and its source
     assert float(written['A/p']['value']) == pytest.approx(np.sqrt(Y_A / 2), rel=1e-6)
     assert float(written['C/q']['value']) == pytest.approx(np.sqrt(Z_C - Y_A), rel=1e-6)
