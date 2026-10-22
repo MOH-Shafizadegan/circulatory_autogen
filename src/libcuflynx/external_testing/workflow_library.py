@@ -41,7 +41,7 @@ obs_data / params_for_id named freely. ``chain_array.json``: ``a_only`` calibrat
 import json
 import os
 
-from libcuflynx.utilities import parameters_file
+from libcuflynx.utilities import parameters_file, params_for_id_file
 
 Y_A, STD_A = 8.0, 0.08
 Y_B, STD_B = 27.0, 0.27
@@ -154,9 +154,9 @@ def _obs(name, items):
 
 
 def _params_for_id(path, rows):
-    _write(path, 'vessel_name,param_name,min,max,name_for_plotting\n'
-           + ''.join(f'{vessel},{param},{lo},{hi},{param}_{vessel}\n'
-                     for vessel, param, lo, hi in rows))
+    params_for_id_file.write_params_for_id(path, [
+        {'targets': [params_for_id_file.target_name(vessel, param)], 'min': lo, 'max': hi,
+         'name_for_plotting': f'{param}_{vessel}'} for vessel, param, lo, hi in rows])
 
 
 def _parameterisation(modules, module_type, parameterisation, parameters, obs=None,
@@ -169,7 +169,7 @@ def _parameterisation(modules, module_type, parameterisation, parameters, obs=No
         _write_json(os.path.join(directory, f'{parameterisation}_obs_data.json'),
                     _obs(parameterisation, obs))
     if params_for_id is not None:
-        _params_for_id(os.path.join(directory, f'{parameterisation}_params_for_id.csv'),
+        _params_for_id(os.path.join(directory, f'{parameterisation}_params_for_id.json'),
                        params_for_id)
     return directory
 
@@ -186,7 +186,7 @@ def _library_step(step_id, module_type, directory, workflow_dir, **extra):
                  'obs_data': os.path.relpath(os.path.join(directory, f'{name}_obs_data.json'),
                                              workflow_dir),
                  'params_for_id': os.path.relpath(
-                     os.path.join(directory, f'{name}_params_for_id.csv'), workflow_dir)},
+                     os.path.join(directory, f'{name}_params_for_id.json'), workflow_dir)},
                 **extra)
 
 
@@ -218,6 +218,13 @@ def build_workflow_library(root, settings=None):
         return {'name': name, 'module_type': module_type, 'module_subtype': 'v1',
                 'inp_instances': list(inp), 'out_instances': list(out)}
 
+    # each supermodule's default parameterisation: its instances' values, the template a new
+    # instance of it is copied from
+    template_values = {'twin': {'A': [('p', 1.0)], 'B': [('p', 1.0)]},
+                       'chain': {'A': [('p', 1.0)], 'C': [('q', 1.0), ('k', 1.0, K_SOURCE)]}}
+    template_rows = {module_type: [(f'{sub}/{row[0]}',) + tuple(row[1:])
+                                   for sub, rows in values.items() for row in rows]
+                     for module_type, values in template_values.items()}
     for module_type, submodules in (
             ('twin', [submodule('A', 'lin_a'), submodule('B', 'lin_b')]),
             ('chain', [submodule('A', 'lin_a', out=['C']), submodule('C', 'lin_c', inp=['A'])])):
@@ -229,13 +236,7 @@ def build_workflow_library(root, settings=None):
                       'submodule_versions': [{'module_type': t, 'module_subtype': s}
                                              for t, s in versions]}])
         _write_json(os.path.join(version_dir, f'{module_type}_v1_module_array.json'), submodules)
-        # the supermodule's default parameterisation: its instances' values, the template a
-        # new instance of it is copied from
-        values = {'twin': {'A': [('p', 1.0)], 'B': [('p', 1.0)]},
-                  'chain': {'A': [('p', 1.0)], 'C': [('q', 1.0), ('k', 1.0, K_SOURCE)]}}[module_type]
-        _parameterisation(modules, module_type, 'default',
-                          [(f'{sub}/{row[0]}',) + tuple(row[1:])
-                           for sub, rows in values.items() for row in rows])
+        _parameterisation(modules, module_type, 'default', template_rows[module_type])
 
     paths = {'modules': modules}
     paths['lin_a/fit_a'] = _parameterisation(modules, 'lin_a', 'fit_a', [('p', 1.0)],
@@ -244,9 +245,9 @@ def build_workflow_library(root, settings=None):
     paths['lin_b/fit_b'] = _parameterisation(modules, 'lin_b', 'fit_b', [('p', 1.0)],
                                              obs=[('y_b', 'mod/y', Y_B, STD_B)],
                                              params_for_id=[('mod', 'p', 0.1, 5.0)])
-    # a named supermodule parameterisation holds its instances' values too; these leave them
-    # to the instances' own versions' default parameterisations
-    twin_rows = []
+    # a named supermodule parameterisation replaces the default as its instances' values, so it
+    # sets every one of them; these set the default's
+    twin_rows = template_rows['twin']
     paths['twin/joint'] = _parameterisation(
         modules, 'twin', 'joint', twin_rows,
         obs=[('y_a', 'mod__A/y', Y_A, STD_A), ('y_b', 'mod__B/y', Y_B, STD_B)],
@@ -262,7 +263,7 @@ def build_workflow_library(root, settings=None):
         'steps': [_library_step('fit_a', 'lin_a', paths['lin_a/fit_a'], paths['twin/split']),
                   _library_step('fit_b', 'lin_b', paths['lin_b/fit_b'], paths['twin/split'])]})
 
-    chain_rows = []
+    chain_rows = template_rows['chain']
     paths['chain/rest'] = _parameterisation(modules, 'chain', 'rest', chain_rows,
                                             obs=[('z_c', 'mod__C/z', Z_C, STD_C)],
                                             params_for_id=[('mod__C', 'q', 0.1, 10.0)])
@@ -304,7 +305,7 @@ def build_workflow_library(root, settings=None):
             dict(screened_step('ia', kind='identifiability', result_from='fit',
                                settings={'ia_options': IA_OPTIONS}),
                  params_for_id=os.path.relpath(
-                     os.path.join(paths['chain/rest'], 'rest_params_for_id.csv'), screened)),
+                     os.path.join(paths['chain/rest'], 'rest_params_for_id.json'), screened)),
         ]})
 
     paths['chain/pipeline'] = _parameterisation(
@@ -355,10 +356,10 @@ def build_workflow_library(root, settings=None):
     _parameters(os.path.join(arrays, 'chain_parameters.json'),
                 [('A/p', 1.0), ('C/q', 1.0), ('C/k', 1.0, K_SOURCE)])
     _write_json(os.path.join(arrays, 'data', 'a_obs.json'), _obs('a', [('y_a', 'A/y', Y_A, STD_A)]))
-    _params_for_id(os.path.join(arrays, 'data', 'a_params.csv'), [('A', 'p', 0.1, 5.0)])
+    _params_for_id(os.path.join(arrays, 'data', 'a_params.json'), [('A', 'p', 0.1, 5.0)])
     _write_json(os.path.join(arrays, 'data', 'chain_obs.json'),
                 _obs('chain', [('z_c', 'C/z', Z_C, STD_C)]))
-    _params_for_id(os.path.join(arrays, 'data', 'chain_params.csv'), [('C', 'q', 0.1, 10.0)])
+    _params_for_id(os.path.join(arrays, 'data', 'chain_params.json'), [('C', 'q', 0.1, 10.0)])
     paths['chain_array'] = os.path.join(arrays, 'chain_array.json')
     _write_json(paths['chain_array'], {
         'schema_version': 1, 'workflow_name': 'chain_array',
@@ -367,8 +368,8 @@ def build_workflow_library(root, settings=None):
         'settings': settings,
         'target': 'chain_module_array.json',
         'steps': [{'id': 'a-alone', 'model': 'a_only_module_array.json',
-                   'obs_data': 'data/a_obs.json', 'params_for_id': 'data/a_params.csv'},
+                   'obs_data': 'data/a_obs.json', 'params_for_id': 'data/a_params.json'},
                   {'id': 'chain', 'model': 'chain_module_array.json',
-                   'obs_data': 'data/chain_obs.json', 'params_for_id': 'data/chain_params.csv',
+                   'obs_data': 'data/chain_obs.json', 'params_for_id': 'data/chain_params.json',
                    'fixed_from': ['a-alone']}]})
     return paths

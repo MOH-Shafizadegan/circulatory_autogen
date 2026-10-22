@@ -13,9 +13,9 @@
 * ``obs_data.schema.json`` -- ``<name>_obs_data.json``: the optional ``obs_data_name``, the
   ``data_items``, ``prediction_items`` and ``protocol_info`` (with ``protocol_traces`` and
   ``protocol_shapes``).
-* ``params_for_id.schema.json`` -- ``<prefix>_params_for_id.json``: the JSON form of
-  params_for_id (version 1), which a ``params_for_id.csv`` is converted to on read
-  (``ObsAndParamDataParser.params_for_id_csv_to_json``).
+* ``params_for_id.schema.json`` -- ``<prefix>_params_for_id.json``: the parameters a
+  calibration identifies, a flat list of entries (version 1; ``utilities/params_for_id_file.py``).
+  A params_for_id CSV is refused; ``cuflynx-upgrade params-for-id`` converts it.
 * ``calibration_workflow.schema.json`` -- ``calibration_workflow.json``: ordered calibrations
   of module parameterisations merged into a supermodule parameterisation
   (``libcuflynx.calibration_workflow``, whose ``spec.py`` and ``resolve.py`` check the same

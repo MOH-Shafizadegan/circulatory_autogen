@@ -41,7 +41,7 @@ def _config(base_user_inputs, resources_dir, tmp_path, **overrides):
         'param_id_obs_path': os.path.join(resources_dir,
                                           'Simple_ODE_Benchmark_obs_data.json'),
         'params_for_id_path': os.path.join(resources_dir,
-                                           'Simple_ODE_Benchmark_params_for_id.csv'),
+                                           'Simple_ODE_Benchmark_params_for_id.json'),
         'param_id_output_dir': str(tmp_path / 'param_id_output'),
         'param_id_method': 'genetic_algorithm',
         'DEBUG': True,

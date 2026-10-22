@@ -97,7 +97,7 @@ SUMMARY_PATH = OUTPUT_ROOT / "pipeline_summary.json"
 
 
 # These entries are discovered from the OMEX archive's input metadata and can be
-# edited directly without writing a params_for_id.csv file.
+# edited directly without writing a params_for_id.json file.
 PARAMS_FOR_ID = $params_for_id
 
 

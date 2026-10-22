@@ -289,10 +289,11 @@ def test_each_instance_s_values_are_written_to_the_template(tmp_path):
     # with base's global, and a's globals from "fast" where they are missing
     assert [r for r in _rows(directory / 'parameterisations' / 'base' / 'base_parameters.json')
             if r[0].startswith('global/')] == [('global/T', '305'), ('global/G', '2')]
-    # another parameterisation keeps its instances' values, over the template's for a model
-    # instance naming it, and gets the globals too
+    # another parameterisation keeps its instances' values and gets the globals too; it
+    # replaces the template for a model instance naming it, so it takes the template's values
+    # it does not set
     assert _rows(directory / 'parameterisations' / 'alt' / 'alt_parameters.json') == [
-        ('global/T', '310'), ('global/G', '2'), ('a/k', '8')]
+        ('global/T', '310'), ('global/G', '2'), ('a/k', '8'), ('b/k', '1'), ('c/k', '9')]
     assert not list(directory.glob('parameterisations/*/*.csv'))
     load_supermodule_registry([path])
 
@@ -402,7 +403,7 @@ def test_a_model_s_supermodule_instances_get_their_values(tmp_path):
     assert not (model / 'm_supermodule_parameters').exists()
     # a copy of the version's template, with the nested inner's values as paths under sup's own
     assert _instance_values(model, 'S') == {'a/k': '5', 'in/g/k': '7'}
-    # S2's parameterisation "alt" sets a/k over the template
+    # S2's parameterisation "alt", which module-config completed with the default's in/g/k
     assert _instance_values(model, 'S2') == {'a/k': '8', 'in/g/k': '7'}
     # the component k has no entry: its values come from its parameterisation
     assert 'k' not in parameters_file.read_parameters_file(str(model / 'm_parameters.json'))

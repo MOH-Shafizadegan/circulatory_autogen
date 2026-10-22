@@ -76,7 +76,7 @@ def _config(base_user_inputs, resources_dir, temp_output_dir, temp_generated_mod
         'param_id_obs_path': os.path.join(resources_dir,
                                           'Simple_ODE_Benchmark_obs_data.json'),
         'params_for_id_path': os.path.join(resources_dir,
-                                           'Simple_ODE_Benchmark_params_for_id.csv'),
+                                           'Simple_ODE_Benchmark_params_for_id.json'),
         'param_id_output_dir': temp_output_dir,
         'resources_dir': resources_dir,
         'generated_models_dir': temp_generated_models_dir,
@@ -353,7 +353,7 @@ def _benchmark_infos(base_user_inputs, resources_dir, tmp_path):
         'dt': 0.05,
         'param_id_obs_path': os.path.join(resources_dir, 'Simple_ODE_Benchmark_obs_data.json'),
         'params_for_id_path': os.path.join(resources_dir,
-                                           'Simple_ODE_Benchmark_params_for_id.csv'),
+                                           'Simple_ODE_Benchmark_params_for_id.json'),
         'param_id_output_dir': str(tmp_path / 'param_id_output'),
     })
     config = YamlFileParser().parse_user_inputs_file(

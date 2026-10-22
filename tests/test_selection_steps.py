@@ -58,10 +58,10 @@ def _obs(path, items, params_to_change=None):
 
 
 def _params(path, rows):
-    with open(path, 'w') as f:
-        f.write('vessel_name,param_name,min,max,name_for_plotting\n')
-        f.writelines(f'{v},{p},{lo},{hi},{p}_{v}\n' for v, p, lo, hi in rows)
-    return path
+    from libcuflynx.utilities import params_for_id_file as pfi
+    return pfi.write_params_for_id(path, [
+        {'targets': [pfi.target_name(v, p)], 'min': lo, 'max': hi, 'name_for_plotting': f'{p}_{v}'}
+        for v, p, lo, hi in rows])
 
 
 def _workflow(library, steps, target='chain_module_array.json'):
@@ -80,7 +80,7 @@ def _c_alone(library, x=None):
     '''C selected alone, its protocol setting x (or not).'''
     obs = _obs(os.path.join(library['arrays'], 'data', 'c_obs.json'), [('z_c', 'C/z', Z_C, 0.17)],
                {'C/x': [[x]]} if x is not None else None)
-    params = _params(os.path.join(library['arrays'], 'data', 'c_params.csv'),
+    params = _params(os.path.join(library['arrays'], 'data', 'c_params.json'),
                      [('C', 'q', 0.1, 10.0)])
     return {'id': 'c-alone', 'model': {'select': ['C']}, 'obs_data': obs,
             'params_for_id': params}
@@ -148,7 +148,7 @@ def test_several_instances_run_as_the_array_they_form(library):
                       'B/p,dimensionless,2.5,x\nC/q,dimensionless,1.0,x\n')
     obs = _obs(os.path.join(arrays, 'data', 'ab_obs.json'),
                [('y_a', 'A/y', Y_A, STD_A), ('y_b', 'B/y', Y_B, STD_B)])
-    params = _params(os.path.join(arrays, 'data', 'ab_params.csv'),
+    params = _params(os.path.join(arrays, 'data', 'ab_params.json'),
                      [('A', 'p', 0.1, 5.0), ('B', 'p', 0.1, 5.0)])
     step = {'id': 'ab', 'model': {'select': ['A', 'B']}, 'obs_data': obs, 'params_for_id': params}
     resolved = resolve_workflow(parse_workflow(
@@ -192,7 +192,7 @@ def _nested_sys(library, select='sys/C'):
         parameters_file.write_parameters_file(_sys_file(library), doc)
     obs = _obs(os.path.join(arrays, 'data', 'sys_c_obs.json'),
                [('z_c', 'sys__C/z', Z_C, 0.17)], {'sys__C/x': [[Y_A]]})
-    params = _params(os.path.join(arrays, 'data', 'sys_c_params.csv'),
+    params = _params(os.path.join(arrays, 'data', 'sys_c_params.json'),
                      [('sys__C', 'q', 0.1, 10.0)])
     step = {'id': 'sys-c', 'model': {'select': [select]}, 'obs_data': obs,
             'params_for_id': params}
@@ -304,7 +304,7 @@ def test_a_packed_target_carries_its_super_instances_values(library, tmp_path):
     path = os.path.join(library['arrays'], 'sys_workflow.json')
     _write_json(path, _workflow(library, [{
         'id': 'sys-c', 'model': {'select': ['sys/C']}, 'obs_data': 'data/sys_c_obs.json',
-        'params_for_id': 'data/sys_c_params.csv'}], 'sys_module_array.json'))
+        'params_for_id': 'data/sys_c_params.json'}], 'sys_module_array.json'))
     dest = str(tmp_path / 'packed')
     files = pack_workflow(path, dest)['files']
     packed = _read_json(os.path.join(dest, 'calibration_workflow.json'))['target']['parameters']
@@ -358,7 +358,7 @@ def test_a_nested_instance_is_calibrated_into_its_super_instance(library, tmp_pa
     path = os.path.join(library['arrays'], 'sys_workflow.json')
     _write_json(path, _workflow(library, [{
         'id': 'sys-c', 'model': {'select': ['sys/C']}, 'obs_data': 'data/sys_c_obs.json',
-        'params_for_id': 'data/sys_c_params.csv'}], 'sys_module_array.json'))
+        'params_for_id': 'data/sys_c_params.json'}], 'sys_module_array.json'))
     result = run_calibration_workflow(path, output_dir=str(tmp_path / 'run'),
                                       write_calibrated=True)
     merged = {r['parameterisation_name']: r['value'] for r in result['merged_parameters']}
@@ -380,7 +380,7 @@ def test_several_instances_are_calibrated_as_the_array_they_form(library, tmp_pa
     path = os.path.join(library['arrays'], 'ab_workflow.json')
     _write_json(path, _workflow(library, [{
         'id': 'ab', 'model': {'select': ['A', 'B']}, 'obs_data': 'data/ab_obs.json',
-        'params_for_id': 'data/ab_params.csv'}], 'abc_module_array.json'))
+        'params_for_id': 'data/ab_params.json'}], 'abc_module_array.json'))
     result = run_calibration_workflow(path, output_dir=str(tmp_path / 'run'),
                                       write_calibrated=True)
     merged = {r['parameterisation_name']: r['value'] for r in result['merged_parameters']}

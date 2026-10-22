@@ -46,7 +46,7 @@ def _make_resources(temp_output_dir):
     resources_dir = os.path.join(temp_output_dir, 'resources')
     if comm.Get_rank() == 0:
         os.makedirs(resources_dir, exist_ok=True)
-        for name in ('heat1d_params_for_id.csv', 'heat1d_parameters.json', 'heat1d_obs_data.json'):
+        for name in ('heat1d_params_for_id.json', 'heat1d_parameters.json', 'heat1d_obs_data.json'):
             shutil.copy(os.path.join(_EXAMPLE_DIR, name), os.path.join(resources_dir, name))
     if comm.Get_size() > 1:
         comm.Barrier()

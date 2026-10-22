@@ -139,29 +139,20 @@ class Symbols:
 # --------------------------------------------------------------------------------------------
 
 def read_params_for_id(path):
-    '''params_for_id rows as dicts: ``targets`` [(vessel, param)], ``min``, ``max``, ``prior``
-    and its settings.'''
+    '''params_for_id entries as dicts: ``targets`` [(vessel, param)] (a nested vessel as the model's
+    flat name), ``min``, ``max``, ``prior`` and its settings. A CSV is refused, naming
+    ``cuflynx-upgrade params-for-id``.'''
+    from libcuflynx.utilities.params_for_id_file import read_params_for_id as read_file
+    from libcuflynx.utilities.parameter_names import output_model_name
+    doc = read_file(path)
     rows = []
-    if str(path).lower().endswith('.json'):
-        with open(path) as f:
-            doc = json.load(f)
-        for entry in doc.get('params', doc if isinstance(doc, list) else []):
-            targets = [tuple(t.split('/', 1)) for t in entry.get('targets', [])]
-            prior = entry.get('prior') or 'uniform'
-            rows.append({'targets': targets, 'min': entry.get('min'), 'max': entry.get('max'),
-                         'prior': prior, 'prior_params': entry.get('prior_params') or {}})
-        return rows
-    with open(path, newline='', encoding='utf-8-sig') as f:
-        for row in csv.DictReader(f):
-            vessels = (row.get('vessel_name') or '').split()
-            param = (row.get('param_name') or '').strip()
-            if not vessels or not param:
-                continue
-            prior_params = {k: row[k] for k in row
-                            if k and k.startswith('prior_') and (row[k] or '').strip()}
-            rows.append({'targets': [(v, param) for v in vessels], 'min': row.get('min'),
-                         'max': row.get('max'), 'prior': (row.get('prior') or 'uniform').strip()
-                         or 'uniform', 'prior_params': prior_params})
+    for entry in doc.get('params', doc if isinstance(doc, list) else []):
+        targets = entry.get('targets', [])
+        targets = [targets] if isinstance(targets, str) else targets
+        targets = [tuple(output_model_name(t).rsplit('/', 1)) for t in targets]
+        prior = entry.get('prior') or 'uniform'
+        rows.append({'targets': targets, 'min': entry.get('min'), 'max': entry.get('max'),
+                     'prior': prior, 'prior_params': entry.get('prior_params') or {}})
     return rows
 
 

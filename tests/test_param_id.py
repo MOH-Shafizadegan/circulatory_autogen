@@ -6,6 +6,7 @@ These tests verify that parameter identification works correctly for various mod
 import copy
 import os
 from _obs_data import retimed_obs_data
+from _params_for_id import write_params_for_id
 import pytest
 import numpy as np
 from mpi4py import MPI
@@ -857,14 +858,12 @@ def test_param_id_calibration_outputs_match_rerun(base_user_inputs, resources_di
 
     config = base_user_inputs.copy()
     params_for_id_path = os.path.join(
-        temp_output_dir, "3compartment_python_offline_params_for_id.csv"
+        temp_output_dir, "3compartment_python_offline_params_for_id.json"
     )
     if rank == 0:
-        with open(params_for_id_path, "w") as f:
-            f.write(
-                "vessel_name,param_name,param_type,min,max,name_for_plotting\n"
-                "aortic_root,C,const,1e-9,5e-8,C_{ao}\n"
-            )
+        write_params_for_id(params_for_id_path, [
+            {"targets": ["aortic_root/C"], "min": 1e-9, "max": 5e-8, "param_type": "const",
+             "name_for_plotting": "C_{ao}"}])
     mpi_comm.Barrier()
 
     config.update({
@@ -1003,7 +1002,7 @@ def test_param_id_SN_simple_CVODE_myokit_ga_smoke(
         {
             "file_prefix": "SN_simple",
             "input_param_file": "SN_simple_parameters.json",
-            "params_for_id_file": "SN_simple_params_for_id.csv",
+            "params_for_id_file": "SN_simple_params_for_id.json",
             "model_type": "cellml",
             "solver": "CVODE_myokit",
             "param_id_method": "genetic_algorithm",
@@ -1724,7 +1723,7 @@ def test_3compartment_nonstiff_casadi_forward_and_gradient(
     config.update({
         'file_prefix': '3compartment_nonstiff',
         'input_param_file': '3compartment_nonstiff_parameters.json',
-        'params_for_id_file': '3compartment_nonstiff_params_for_id.csv',
+        'params_for_id_file': '3compartment_nonstiff_params_for_id.json',
         'model_type': 'casadi_python',
         'solver': 'casadi_integrator',
         'param_id_method': 'sp_minimize',
@@ -1856,7 +1855,7 @@ def _build_3compartment_casadi_runner(
     config.update({
         'file_prefix': '3compartment',
         'input_param_file': '3compartment_parameters.json',
-        'params_for_id_file': '3compartment_params_for_id.csv',
+        'params_for_id_file': '3compartment_params_for_id.json',
         'model_type': 'casadi_python',
         'solver': 'casadi_integrator',
         'param_id_method': 'sp_minimize',
@@ -2084,7 +2083,7 @@ def _build_3compartment_fsa_runner(
     config.update({
         'file_prefix': '3compartment',
         'input_param_file': '3compartment_parameters.json',
-        'params_for_id_file': '3compartment_params_for_id.csv',
+        'params_for_id_file': '3compartment_params_for_id.json',
         'model_type': 'cellml',
         'solver': 'CVODE_myokit',
         'param_id_method': 'sp_minimize',
@@ -2299,7 +2298,7 @@ def _lotka_multisub_fsa_config(base_user_inputs, resources_dir, output_dir, gene
     config.update({
         'file_prefix': 'Lotka_Volterra',
         'input_param_file': 'Lotka_Volterra_parameters.json',
-        'params_for_id_file': 'Lotka_Volterra_params_for_id.csv',
+        'params_for_id_file': 'Lotka_Volterra_params_for_id.json',
         'model_type': 'cellml',
         'solver': 'CVODE_myokit',
         'do_ad': True,
@@ -2452,7 +2451,7 @@ def test_param_id_3compartment_nonstiff_casadi_succeeds(
     config.update({
         'file_prefix': '3compartment_nonstiff',
         'input_param_file': '3compartment_nonstiff_parameters.json',
-        'params_for_id_file': '3compartment_nonstiff_params_for_id.csv',
+        'params_for_id_file': '3compartment_nonstiff_params_for_id.json',
         'model_type': 'casadi_python',
         'solver': 'casadi_integrator',
         'param_id_method': 'sp_minimize',
@@ -2609,7 +2608,7 @@ def test_param_id_3compartment_nonstiff_python_succeeds(
     config.update({
         'file_prefix': '3compartment_nonstiff',
         'input_param_file': '3compartment_nonstiff_parameters.json',
-        'params_for_id_file': '3compartment_nonstiff_params_for_id.csv',
+        'params_for_id_file': '3compartment_nonstiff_params_for_id.json',
         'model_type': 'python',
         'solver': 'solve_ivp',
         'param_id_method': 'genetic_algorithm',
@@ -2801,7 +2800,7 @@ def test_laplace_approximation_hessian_validation(base_user_inputs, resources_di
         'plot_predictions': False,  
         'do_ia': True,  
         'ia_options': {'method': 'Laplace', 'sub_method': 'numdifftools_finite_diff'},  # Options: numdifftools_finite_diff, AD, parabola_fit
-        "params_for_id_file": "Simple_ODE_Benchmark_params_for_id.csv",  # Specify which params to identify
+        "params_for_id_file": "Simple_ODE_Benchmark_params_for_id.json",  # Specify which params to identify
         'param_id_obs_path': os.path.join(resources_dir, 'Simple_ODE_Benchmark_obs_data.json'),  
         'param_id_output_dir': temp_output_dir,  
         'debug_optimiser_options': {'num_calls_to_function': 20, 'cost_type': 'gaussian_MLE'},  
@@ -2899,7 +2898,7 @@ def test_offline_pre_time_lotka_volterra_outputs_match(
     config.update({
         "file_prefix": "Lotka_Volterra",
         "input_param_file": "Lotka_Volterra_parameters.json",
-        "params_for_id_file": "Lotka_Volterra_params_for_id.csv",
+        "params_for_id_file": "Lotka_Volterra_params_for_id.json",
         "model_type": "cellml",
         "solver": "CVODE_myokit",
         "param_id_method": "genetic_algorithm",
@@ -2960,7 +2959,7 @@ def test_offline_pre_time_3compartment_outputs_match(
     config.update({
         "file_prefix": "3compartment",
         "input_param_file": "3compartment_parameters.json",
-        "params_for_id_file": "3compartment_q_lv_only_params_for_id.csv",
+        "params_for_id_file": "3compartment_q_lv_only_params_for_id.json",
         "model_type": "cellml",
         "solver": "CVODE_myokit",
         "param_id_method": "genetic_algorithm",
@@ -3075,7 +3074,7 @@ def test_offline_pre_time_lotka_volterra_casadi_outputs_match(
     config.update({
         "file_prefix": "Lotka_Volterra",
         "input_param_file": "Lotka_Volterra_parameters.json",
-        "params_for_id_file": "Lotka_Volterra_params_for_id.csv",
+        "params_for_id_file": "Lotka_Volterra_params_for_id.json",
         "model_type": "casadi_python",
         "solver": "casadi_integrator",
         "param_id_method": "genetic_algorithm",
@@ -3136,7 +3135,7 @@ def test_offline_pre_time_3compartment_python_outputs_match(
     config.update({
         "file_prefix": "3compartment",
         "input_param_file": "3compartment_parameters.json",
-        "params_for_id_file": "3compartment_q_lv_only_params_for_id.csv",
+        "params_for_id_file": "3compartment_q_lv_only_params_for_id.json",
         "model_type": "python",
         "solver": "solve_ivp",
         "param_id_method": "genetic_algorithm",
@@ -3326,7 +3325,7 @@ def test_param_id_archives_input_files(resources_dir, temp_output_dir,
 
     rank = mpi_comm.Get_rank()
     model_path = generated_cellml_model_factory('3compartment', '3compartment_parameters.json')
-    params_for_id_path = os.path.join(resources_dir, '3compartment_params_for_id.csv')
+    params_for_id_path = os.path.join(resources_dir, '3compartment_params_for_id.json')
     obs_path = os.path.join(resources_dir, '3compartment_obs_data.json')
 
     runner = CVS0DParamID.init_from_dict({
@@ -3346,7 +3345,7 @@ def test_param_id_archives_input_files(resources_dir, temp_output_dir,
         out = runner.output_dir
         files = os.listdir(out)
         params_copies = [f for f in files
-                         if re.fullmatch(r'3compartment_params_for_id_\d{6}_\d{6}\.csv', f)]
+                         if re.fullmatch(r'3compartment_params_for_id_\d{6}_\d{6}\.json', f)]
         obs_copies = [f for f in files
                       if re.fullmatch(r'3compartment_obs_data_\d{6}_\d{6}\.json', f)]
         assert params_copies, f"no timestamped params_for_id copy in {out}: {files}"
@@ -3905,7 +3904,7 @@ def test_multi_start_reports_both_minima_of_a_two_minimum_model(
     config.update({
         'file_prefix': 'TwoMinima',
         'input_param_file': 'TwoMinima_parameters.json',
-        'params_for_id_file': 'TwoMinima_params_for_id.csv',
+        'params_for_id_file': 'TwoMinima_params_for_id.json',
         'model_type': 'cellml',
         'solver': 'CVODE_myokit',
         'param_id_method': 'multi_start_sp_minimize',
@@ -4640,7 +4639,7 @@ def _aadc_lotka_volterra_config(base_user_inputs, resources_dir, temp_output_dir
     config.update({
         'file_prefix': 'Lotka_Volterra',
         'input_param_file': 'Lotka_Volterra_parameters.json',
-        'params_for_id_file': 'Lotka_Volterra_params_for_id.csv',
+        'params_for_id_file': 'Lotka_Volterra_params_for_id.json',
         'model_type': 'aadc_python',
         'solver': 'aadc_semi_implicit',
         'param_id_method': param_id_method,
@@ -4754,7 +4753,7 @@ def _aadc_3compartment_config(base_user_inputs, resources_dir, temp_output_dir,
     config.update({
         'file_prefix': '3compartment',
         'input_param_file': '3compartment_parameters.json',
-        'params_for_id_file': '3compartment_params_for_id.csv',
+        'params_for_id_file': '3compartment_params_for_id.json',
         'model_type': 'aadc_python',
         'solver': 'aadc_semi_implicit',
         'param_id_method': 'sp_minimize',
@@ -4805,7 +4804,7 @@ def _aadc_fitzhugh_nagumo_config(base_user_inputs, resources_dir, temp_output_di
     config.update({
         'file_prefix': 'FitzHugh_Nagumo',
         'input_param_file': 'FitzHugh_Nagumo_parameters.json',
-        'params_for_id_file': 'FitzHugh_Nagumo_params_for_id.csv',
+        'params_for_id_file': 'FitzHugh_Nagumo_params_for_id.json',
         'model_type': 'aadc_python',
         'solver': 'aadc_semi_implicit',
         'param_id_method': param_id_method,
@@ -4997,7 +4996,7 @@ def _build_lotka_offline_gradient_runner(
     config.update({
         'file_prefix': 'Lotka_Volterra',
         'input_param_file': 'Lotka_Volterra_parameters.json',
-        'params_for_id_file': 'Lotka_Volterra_params_for_id.csv',
+        'params_for_id_file': 'Lotka_Volterra_params_for_id.json',
         'model_type': model_type,
         'solver': solver,
         'param_id_method': 'sp_minimize',

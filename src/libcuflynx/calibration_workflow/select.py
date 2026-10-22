@@ -208,7 +208,7 @@ def step_input_paths(step_dir, step):
 def write_step_inputs(step_dir, step, params_for_id, vessel_map, target_vessels):
     '''Write the step's obs_data and ``params_for_id`` with every target vessel renamed by
     ``vessel_map`` (a naming.Placed) for the step's model. Returns the two paths.'''
-    from libcuflynx.parsers.PrimitiveParsers import ObsAndParamDataParser
+    from libcuflynx.utilities.params_for_id_file import read_params_for_id, write_params_for_id
 
     def rename(qname):
         if not isinstance(qname, str) or '/' not in qname:
@@ -237,11 +237,7 @@ def write_step_inputs(step_dir, step, params_for_id, vessel_map, target_vessels)
             if isinstance(ref, dict) and 'params_to_change' in ref:
                 ref['params_to_change'] = rename(ref['params_to_change'])
 
-    if str(params_for_id).lower().endswith('.json'):
-        with open(params_for_id, encoding='utf-8-sig') as f:
-            params = json.load(f)
-    else:
-        params = ObsAndParamDataParser.params_for_id_csv_to_json(params_for_id)
+    params = read_params_for_id(params_for_id, f'step "{step.id}": ', keep_text=True)
 
     def rename_all(value):
         if isinstance(value, str):
@@ -260,9 +256,9 @@ def write_step_inputs(step_dir, step, params_for_id, vessel_map, target_vessels)
 
     obs_path, params_path = step_input_paths(step_dir, step)
     os.makedirs(os.path.dirname(obs_path), exist_ok=True)
-    for path, doc in ((obs_path, obs), (params_path, params)):
-        with open(path, 'w') as f:
-            json.dump(doc, f, indent=1)
+    with open(obs_path, 'w') as f:
+        json.dump(obs, f, indent=1)
+    write_params_for_id(params_path, params)
     return obs_path, params_path
 
 

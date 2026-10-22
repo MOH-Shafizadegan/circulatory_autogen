@@ -170,11 +170,11 @@ def test_a_workflow_s_params_for_id_with_a_single_underscore_join_is_refused(tmp
     from libcuflynx.calibration_workflow.spec import WorkflowError
     from libcuflynx.external_testing.workflow_library import build_workflow_library
     library = build_workflow_library(str(tmp_path / 'library'))
-    path = os.path.join(library['chain/rest'], 'rest_params_for_id.csv')
+    path = os.path.join(library['chain/rest'], 'rest_params_for_id.json')
     with open(path) as f:
         text = f.read()
     with open(path, 'w') as f:
-        f.write(text.replace('mod__C', 'mod_C'))
+        f.write(text.replace('"mod/C/', '"mod_C/'))
     with pytest.raises(WorkflowError, match='names vessel "mod_C"'):
         resolve_workflow(load_workflow(library['chain_rest']))
 

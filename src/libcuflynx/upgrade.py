@@ -10,6 +10,7 @@ refuses the file and names the command here that converts it::
     cuflynx-upgrade parameter-names --module-array <array> --module-library-dir <dir> ...
     cuflynx-upgrade parameters <parameters CSV | *_modules_config.json | directory>...
     cuflynx-upgrade supermodule-instances <*_module_array .json|.csv>... --module-library-dir <dir>
+    cuflynx-upgrade params-for-id <params_for_id CSV | directory>...
 
 Each converts its files in place (a ``_vessel_array`` file is renamed; a parameters CSV becomes
 the ``.json`` beside it) and prints what it changed. Convert a model's module configs and module
@@ -56,10 +57,16 @@ What each converts:
 * ``supermodule-instances``: writes the values of each supermodule instance of a model into the
   model's parameters file (``<prefix>_parameters.json`` beside its module array, made if
   needed), under the instance's name: a copy of its version's template, its default
-  parameterisation with the parameterisation the record names over it (and the templates of the
+  parameterisation, or the parameterisation the record names in its place, which must set every
+  instance value the default sets (and the templates of the
   supermodules nested in it under them). It is how a new supermodule instance gets its values. An instance the file has an
   entry for keeps it; ``--instance`` picks instances and ``--replace`` writes theirs again from the
   version.
+* ``params-for-id``: a params_for_id CSV (``vessel_name,param_name,min,max,...``) to the JSON
+  beside it, which replaces it (``utilities/params_for_id_file.py``): one entry per row, its
+  ``targets`` the row's vessels' ``<vessel>/<param_name>`` (a nested ``heart__lv`` as its path,
+  ``heart/lv/E``), its ``prior_*`` columns under ``prior_params``; a directory: every CSV
+  below it with vessel_name and param_name columns.
 * ``parameter-names``: ``{variable}_{vessel}`` parameter names to ``<vessel>/<variable>``, and
   names joined with a single ``_`` across nested levels to ``__`` (see
   ``scripts/migrate_parameter_names.py``).
@@ -356,7 +363,41 @@ def _submodules_to_versions(config_path, entry, dry_run, module_library_dirs, bu
             for var, leaf in values.items():
                 _set_path(node, var.split('/'), leaf)
         write_parameters_file(path, doc)
+    # a named parameterisation replaces the default as an instance's values, where the older
+    # form layered it over them: it takes the default's instance values it does not set
+    for name in targets:
+        if name == own:
+            continue
+        completed = _complete_parameterisation(config_path, own, name, dry_run)
+        if completed:
+            changes.append(f'parameterisation "{name}" completed with the default\'s values of '
+                           f'{completed}')
     return changes
+
+
+def _complete_parameterisation(config_path, default, name, dry_run):
+    '''Add to the supermodule parameterisation ``name`` every instance value its default
+    parameterisation ``default`` sets and it does not (nothing in a dry run). Returns the paths
+    added (``sub/var``).'''
+    from libcuflynx.utilities.parameters_file import (MODULE, get_leaf, parameter_rows,
+                                                      read_parameters_file, set_leaf,
+                                                      write_parameters_file, GLOBAL)
+    json_path = os.path.splitext(_parameterisation_file(config_path, name))[0] + '.json'
+    default_json = os.path.splitext(_parameterisation_file(config_path, default))[0] + '.json'
+    if dry_run or not os.path.isfile(json_path) or not os.path.isfile(default_json):
+        return []
+    base = read_parameters_file(default_json, kind=MODULE)
+    doc = read_parameters_file(json_path, kind=MODULE)
+    added = []
+    for row in parameter_rows(base, MODULE):
+        path = row['variable_name'].split('/')
+        if path[0] == GLOBAL or get_leaf(doc, path) is not None:
+            continue
+        set_leaf(doc, path, get_leaf(base, path))
+        added.append(row['variable_name'])
+    if added:
+        write_parameters_file(json_path, doc)
+    return added
 
 
 def _set_path(node, parts, leaf):
@@ -686,6 +727,34 @@ def upgrade_parameters(path, dry_run=False):
     return _convert_parameters_csv(path, dry_run)
 
 
+# ------------------------------------------------------------------------------- params_for_id
+
+def upgrade_params_for_id(path, dry_run=False):
+    '''Convert the params_for_id CSV ``path``, or every one below the directory ``path``, to
+    JSON (``utilities/params_for_id_file.py``). Returns the changes made.'''
+    from libcuflynx.utilities import params_for_id_file as pfi
+    if os.path.isdir(path):
+        paths = []
+        for root, dirs, files in os.walk(path):
+            dirs[:] = sorted(d for d in dirs if not d.startswith('.'))
+            paths += [os.path.join(root, n) for n in sorted(files)
+                      if pfi.is_params_for_id_csv(os.path.join(root, n))]
+    elif pfi.is_params_for_id_csv(path):
+        paths = [path]
+    else:
+        raise SystemExit(f'{path}: not a params_for_id CSV (a .csv with vessel_name and '
+                         f'param_name columns) or a directory.')
+    changes = []
+    for csv_path in paths:
+        try:
+            out = pfi.convert_csv(csv_path, dry_run)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        print(f'{csv_path}: written as {os.path.basename(out)}')
+        changes.append(out)
+    return changes
+
+
 # ------------------------------------------------------------------------------------------ CLI
 
 # ------------------------------------------------------------------ supermodule instances
@@ -737,7 +806,9 @@ def main(argv=None):
                                            'directory\'s) to nested JSON'),
                             ('supermodule-instances',
                              "write each supermodule instance's values into a model's "
-                             "parameters file, from its version")):
+                             "parameters file, from its version"),
+                            ('params-for-id', 'convert params_for_id CSVs (or a directory\'s) '
+                                              'to JSON')):
         sub = commands.add_parser(name, help=help_text)
         sub.add_argument('paths', nargs='+')
         sub.add_argument('--dry-run', action='store_true', help='print, do not write')
@@ -782,6 +853,8 @@ def main(argv=None):
                 args.external_modules_dir, args.instances, args.replace, args.parameters))
         elif args.command == 'parameters':
             changed += bool(upgrade_parameters(path, args.dry_run))
+        elif args.command == 'params-for-id':
+            changed += bool(upgrade_params_for_id(path, args.dry_run))
         else:
             changed += bool(upgrade_obs_data(path, *_times(args), dry_run=args.dry_run))
     print(f'{changed} of {len(args.paths)} file(s) {"would be " if args.dry_run else ""}changed.')
