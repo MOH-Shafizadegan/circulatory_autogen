@@ -82,20 +82,19 @@ def test_a_module_array_is_converted_and_renamed(tmp_path):
     assert not (tmp_path / 'm_vessel_array.json').exists()
     assert not csv_path.exists()
     records = read_module_array_records(str(tmp_path / 'm_module_array.json'))
-    heart = records[0]
-    assert heart['inp_instances'] == ['venous_svc', 'pvn']
-    assert heart['out_instances'] == ['aortic_root', 'par']
     assert [(r['name'], r['module_type'], r['inp_instances'], r['out_instances'])
-            for r in records[2:]] == [('par', 'arterial_simple', ['heart'], ['pvn']),
-                                       ('pvn', 'arterial_simple', ['par'], ['heart'])]
+            for r in records] == [('heart', 'heart', ['venous_svc'], ['aortic_root']),
+                                  ('aortic_root', 'arterial', ['heart'], [])]
     rows = read_module_array_records(str(tmp_path / 'c_module_array.csv'))
     assert [(r['name'], r['module_type'], r['out_instances']) for r in rows] == \
-        [('a', 'src', ['b']), ('b', 'src', []), ('h', 'heart_LVprop', ['b', 'par']),
-         ('par', 'arterial_simple', ['pvn']), ('pvn', 'arterial_simple', ['h'])]
+        [('a', 'src', ['b']), ('b', 'src', []), ('h', 'heart_LVprop', ['b'])]
 
 
 @pytest.mark.integration
-def test_a_one_output_heart_is_refused_until_converted(tmp_path):
+def test_a_one_output_heart_is_not_given_par_and_pvn(tmp_path, capsys):
+    """A heart is a module like any other: neither the converter nor the generator adds a
+    pulmonary artery and vein for a heart with one output. Its pulmonary ports are left
+    unconnected, so generation stops at their boundary conditions and names them."""
     from libcuflynx.scripts.script_generate_with_new_architecture import \
         generate_with_new_architecture
     resources = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -109,13 +108,25 @@ def test_a_one_output_heart_is_refused_until_converted(tmp_path):
     rows = [r.replace(' pvn,', ',').replace(' par', '') if r.startswith('heart,') else r
             for r in rows]
     array.write_text('\n'.join(rows) + '\n')
+    parameters = work / 'cvs_model_0d_parameters.json'
+    document = json.loads(parameters.read_text())
+    for instance in ('par', 'pvn'):
+        document.pop(instance, None)
+    parameters.write_text(json.dumps(document, indent=2))
+    before = array.read_text()
+    assert upgrade(['module-array', str(array)]) == 0
+    assert array.read_text() == before
     config = {'file_prefix': 'cvs_model_0d', 'input_param_file': 'cvs_model_0d_parameters.json',
               'model_type': 'cellml', 'solver': 'CVODE_myokit', 'resources_dir': str(work),
               'generated_models_dir': str(tmp_path / 'generated'), 'DEBUG': False}
-    with pytest.raises(ValueError, match='heart "heart" has one output.*cuflynx-upgrade module-array'):
-        generate_with_new_architecture(False, config)
-    assert upgrade(['module-array', str(array)]) == 0
-    assert any(r.startswith('par,') for r in array.read_text().splitlines())
+    capsys.readouterr()
+    assert not generate_with_new_architecture(False, config)
+    out = capsys.readouterr().out
+    for variable in ('u_par', 'v_pvn'):
+        assert f'heart/{variable}: a boundary condition of "heart" that no connected module' in out
+    cellml = (tmp_path / 'generated' / 'cvs_model_0d' / 'cvs_model_0d.cellml').read_text()
+    assert 'name="par"' not in cellml and 'name="pvn"' not in cellml
+    assert 'zero_flow' not in cellml
 
 
 @pytest.mark.parametrize('doc', [
@@ -156,8 +167,7 @@ def test_explicit_times_win_over_user_inputs(tmp_path):
 
 
 def test_a_heart_with_no_outputs_is_left_alone(tmp_path):
-    """A heart module tested on its own has no neighbours; only a one-output heart lacks its
-    pulmonary circuit."""
+    """A heart module tested on its own has no neighbours, and its array is left as it is."""
     path = _write(tmp_path / 'm_module_array.json',
                   [{'name': 'mod', 'module_type': 'heart', 'module_subtype': 'vp_simple'}])
     before = open(path).read()

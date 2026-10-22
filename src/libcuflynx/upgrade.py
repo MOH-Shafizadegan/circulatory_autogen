@@ -13,9 +13,9 @@ refuses the file and names the command here that converts it::
 
 Each converts its files in place (a ``_vessel_array`` file is renamed; a parameters CSV becomes
 the ``.json`` beside it) and prints what it changed. Convert a model's module configs and module
-array, then its parameter names (they are checked against the converted model, the par and pvn a
-one-output heart gains among them), then its parameters files. A file already in the current
-form is left as it is. ``--dry-run`` prints the changes without writing them.
+array, then its parameter names (they are checked against the converted model), then its
+parameters files. A file already in the current form is left as it is. ``--dry-run`` prints the
+changes without writing them.
 
 What each converts:
 
@@ -30,8 +30,9 @@ What each converts:
   versions are). The config's parameterisations are then converted as ``parameters`` does.
 * ``module-array``: the keys or columns ``vessel_type``/``BC_type``/``inp_vessels``/
   ``out_vessels`` to ``module_type``/``module_subtype``/``inp_instances``/``out_instances``;
-  ``<prefix>_vessel_array.*`` is renamed ``<prefix>_module_array.*``; a heart with one output
-  gets the pulmonary artery and vein (``par``, ``pvn``) the generator used to add for it.
+  ``<prefix>_vessel_array.*`` is renamed ``<prefix>_module_array.*``. No module is added: an
+  array lists every module of its model (a heart with one output gets no pulmonary artery and
+  vein; add ``par`` and ``pvn`` to the array if the model has them).
 * ``obs-data``: a bare list of data items, or an obs_data with no ``protocol_info``, gets the
   one-experiment ``protocol_info`` of ``pre_time`` and ``sim_time`` from user_inputs.yaml.
 * ``parameters``: a parameters CSV to nested JSON (``utilities/parameters_file.py``), the
@@ -386,21 +387,6 @@ def _default_parameters_to_parameterisation(config_path, entry, dry_run):
 
 # ------------------------------------------------------------------------------- module arrays
 
-def _heart_rows(records):
-    '''The par/pvn records a heart with one output needs, with the heart connected to them.'''
-    from libcuflynx.utilities.config_schemas import is_heart_module_type
-    hearts = [r for r in records if is_heart_module_type(r.get('module_type'))]
-    if len(hearts) != 1 or len(hearts[0].get('out_instances') or []) != 1:
-        return []
-    heart = hearts[0]
-    heart['out_instances'] = list(heart.get('out_instances') or []) + ['par']
-    heart['inp_instances'] = list(heart.get('inp_instances') or []) + ['pvn']
-    return [{'name': 'par', 'module_type': 'arterial_simple', 'module_subtype': 'vp',
-             'inp_instances': [heart['name']], 'out_instances': ['pvn']},
-            {'name': 'pvn', 'module_type': 'arterial_simple', 'module_subtype': 'vp',
-             'inp_instances': ['par'], 'out_instances': [heart['name']]}]
-
-
 def upgrade_module_array(path, dry_run=False):
     '''Convert the module array at ``path`` (and rename a ``_vessel_array`` file); returns the
     changes made.'''
@@ -411,16 +397,6 @@ def upgrade_module_array(path, dry_run=False):
         if any(k in o for o in _objects(json.loads(text)) for k, _ in MODULE_ARRAY_RENAMES):
             text = _rename_keys(text, MODULE_ARRAY_RENAMES)
             changes.append('older keys renamed')
-        records = json.loads(text)
-        for record in records:
-            for key in ('inp_instances', 'out_instances'):
-                if isinstance(record.get(key), str):
-                    record[key] = record[key].split()
-        added = _heart_rows(records)
-        if added:
-            from libcuflynx.utilities.config_schemas import dump_vessel_records
-            text = dump_vessel_records(records + added)
-            changes.append('par and pvn added for the one-output heart')
     else:
         df = pd.read_csv(path, dtype=str, na_filter=False)
         df = df.rename(columns=lambda c: str(c).strip()).apply(lambda col: col.str.strip())
@@ -430,15 +406,7 @@ def upgrade_module_array(path, dry_run=False):
             order = ['name', 'module_type', 'module_subtype', 'inp_instances', 'out_instances']
             df = df[order + [c for c in df.columns if c not in order]]
             changes.append('older columns renamed')
-        records = [{**row, 'inp_instances': row['inp_instances'].split(),
-                    'out_instances': row['out_instances'].split()}
-                   for row in df.to_dict('records')]
-        added = _heart_rows(records)
-        if added:
-            changes.append('par and pvn added for the one-output heart')
-        rows = [{**r, 'inp_instances': ' '.join(r['inp_instances']),
-                 'out_instances': ' '.join(r['out_instances'])} for r in records + added]
-        text = pd.DataFrame(rows, columns=df.columns).fillna('').to_csv(index=False)
+        text = df.to_csv(index=False)
     stem, ext = os.path.splitext(path)
     target = path
     if stem.endswith(OLD_ARRAY_SUFFIX):

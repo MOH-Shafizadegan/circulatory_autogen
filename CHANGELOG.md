@@ -83,6 +83,40 @@ A model's parameter values are `<prefix>_parameters.json` beside its module arra
   times, one line per experiment). Both take `{"name", "kind", "input": {"params_to_change"},
   "output", "experiments"?}`; the schema enforces each kind's keys.
 
+### Changed — the heart is connected like any other module
+
+Nothing in generation depends on a module being a heart or on an instance's name:
+- A module's inputs take its entrance ports of one `port_type` in the order its
+  `inp_instances` lists them (instances with no port of that type skipped), as its outputs
+  already took its exit ports in `out_instances` order. The rows' order no longer decides it:
+  a junction with two entrance ports of a type took its inputs in the order of their rows.
+  A model whose junction inputs were listed against their rows' order lists them in the order
+  it was generated with (CA's `physiological`, `control_phys*`, `cerebral*`, `elic`,
+  `FinalModel` arrays are reordered; their models are unchanged).
+- No zero-flow vena cava is added for a heart with one vena cava. List a `zero_flow`
+  instance (`module_type` `zero_flow`, `module_subtype` `nn`, a new built-in module with a
+  `vessel_port` exit) first among the heart's vessel inputs, as `3compartment` now does.
+  Otherwise its two vessel inputs take the `v_ivc` and `v_svc` ports, and `heart/v_pvn` is a
+  boundary condition to fill, named in the missing-parameters report. The `zero_flow` component
+  is in a model's `_modules.cellml` only when an instance uses it.
+- A model may have more than one heart.
+- A 1D vessel is coupled to the port of its 0D neighbour that joins them, found as above,
+  in the cpp generator and in `convert_0d_to_1d` (which takes the module sources as
+  `module_sources_inputs`); a heart's 1D outflow vessel no longer needs `aorta` in its name,
+  nor its venous inputs `ivc`, `svc` or `pvn`.
+- The CasADi solver diagnostics report, for each stiff mode, the inertance `I_<module>` of the
+  module of its dominant state and the inertance that would make it steppable, in place of the
+  `par` and `systemic_T` estimates.
+
+### Changed — `solver: CVODE` for a cellml model is `CVODE_myokit`
+
+`solver: CVODE` (or `solver_info.solver: CVODE`) with `model_type: cellml` is read as
+`CVODE_myokit` when user_inputs are read, with one printed line saying so; a `solver_info` error
+then names the shorthand. The dated `user_inputs_<yymmdd>.yaml` keeps `CVODE`, as written; a
+pipeline bundle's config records `CVODE_myokit`, since its `run_pipeline.py` does not go through
+the reader. `CVODE` for a cpp model is unchanged. The shorthand is listed in
+`SOLVER_SCHEMA['solver_aliases_by_model_type']`.
+
 ### Changed — a nested vessel is written by its path
 
 An output or obs_data operand names a nested vessel by its path, as a host parameter already
@@ -104,8 +138,15 @@ model's module configs and module array before its parameter names.
   `multi_port: "False"` (leave it out, or `null`/`false`).
 - Module arrays (`cuflynx-upgrade module-array FILE`): the keys and columns `vessel_type`,
   `BC_type`, `inp_vessels`, `out_vessels`; `<prefix>_vessel_array.*` file names (renamed
-  `<prefix>_module_array.*`). A heart with one output no longer gets `par` and `pvn` added: the
-  array lists the pulmonary circuit, and the converter adds it.
+  `<prefix>_module_array.*`). A heart with one output no longer gets `par` and `pvn` added, by
+  the generator or the converter: a heart is a module like any other, and the array lists every
+  module. A model that relied on them adds the two rows the generator used to add,
+  `par,arterial_simple,vp,<heart>,pvn` and `pvn,arterial_simple,vp,par,<heart>`, with `par` last
+  in the heart's outputs and `pvn` last in its inputs, and their parameters. Without them the
+  heart's pulmonary ports are unconnected, so `heart/u_par` and `heart/v_pvn` are boundary
+  conditions that need values.
+- Generation lists the missing parameters, and names each boundary condition that no connected
+  module supplies with its module, so an unconnected port is easy to find.
 - Parameter names (`cuflynx-upgrade parameter-names --module-array ARRAY` or
   `--supermodule-config CONFIG`, with `--module-library-dir` for library modules): a host
   parameters file names a module's parameter `<vessel>/<variable>` (`aortic_root/C`), and
@@ -155,8 +196,6 @@ naming what to write instead:
 - `do_mcmc` / `mcmc_options` / `debug_mcmc_options` -> `do_uq` / `UQ_options` /
   `debug_UQ_options`.
 - `model_type: cellml_only` -> `cellml`.
-- `solver: CVODE` with a cellml model -> `CVODE_myokit` or `CVODE_opencor` (`CVODE` stays the
-  cpp solver).
 - AADC `method: bdf_tape` / `bdf_kernel` -> `method: semi_implicit_signed` with
   `gradient_strategy: tape` / `kernel`.
 - `sa_options.gradient_method: analytic` -> `auto`.

@@ -50,6 +50,17 @@ One standard module array file contains five important columns, described below.
 - **inp_instances** are the instances feeding this one.
 - **out_instances** are the instances this one feeds.
 
+The order of these lists matters for a module with more than one port of a type: its inputs take
+its entrance ports of each `port_type` in the order `inp_instances` lists them, and its outputs
+its exit ports in `out_instances` order (an instance with no port of that type is skipped). A
+monolithic heart's three `vessel_port` entrances are `v_ivc`, `v_svc` and `v_pvn`, so its
+vessel inputs are listed inferior vena cava, superior vena cava, pulmonary vein; its two exits
+are the aorta and the pulmonary artery. The rows' order in the array does not matter. A port
+left unconnected is a boundary condition, which needs a value in the parameters file; to leave
+an earlier port out while connecting a later one, list a module that sets it in its place, e.g.
+a `zero_flow` instance (`module_type` `zero_flow`, `module_subtype` `nn`) first among a heart's
+vessel inputs for a heart with one vena cava.
+
 Some examples of possible inputs
 
 | Column name    | Possible inputs                                                                                               |

@@ -1898,7 +1898,11 @@ def write_pipeline_bundle(inp_data_dict, output_dir, today=None):
     os.makedirs(resources, exist_ok=True)
     os.makedirs(model_dir, exist_ok=True)
 
+    # The bundle's run_pipeline.py reads this config without the user_inputs parser, so it keeps
+    # the solver a shorthand was read as (CVODE -> CVODE_myokit for cellml), not the shorthand.
+    from libcuflynx.parsers.PrimitiveParsers import SOLVER_AS_WRITTEN_KEY
     cfg = dict(inp_data_dict)
+    cfg.pop(SOLVER_AS_WRITTEN_KEY, None)
     written = []
 
     cfg['model_file'] = _copy_into(_model_path(inp_data_dict), model_dir, 'model')
