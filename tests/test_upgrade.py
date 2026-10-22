@@ -538,3 +538,14 @@ def test_a_parameters_file_read_and_written_again_reads_back_the_same(tmp_path):
     parameters_file.write_parameters_file(str(path), doc)
     assert '"schema_version": 1,' in path.read_text() and '"value": 1.2e-8' in path.read_text()
     assert parameters_file.read_parameters_file(str(path)) == doc
+
+
+def test_a_parameter_without_a_value_is_read_as_unset(tmp_path):
+    """A blank value (a blank CSV cell, converted) is read as EMPTY_MUST_BE_FILLED, which
+    generation reports as missing, rather than as a value."""
+    path = tmp_path / 'm_parameters.csv'
+    path.write_text('variable_name,units,value,data_reference\na/q_init,m3,,\na/C,m,1,r\n')
+    assert upgrade(['parameters', str(path)]) == 0
+    rows = {r['variable_name']: r['value']
+            for r in parameters_file.read_parameter_rows(str(tmp_path / 'm_parameters.json'))}
+    assert rows == {'a/q_init': 'EMPTY_MUST_BE_FILLED', 'a/C': '1'}

@@ -43,8 +43,9 @@ A model's parameter values are `<prefix>_parameters.json` beside its module arra
  "heart": {"lv": {"E_A": {"value": 366575000, "units": "J_per_m6", "data_reference": "..."}}}}
 ```
 
-- A parameter is an object with `value` (a number, or text such as `EMPTY_MUST_BE_FILLED`), `units`,
-  `data_reference` and any other string key (a library's `sourced`). Every other object is an instance
+- A parameter is an object with `value` (a number, or text such as `EMPTY_MUST_BE_FILLED`; an empty
+  one is read as `EMPTY_MUST_BE_FILLED`), `units`, `data_reference` and any other string key (a
+  library's `sourced`). A number keeps the text it is written with. Every other object is an instance
   or sub-instance. `global` holds the global constants. `global`, `value` and `schema_version` are
   reserved: no module-array record, submodule or variable may have those names.
 - A path is the name users write: `aortic_root/C`, `heart/lv/E_A`, `global/R` or `R`.
@@ -53,9 +54,9 @@ A model's parameter values are `<prefix>_parameters.json` beside its module arra
   `global`; a supermodule's sub-instances (`{"lv": {"E_A": {...}}}`) and its globals.
 - A supermodule instance's values are in the model's file under its name. `cuflynx-upgrade
   supermodule-instances <module array> --module-library-dir <library> [--instance N] [--replace]
-  [--parameters FILE]` copies them once from the version's template (the parameterisation the record
-  names, else its default, with nested supermodules' templates under it); an instance that has an entry
-  keeps it. Generation refuses a supermodule instance the file has no entry for, naming that command.
+  [--parameters FILE]` copies them once from the version's template (its default parameterisation,
+  with the one the record names over it, and nested supermodules' templates under it); an instance that
+  has an entry keeps it. Generation refuses a supermodule instance the file has no entry for, naming that command.
   Of a supermodule's parameterisation it reads only the globals; a value the model's file lacks comes
   from the submodule version's `default_parameterisation`.
 - Calibration workflows write `<name>_calibrated_parameters.json` in the same form: a module array

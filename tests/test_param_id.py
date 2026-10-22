@@ -2526,24 +2526,17 @@ def test_param_id_3compartment_nonstiff_casadi_succeeds(
         with open(obs_data_path, 'w') as f:
             json.dump(obs_template, f, indent=2)
 
-        # --- Step 3: perturb parameters in a copy of the CSV and regenerate the model ---
+        # --- Step 3: perturb parameters in a copy of the parameters file and regenerate the model ---
         # sp_minimize starts from param_init = CSV values (see paramID.run_param_id).
         # Ground-truth observables stay at GT; only the optimiser starting point moves +3 %.
+        from libcuflynx.utilities import parameters_file
         src_csv = os.path.join(resources_dir, '3compartment_nonstiff_parameters.json')
-        pert_csv = os.path.join(temp_output_dir, '3compartment_nonstiff_parameters_perturbed.csv')
-        with open(src_csv, newline='') as f_in:
-            reader = csv_module.DictReader(f_in)
-            fieldnames = reader.fieldnames
-            rows = []
-            for row in reader:
-                for pk, csv_name in GT_CSV_NAMES.items():
-                    if row['variable_name'] == csv_name:
-                        row['value'] = str(perturbed_gt[pk])
-                rows.append(row)
-        with open(pert_csv, 'w', newline='') as f_out:
-            writer = csv_module.DictWriter(f_out, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(rows)
+        pert_csv = os.path.join(temp_output_dir, '3compartment_nonstiff_parameters_perturbed.json')
+        doc = parameters_file.read_parameters_file(src_csv)
+        for pk, csv_name in GT_CSV_NAMES.items():
+            parameters_file.get_leaf(doc, parameters_file.name_path(csv_name))['value'] = \
+                str(perturbed_gt[pk])
+        parameters_file.write_parameters_file(pert_csv, doc)
 
         config['input_param_file'] = pert_csv
         success = generate_with_new_architecture(False, config)
