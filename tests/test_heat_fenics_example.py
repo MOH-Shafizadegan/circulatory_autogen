@@ -523,12 +523,10 @@ def test_the_obs_data_and_params_for_id_describe_this_model(model_class):
     A typo here is invisible until a calibration is half an hour in, and then surfaces as a
     KeyError from inside the cost function.
     """
-    import csv
+    from libcuflynx.utilities.params_for_id_file import read_params_for_id
 
-    with open(_PARAMS_FOR_ID_PATH) as handle:
-        rows = [{key.strip(): (value or '').strip() for key, value in row.items()}
-                for row in csv.DictReader(handle)]
-    names = [f'{row["vessel_name"]}/{row["param_name"]}' for row in rows]
+    rows = read_params_for_id(_PARAMS_FOR_ID_PATH)['params']
+    names = [target for row in rows for target in row['targets']]
     assert set(names) == set(model_class.parameters), (
         f'params_for_id names {names} do not match the model\'s '
         f'{sorted(model_class.parameters)}')
