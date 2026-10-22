@@ -41,9 +41,9 @@ def build_parser():
                                           'directory, to report results from')
     parser.add_argument('--mapping', help='the variable mapping CSV')
     parser.add_argument('--parameters', metavar='CSV',
-                        help="the model's parameters CSV, whose data_reference column gives "
-                             "each parameter's source (one calibration; default: "
-                             "<prefix>_parameters.csv beside the model)")
+                        help="the generated model's parameters CSV, whose data_reference column "
+                             "gives each parameter's source (one calibration; default: the "
+                             "<prefix>_parameters.csv generation writes beside the model)")
     parser.add_argument('--bib', action='append', default=None, metavar='BIB',
                         help='a .bib file whose keys the parameter sources cite (repeatable; '
                              'a workflow uses its modules\' *_references.bib by default)')

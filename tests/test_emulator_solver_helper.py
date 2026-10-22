@@ -35,7 +35,7 @@ def _config(base_user_inputs, resources_dir, tmp_path, **overrides):
     config = base_user_inputs.copy()
     config.update({
         'file_prefix': 'Simple_ODE_Benchmark',
-        'input_param_file': 'Simple_ODE_Benchmark_parameters.csv',
+        'input_param_file': 'Simple_ODE_Benchmark_parameters.json',
         'model_type': 'cellml',
         'resources_dir': resources_dir,
         'param_id_obs_path': os.path.join(resources_dir,

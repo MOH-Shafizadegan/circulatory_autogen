@@ -120,7 +120,7 @@ OBSERVABLE_DATASET_OPTIONS = $observable_dataset_options
 INP_DATA_DICT = {{
     "DEBUG": True,
     "file_prefix": FILE_PREFIX,
-    "input_param_file": FILE_PREFIX + "_parameters.csv",
+    "input_param_file": FILE_PREFIX + "_parameters.json",
     "model_type": "cellml",
     "solver": "CVODE_myokit",
     "solver_info": {{

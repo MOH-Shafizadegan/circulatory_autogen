@@ -62,7 +62,7 @@ def fitzhugh_nagumo_config(base_config, resources_dir, output_dir, generated_mod
     config = dict(base_config)
     config.update({
         'file_prefix': 'FitzHugh_Nagumo',
-        'input_param_file': 'FitzHugh_Nagumo_parameters.csv',
+        'input_param_file': 'FitzHugh_Nagumo_parameters.json',
         'params_for_id_file': 'FitzHugh_Nagumo_params_for_id.csv',
         'model_type': 'casadi_python',
         'solver': 'casadi_integrator',
@@ -304,7 +304,7 @@ def three_compartment_config(base_config, resources_dir, output_dir, generated_m
     config = dict(base_config)
     config.update({
         'file_prefix': '3compartment',
-        'input_param_file': '3compartment_parameters.csv',
+        'input_param_file': '3compartment_parameters.json',
         'model_type': 'cellml',
         # Myokit (not OpenCOR) so the gradient-free baselines run in CI without OpenCOR.
         'solver': 'CVODE_myokit',
@@ -502,7 +502,7 @@ def goodwin_config(base_config, resources_dir, output_dir, generated_models_dir,
     config = dict(base_config)
     config.update({
         'file_prefix': 'Goodwin',
-        'input_param_file': 'Goodwin_parameters.csv',  # unused: x0 comes from the CellML itself
+        'input_param_file': 'Goodwin_parameters.json',  # unused: x0 comes from the CellML itself
         'params_for_id_file': 'Goodwin_params_for_id.csv',
         'model_type': 'cellml',
         'solver': 'CVODE_myokit',
@@ -650,7 +650,7 @@ def teusink_config(base_config, resources_dir, output_dir, generated_models_dir,
     config = dict(base_config)
     config.update({
         'file_prefix': 'Teusink',
-        'input_param_file': 'Teusink_parameters.csv',  # unused: x0 comes from the CellML itself
+        'input_param_file': 'Teusink_parameters.json',  # unused: x0 comes from the CellML itself
         'params_for_id_file': 'Teusink_params_for_id.csv',
         'model_type': 'cellml',
         'solver': 'CVODE_myokit',

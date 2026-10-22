@@ -52,8 +52,6 @@ from libcuflynx.calibration_workflow.resolve import (CalibratedParameter,
 from libcuflynx.calibration_workflow.select import (UnsetParametersError, protocol_values,
                                                     step_input_paths, write_step_inputs)
 from libcuflynx.sensitivity_analysis.parameter_reduction import SobolReduction
-from libcuflynx.utilities.parameter_names import (is_path_name, split_path_name,
-                                                  supermodule_row_name)
 from libcuflynx.calibration_workflow.spec import (WORKFLOW_FILE_NAME, WorkflowError, load_workflow,
                                                   uses_log_posterior)
 
@@ -367,7 +365,7 @@ class _Run:
             'study_name': step.id,
             'resources_dir': generated['resources_dir'],
             'generated_models_dir': generated['generated_models_dir'],
-            'input_param_file': f'{prefix}_parameters.csv',
+            'input_param_file': f'{prefix}_parameters.json',
             'param_id_obs_path': obs_data,
             'params_for_id_file': params_for_id,
             'param_id_output_dir': os.path.join(step_dir, 'param_id'),
@@ -733,8 +731,8 @@ def generate_step_model(resolved_step, work_dir, prefix, rows, obs_data, library
             resolved_step.model.model, work_dir, prefix, rows, library_inputs=library_inputs,
             model_type=settings.get('model_type', STEP_DEFAULTS['model_type']),
             solver=settings.get('solver'), protocol=protocol_values(obs_data),
-            instance_parameters=(resolved_step.selection.instance_parameters
-                                 if resolved_step.selection else None))
+            instance_values=(resolved_step.selection.instance_values
+                             if resolved_step.selection else None))
     except UnsetModelParameters as exc:
         vessels = sorted(resolved_step.model.vessels, key=len, reverse=True)
         names = []
@@ -767,6 +765,7 @@ def emulator_dir(output_dir, step_id):
 def write_calibrated_parameters_to(source, output_dir, path, module_library_dirs=None):
     '''Write the target's parameters with the merged values of the workflow run in
     ``output_dir`` to ``path``, as :func:`write_calibrated_parameters` does; returns ``path``.
+    Only ``path`` is written: the target's own files are not changed.
 
     Reads the run's ``workflow_result.json``, so a run made one step at a time (``only``,
     ``from_step``) can be written once every step has a result. WorkflowError when there is no
@@ -787,104 +786,29 @@ def write_calibrated_parameters_to(source, output_dir, path, module_library_dirs
                                        path=path)
 
 
-def _write_instance_values(target, merged_parameters, reference):
-    '''Write each merged value of a module-array ``target`` at a vessel inside a super instance
-    (``sys__C/q``, ``SN__soma__i_M/g``) into the model's parameters file of the super instance
-    holding it (``<prefix>_supermodule_parameters/sys.json``: instance ``C``, parameter ``q``;
-    ``SN.json``: instance ``soma``, parameter ``i_M/g``), in place. Only that model changes; the
-    supermodule version's file, a new instance's template, is not touched. Returns the model
-    names written.'''
-    from libcuflynx.utilities.config_schemas import (read_supermodule_parameters_file,
-                                                     supermodule_instance_parameters_path,
-                                                     write_supermodule_parameters_file)
-    from libcuflynx.utilities.parameter_names import LEVEL_SEPARATOR
-    by_name = {r['name']: r for r in target.records}
-    docs, written = {}, set()
-    for record in merged_parameters:
-        vessel, separator, variable = record['parameterisation_name'].rpartition('/')
-        if not separator or LEVEL_SEPARATOR not in vessel:
-            continue
-        parts = vessel.split(LEVEL_SEPARATOR)
-        container = by_name.get(parts[0])
-        if container is None or (container['module_type'],
-                                 container['module_subtype']) not in target.supermodules:
-            continue
-        path = supermodule_instance_parameters_path(target.model.module_array, parts[0])
-        if path not in docs:
-            if not os.path.isfile(path):
-                raise WorkflowError(f'{record["parameterisation_name"]}: the parameters file of '
-                                    f'the super instance "{parts[0]}", {path}, does not exist.')
-            docs[path] = read_supermodule_parameters_file(path)
-        instance = docs[path]['instances'].get(parts[1])
-        if instance is None:
-            raise WorkflowError(f'{record["parameterisation_name"]}: {path} has no instance '
-                                f'"{parts[1]}".')
-        key = '/'.join(parts[2:] + [variable])
-        parameter = instance['parameters'].setdefault(key, {'value': None,
-                                                            'units': record.get('units')})
-        if not parameter.get('units'):
-            raise WorkflowError(f'{record["parameterisation_name"]}: no units to write it to '
-                                f'{path} with.')
-        parameter['value'] = float(record['value'])
-        parameter['data_reference'] = reference(record)
-        if 'sourced' in parameter:
-            parameter['sourced'] = 'no'
-        written.add(record['model_name'])
-    for path, doc in docs.items():
-        write_supermodule_parameters_file(path, doc)
-    return written
-
-
 def write_calibrated_parameters(target, merged_parameters, workflow_name, path=None):
-    '''``path`` (default ``<name>_calibrated_parameters.csv`` beside the target's parameters
-    file, ``<name>`` its parameterisation, or its module array's prefix): the target's
-    parameters with the merged values in place, and rows it lacks added, written
-    ``<vessel or submodule>/<variable>``. A row is matched by the model parameter it names.
-
-    For a module-array target, a value at a vessel inside a super instance goes to the model's
-    parameters file of that super instance (``_write_instance_values``); it is written to
-    ``path`` too only where the target's parameters file has a row for it, which would win over
-    the file.'''
-    rows = read_parameter_rows(target.parameters_path)
-    columns = list(rows[0].keys()) if rows else ['variable_name', 'units', 'value',
-                                                  'data_reference']
-    by_name = {r['variable_name']: r for r in rows}
-    by_model_name = {}
-    for r in rows:
-        try:
-            by_model_name[_row_model_name(r['variable_name'], target)] = r
-        except ValueError:
-            pass
+    '''``path`` (default ``<name>_calibrated_parameters.json`` beside the target's parameters
+    file, ``<name>`` its parameterisation, or its module array's prefix): the target's parameters
+    file (nested JSON, utilities/parameters_file.py) with each merged value set at the path the
+    target names it by -- ``<vessel>/<variable>`` in a module array's file (a vessel inside a
+    super instance, ``sys__C/q``, at ``sys/C/q``), the module's own path in a parameterisation --
+    and added where the file lacks it. Only ``path`` is written; the target's files are not
+    changed.'''
+    from libcuflynx.utilities import parameters_file as pf
+    kind = pf.MODEL if target.kind == 'array' else pf.MODULE
+    doc = pf.read_parameters_file(target.parameters_path, kind=kind)
     today = datetime.date.today().isoformat()
-
-    def reference_of(record):
-        return f'calibrated by workflow {workflow_name}, step {record["from_step"]} ({today})'
-
-    in_files = (_write_instance_values(target, merged_parameters, reference_of)
-                if target.kind == 'array' else set())
     for record in merged_parameters:
-        reference = reference_of(record)
-        row = by_model_name.get(record['model_name']) or \
-            by_name.get(record['parameterisation_name'])
-        if row is None and record['model_name'] in in_files:
-            continue
-        if row is None:
-            row = {c: '' for c in columns}
-            row.update(variable_name=record['parameterisation_name'], units=record['units'])
-            rows.append(row)
-            by_name[record['parameterisation_name']] = row
-        row['value'] = '%.10g' % record['value']
-        row['data_reference'] = reference
-        if 'sourced' in columns:
-            row['sourced'] = 'no'
-    path = path or target.file('calibrated_parameters.csv')
-    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    import csv
-    with open(path, 'w', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=columns, extrasaction='ignore')
-        writer.writeheader()
-        writer.writerows(rows)
-    return path
+        name = record['host_name'] if target.kind == 'array' else record['parameterisation_name']
+        place = pf.name_path(name, kind)
+        leaf = dict(pf.get_leaf(doc, place) or {'units': record.get('units', '')})
+        leaf.update(value='%.10g' % record['value'],
+                    data_reference=f'calibrated by workflow {workflow_name}, step '
+                                   f'{record["from_step"]} ({today})')
+        if 'sourced' in leaf:
+            leaf['sourced'] = 'no'
+        pf.set_leaf(doc, place, leaf)
+    return pf.write_parameters_file(path or target.file('calibrated_parameters.json'), doc)
 
 
 def _write_params_for_id_with_priors(source_path, out_path, priors, step_id):
@@ -919,16 +843,6 @@ def _write_params_for_id_with_priors(source_path, out_path, priors, step_id):
         writer = csv.DictWriter(f, fieldnames=columns, extrasaction='ignore')
         writer.writeheader()
         writer.writerows(rows)
-
-
-def _row_model_name(name, target):
-    '''The target model name of a row of the target's parameters file.'''
-    if target.kind == 'array':
-        return naming.host_model_name(name)
-    if target.paths:
-        return supermodule_row_name(name, naming.STEP_VESSEL, target.paths)
-    _, variable = split_path_name(name) if is_path_name(name) else ([], name)
-    return naming.model_name(naming.STEP_VESSEL, variable)
 
 
 # --------------------------------------------------------------------------------------------
@@ -998,7 +912,7 @@ def run_calibration_workflow(source, *, output_dir=None, module_library_dirs=Non
         only: run just this step, reusing the results it depends on.
         dry_run: resolve and check everything, run nothing; returns :func:`plan_workflow`.
         write_calibrated: write the merged set as the target parameterisation's
-            ``<parameterisation>_calibrated_parameters.csv`` (complete runs only).
+            ``<parameterisation>_calibrated_parameters.json`` (complete runs only).
         progress: ``callable(event_dict)``, called on rank 0 with ``event`` in
             ``workflow_started``, ``step_started``, ``step_finished``, ``step_failed``,
             ``step_skipped``, ``workflow_finished``.

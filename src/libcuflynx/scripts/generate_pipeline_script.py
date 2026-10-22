@@ -190,7 +190,7 @@ def build_inp_data_dict(cfg, output_dir):
 
     inp = {
         "file_prefix": cfg["file_prefix"],
-        "input_param_file": cfg.get("input_param_file", cfg["file_prefix"] + "_parameters.csv"),
+        "input_param_file": cfg.get("input_param_file", cfg["file_prefix"] + "_parameters.json"),
         "model_type": cfg.get("model_type", "cellml"),
         # The CellML lives at generated_models/<prefix>/<prefix>.cellml — the layout
         # circulatory_autogen resolves model_path to, so every stage agrees.

@@ -14,38 +14,61 @@ them, and its obs_data and params_for_id name vessels as the target does. A boun
 the selection leaves open takes its value from the step's protocol (`params_to_change`), and one
 with no value anywhere raises `UnsetParametersError`, which lists them. Any workflow step's
 protocol now gives the parameters its model would otherwise leave unset. A nested selection starts
-from the model's parameters file of its super instance. A calibrated value inside a super
-instance of a module-array target is written to that file
-(`<prefix>_supermodule_parameters/<instance>.json`), never to the supermodule version's, and to the
-calibrated parameters CSV only where the target's parameters file has a row for it.
+from the model's values under its path (`heart/lv`). The calibrated values are written
+(`write_calibrated`, and `write_calibrated_parameters_to(source, output_dir, path)`, which writes
+only `path`) as a copy of the target's parameters file with them set, a value inside a super
+instance under its path; the target's own files and the supermodule version's template are not
+changed.
 
 ### Changed — a supermodule names its submodule versions; its instances are its own module array
 
 A supermodule version's config lists the module versions it is built from, `submodule_versions:
 [{"module_type", "module_subtype"}]`. Its instances and their connections are a module array of their
 own, `<module_type>_<module_subtype>_module_array.json` beside the config, whose records name no
-`parameterisation`. The values a new instance starts from are the version's parameters file,
-`<module_type>_<module_subtype>_parameters.json` beside the array (schema
-`supermodule_parameters.schema.json`): for each instance, the parameterisation of its version its
-values started from (`"default"` or a name) and the values. An inline `submodules` list is refused;
-`cuflynx-upgrade module-config <file> --module-library-dir <library>` converts it: the records to the
-module array, and each instance's values (from the parameterisation it named, else its version's
-default, with the supermodule's default parameterisation's `<instance>/<variable>` rows over them,
-which leave that parameterisation) to the parameters file.
+`parameterisation`. Its default parameterisation is the template of a new instance's values. An inline
+`submodules` list is refused; `cuflynx-upgrade module-config <file> --module-library-dir <library>`
+converts it: the records to the module array, and each instance's values (from the parameterisation it
+named, else its version's default, with the supermodule's default parameterisation's
+`<instance>/<variable>` rows over them) into the default parameterisation, nested by instance.
 
-### Changed — each supermodule instance of a model has its own parameters file
+### Changed — parameter values are nested JSON
 
-A model's supermodule instance takes its values from its own parameters file, in the version's format,
-`<prefix>_supermodule_parameters/<instance>.json` beside the model's module array. It is written once,
-from the version's parameters file (a nested supermodule's values written out as paths), by
-`cuflynx-upgrade supermodule-instances <module array> --module-library-dir <library>`, and after that
-generation reads it and never the version's. An instance without one is refused, naming that command;
-run it once on each model that has supermodule instances. A submodule's parameter comes from the host
-parameters file, then the supermodule's parameterisation, which now sets globals only (a
-`<submodule>/<variable>` row there is refused), then the instance's file, then its version's
-`default_parameterisation`. `supermodule-instances` moves such rows of the instance's parameterisation
-into the instance's file; delete them from the parameterisation afterwards. A calibration workflow
-copies the files with its module arrays, and `pack_workflow` packs them.
+A model's parameter values are `<prefix>_parameters.json` beside its module array (schema
+`parameters.schema.json`), nested instance, sub-instance, variable:
+
+```json
+{"schema_version": 1,
+ "global": {"R": {"value": 8.314, "units": "J_per_mol_K", "data_reference": "..."}},
+ "aortic_root": {"C": {"value": 1.2e-8, "units": "m3_per_Pa", "data_reference": "Liang2009"}},
+ "heart": {"lv": {"E_A": {"value": 366575000, "units": "J_per_m6", "data_reference": "..."}}}}
+```
+
+- A parameter is an object with `value` (a number, or text such as `EMPTY_MUST_BE_FILLED`), `units`,
+  `data_reference` and any other string key (a library's `sourced`). Every other object is an instance
+  or sub-instance. `global` holds the global constants. `global`, `value` and `schema_version` are
+  reserved: no module-array record, submodule or variable may have those names.
+- A path is the name users write: `aortic_root/C`, `heart/lv/E_A`, `global/R` or `R`.
+- A parameterisation, `parameterisations/<name>/<name>_parameters.json`, has the same form rooted at
+  its module: a component's own variables at the top (`{"C": {...}}`) and its global constants under
+  `global`; a supermodule's sub-instances (`{"lv": {"E_A": {...}}}`) and its globals.
+- A supermodule instance's values are in the model's file under its name. `cuflynx-upgrade
+  supermodule-instances <module array> --module-library-dir <library> [--instance N] [--replace]
+  [--parameters FILE]` copies them once from the version's template (the parameterisation the record
+  names, else its default, with nested supermodules' templates under it); an instance that has an entry
+  keeps it. Generation refuses a supermodule instance the file has no entry for, naming that command.
+  Of a supermodule's parameterisation it reads only the globals; a value the model's file lacks comes
+  from the submodule version's `default_parameterisation`.
+- Calibration workflows write `<name>_calibrated_parameters.json` in the same form: a module array
+  target's full file with the calibrated values set, or a parameterisation's.
+- A parameters CSV is refused. `cuflynx-upgrade parameters <file | *_modules_config.json | directory>`
+  converts it to the `.json` beside it: a model's file (and the per-instance
+  `<prefix>_supermodule_parameters/` files beside its module array, moved in under each instance), a
+  parameterisation (globals by its config), a config's parameterisations (and a supermodule version's
+  `<module_type>_<module_subtype>_parameters.json`, folded into its default parameterisation), or every
+  one below a directory. Name the `.json` file in `input_param_file`.
+- Generation writes the generated model's parameters as `<prefix>_parameters.csv` beside the
+  generated model, named as the model names them. A model with missing values gets
+  `<prefix>_parameters_unfinished.json` in its resources directory.
 
 ### Added — trace inputs and time courses in `prediction_plots`
 

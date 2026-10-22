@@ -761,9 +761,9 @@ def calibration_methods_latex(model_path, obs_data_path, params_for_id_path, set
     ``solver_info``, ``dt``, ``UQ_options`` ...). ``run_dir`` is the param_id run directory
     (``<method>_<prefix>_<obs>``), whose best fit is then reported. ``mapping`` defaults to
     ``<prefix>_variable_mapping.csv`` beside the model, if it exists. ``parameters_path`` is the
-    model's parameters CSV, whose data_reference column gives each parameter's source (default:
-    ``<prefix>_parameters.csv`` beside the model); its BibTeX keys are cited from
-    ``bib_files``, and the cited entries written to ``bib_out`` when given.
+    generated model's parameters CSV, whose data_reference column gives each parameter's source
+    (default: the ``<prefix>_parameters.csv`` generation writes beside the model); its BibTeX
+    keys are cited from ``bib_files``, and the cited entries written to ``bib_out`` when given.
     '''
     settings = dict(settings or {})
     model = load_model(model_path)

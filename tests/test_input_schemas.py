@@ -22,7 +22,7 @@ from libcuflynx.parsers.PrimitiveParsers import (PARAM_PRIOR_TYPES, PARAMS_FOR_I
                                                  PARAMS_FOR_ID_JSON_VERSION, ObsAndParamDataParser)
 from libcuflynx.generators.multi_port import normalise_port_multi_port, validate_list_multi_port
 from libcuflynx.schemas import (MODULE_ARRAY_SCHEMA, MODULE_CONFIG_SCHEMA, OBS_DATA_SCHEMA,
-                                PARAMS_FOR_ID_SCHEMA, SUPERMODULE_PARAMETERS_SCHEMA, load_schema)
+                                PARAMS_FOR_ID_SCHEMA, PARAMETERS_SCHEMA, load_schema)
 from libcuflynx.utilities.config_schemas import (COMPONENT_KEYS, MODULE_ARRAY_COLUMN_ORDER,
                                                  OLD_MODULE_ARRAY_KEYS, OLD_MODULE_CONFIG_KEYS,
                                                  normalise_module_config_entry)
@@ -36,7 +36,7 @@ pytestmark = pytest.mark.unit
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXAMPLES = os.path.join(ROOT, 'tests', 'test_inputs', 'schema_examples')
 ALL_SCHEMAS = (MODULE_ARRAY_SCHEMA, MODULE_CONFIG_SCHEMA, OBS_DATA_SCHEMA, PARAMS_FOR_ID_SCHEMA,
-               SUPERMODULE_PARAMETERS_SCHEMA)
+               PARAMETERS_SCHEMA)
 
 
 def _validator(name):
@@ -89,7 +89,7 @@ def test_the_examples_validate():
              '_modules_config.json': MODULE_CONFIG_SCHEMA,
              '_obs_data.json': OBS_DATA_SCHEMA,
              '_params_for_id.json': PARAMS_FOR_ID_SCHEMA,
-             '_parameters.json': SUPERMODULE_PARAMETERS_SCHEMA}
+             '_parameters.json': PARAMETERS_SCHEMA}
     seen = set()
     for path in sorted(glob.glob(os.path.join(EXAMPLES, '*.json'))):
         name = next(n for suffix, n in kinds.items() if path.endswith(suffix))
@@ -110,6 +110,16 @@ def test_the_repository_obs_data_files_validate():
     files = _repo_files('*obs_data*.json')
     assert len(files) > 10
     validator = _validator(OBS_DATA_SCHEMA)
+    for path in files:
+        with open(path) as f:
+            errors = list(validator.iter_errors(json.load(f)))
+        assert not errors, (path, jsonschema.exceptions.best_match(errors).message)
+
+
+def test_the_repository_parameters_files_validate():
+    files = _repo_files('*_parameters*.json')
+    assert len(files) > 10
+    validator = _validator(PARAMETERS_SCHEMA)
     for path in files:
         with open(path) as f:
             errors = list(validator.iter_errors(json.load(f)))

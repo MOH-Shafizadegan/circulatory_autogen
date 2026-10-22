@@ -222,15 +222,15 @@ def _generate(work_dir, modules_dir, prefix, vessel_rows, params):
         lines.append(f"{name},nn,{module_type},{' '.join(inp)},{' '.join(out)}")
     with open(os.path.join(resources_dir, f"{prefix}_module_array.csv"), "w") as f:
         f.write("\n".join(lines) + "\n")
-    with open(os.path.join(resources_dir, f"{prefix}_parameters.csv"), "w") as f:
-        f.write("variable_name,units,value,data_reference\n")
-        for variable_name, units, value in params:
-            f.write(f"{variable_name},{units},{value},test\n")
+    from _parameters import write_parameters
+    write_parameters(os.path.join(resources_dir, f"{prefix}_parameters.json"),
+                     [{'variable_name': variable_name, 'units': units, 'value': str(value),
+                       'data_reference': 'test'} for variable_name, units, value in params])
 
     generated_dir = os.path.join(work_dir, "generated_models")
     config = {
         'file_prefix': prefix,
-        'input_param_file': f'{prefix}_parameters.csv',
+        'input_param_file': f'{prefix}_parameters.json',
         'model_type': 'cellml',
         'solver': 'CVODE_myokit',
         'resources_dir': resources_dir,

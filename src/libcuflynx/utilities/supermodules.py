@@ -44,19 +44,17 @@ is an error. Links between a host and a nested supermodule go through that neste
 supermodule's own ``per_submodule_*`` (or a path), so an instance's ``per_submodule_*`` may not
 name a submodule that is itself a supermodule instance, except by a path into it.
 
-The supermodule instance's parameters are those of its *parameterisation* (the record's
-``"parameterisation"``, or the entry's ``default_parameterisation``; see
-``utilities/parameterisations.py``), which sets globals only (``global/<var>`` or a plain name; they
-keep their names and are added once, see ``utilities/parameter_names.py``), then the values of the
-instance's own parameters file in the model, ``<prefix>_supermodule_parameters/<instance>.json``
-beside the module array (``config_schemas.supermodule_instance_parameters_path``). Its parameter
-``<var>`` of submodule ``sub`` (``<subsub>/<var>`` of a nested one) is renamed
-``{var}_{instance}__{sub}``. The file is written once, from the version's parameters file, when the
-instance is made (``write_instance_parameters``; ``cuflynx-upgrade supermodule-instances``), and
-holds the values of the supermodules nested in it as paths, so a nested supermodule instance reads
-its parameterisation's globals and no file. A parameter neither sets comes from the submodule
-version's ``default_parameterisation`` (``parameterisations.component_parameterisation_rows``,
-read after the supermodule's, so the supermodule's values win).
+A supermodule instance's values are in the model's parameters file, under its name
+(``heart/lv/E_A``, ``SN/soma/i_M/rho_M`` for a nested one), as the host's own rows; its
+parameter ``<var>`` of submodule ``sub`` is ``{var}_{instance}__{sub}`` in the model. They are
+copied once, when the instance is made, from its version's template -- its default
+parameterisation, with the parameterisation the record names over it -- with the templates of the
+supermodules nested in it under them (``write_instance_parameters``; ``cuflynx-upgrade supermodule-instances``). Generation
+refuses a supermodule instance the model's parameters file has no entry for
+(``check_model_instances``). Of the supermodule's parameterisation it reads only the globals; a
+parameter neither sets comes from the submodule version's ``default_parameterisation``
+(``parameterisations.component_parameterisation_rows``, read after the supermodule's, so the
+supermodule's globals win).
 
 After expansion no record is a supermodule instance.
 '''
@@ -66,20 +64,17 @@ import copy
 import os
 
 from libcuflynx.utilities.config_schemas import (PER_SUBMODULE_KEYS, SUPERMODULE_FORMAT,
-                                                 check_supermodule_parameters_instances,
-                                                 read_module_array_records,
-                                                 read_supermodule_parameters_file,
-                                                 supermodule_array_path,
-                                                 supermodule_instance_parameters_path,
-                                                 write_supermodule_parameters_file)
-from libcuflynx.utilities.parameterisations import (first_rows_win, parameterisation_rows,
+                                                 model_parameters_path,
+                                                 read_module_array_records)
+from libcuflynx.utilities.parameterisations import (first_rows_win, is_global_row,
+                                                    parameterisation_rows,
                                                     parameterisation_parameters_path,
                                                     warn_conflicting_globals,
                                                     record_parameterisation)
-from libcuflynx.utilities.parameter_names import (SEPARATOR, flat_name, is_path_name,
-                                                  split_path_name, supermodule_row_name)
+from libcuflynx.utilities.parameter_names import SEPARATOR, flat_name, supermodule_row_name
+from libcuflynx.utilities import parameters_file
 
-#: the command that writes a model's supermodule instance parameters files
+#: the command that writes a model's supermodule instances' values into its parameters file
 INSTANCES_COMMAND = 'cuflynx-upgrade supermodule-instances'
 
 # a supermodule nested deeper than this is taken to be a cycle the ancestry check missed
@@ -145,131 +140,153 @@ def submodule_paths(supermodule, registry=None):
     return [flat_name(p) for p in submodule_path_parts(supermodule, registry)]
 
 
-def instance_parameter_rows(supermodule, registry=None, where='', instances=None):
-    '''The values of a supermodule parameters file as rows of the supermodule's
-    parameterisation: ``{variable_name: <sub>/<var>, units, value, data_reference}``, in instance
-    order. ``instances`` is the file's ``{instance: entry}`` (default: the version's,
-    ``supermodule["instance_parameters"]``). A supermodule instance's parameters must be paths
-    into it.'''
-    rows = []
-    values = supermodule.get('instance_parameters') if instances is None else instances
-    for record in supermodule['submodules']:
-        sub = record['name']
-        nested = _key(record) in (registry or {})
-        for var, parameter in ((values or {}).get(sub) or {}).get('parameters', {}).items():
-            if nested and SEPARATOR not in var:
-                raise ValueError(
-                    f'{where}: instance "{sub}" of its parameters file is a supermodule '
-                    f'instance, so its parameter "{var}" must be a path into it '
-                    f'(<its submodule>/<variable>); a global is set by the supermodule\'s '
-                    f'parameterisation.')
-            rows.append({'variable_name': f'{sub}{SEPARATOR}{var}',
-                         'units': parameter['units'],
-                         'value': _value_text(parameter['value']),
-                         'data_reference': parameter.get('data_reference', '')})
-    return rows
-
-
-def _value_text(value):
-    '''A parameters file value as a parameters CSV writes it.'''
-    return repr(value) if isinstance(value, float) else str(value)
-
-
-def submodule_rows(rows, where=''):
-    '''The names of the ``rows`` of a supermodule parameterisation that set a submodule's
-    parameter (``<sub>/<var>``) rather than a global (``global/<var>`` or a plain name).'''
-    names = []
-    for row in rows:
-        name = (row.get('variable_name') or '').strip()
-        if is_path_name(name) and split_path_name(name, where)[0]:
-            names.append(name)
-    return names
-
-
-def _refuse_submodule_rows(rows, source, record_name):
-    names = submodule_rows(rows, f'{source}: ')
-    if names:
-        raise ValueError(
-            f'{source}: the rows {names} set submodule parameters. A supermodule\'s '
-            f'parameterisation sets only globals; its submodules\' values are in each model\'s '
-            f'instance parameters file (<prefix>_supermodule_parameters/<instance>.json beside '
-            f'the module array), written from the version\'s parameters file. Move them once '
-            f'into the instance files of the models that use this parameterisation with: '
-            f'{INSTANCES_COMMAND} <module array> --module-library-dir <library> (for '
-            f'"{record_name}" and the others), then delete them here; in a module library, '
-            f'cuflynx-upgrade module-config moves a version\'s default parameterisation\'s rows '
-            f'into its parameters file.')
-
-
-def read_supermodule_parameters(supermodule, record, where, registry=None, instances=None,
-                                instances_source=None):
+def read_supermodule_parameters(supermodule, record, where, registry=None):
     '''
-    The parameters of the supermodule instance ``record`` (its name is the prefix), renamed:
-    the globals of its parameterisation (the record's, or the entry's default; a
-    ``<submodule>/<variable>`` row is refused), then ``instances``, the ``{instance: entry}`` of
-    the instance's parameters file (read from ``instances_source``; None for a nested instance,
-    whose values its outer instance's file holds).
+    The globals of the parameterisation of the supermodule instance ``record`` (the record's, or
+    the entry's default), named as the model names them. Its sub-instances' values are the
+    template of a new instance (``instance_values_from_version``) and are not read here.
     '''
     name = record['name']
     parameterisation, own_rows = parameterisation_rows(
         supermodule, record_parameterisation(record, where), where)
     source = (parameterisation_parameters_path(supermodule['config_path'], parameterisation)
               if parameterisation else where)
-    _refuse_submodule_rows(own_rows, source, name)
     paths = submodule_path_parts(supermodule, registry)
-    rows = _rename_rows(own_rows, name, paths, source)
-    if instances is not None:
-        file_source = instances_source or where
-        rows += _rename_rows(instance_parameter_rows(supermodule, registry, file_source,
-                                                     instances), name, paths, file_source)
-    return rows
+    instances = {s['name'] for s in supermodule['submodules']}
+    for row in own_rows:
+        if not is_global_row(row) and SEPARATOR not in row['variable_name']:
+            # an older {var}_{sub} name is refused naming its converter; another top-level
+            # parameter has no instance to go to
+            supermodule_row_name(row['variable_name'], name, paths, where=f'{source}: ')
+            raise ValueError(
+                f'{source}: "{row["variable_name"]}" is a parameter at its top, which is not one '
+                f'of the supermodule\'s instances ({sorted(instances)}); its instances\' values '
+                f'are nested under their names, and its globals under '
+                f'"{parameters_file.GLOBAL}".')
+    return _rename_rows([r for r in own_rows if is_global_row(r)], name, paths, source)
 
 
-def instance_parameters_from_version(supermodule, registry=None, _depth=0):
-    '''A new instance's parameters file (``{"schema_version", "instances"}``) for the supermodule
-    version ``supermodule`` (a registry entry): a copy of the version's parameters file, with
-    each nested supermodule instance's entry holding, as paths into it, every value of a new
-    instance of its own version, under the ones the version's file gives it.'''
-    import copy as _copy
-    template = supermodule.get('instance_parameters') or {}
-    instances = {}
+def _template(supermodule, parameterisation, where, registry=None):
+    '''The sub-instance values (``{sub: {...}}``, no globals) of the parameterisation
+    ``parameterisation`` of the supermodule version ``supermodule`` (None: its default).'''
+    used, _ = parameterisation_rows(supermodule, parameterisation, where)
+    if used is None:
+        return {}
+    doc = parameters_file.read_parameters_file(
+        parameterisation_parameters_path(supermodule['config_path'], used), f'{where}: ',
+        parameters_file.MODULE)
+    names = {s['name'] for s in supermodule['submodules']}
+    out = {}
+    for key, value in doc.items():
+        if key in (parameters_file.GLOBAL, parameters_file.SCHEMA_VERSION_KEY):
+            continue
+        if key not in names or parameters_file.is_leaf(value):
+            if parameters_file.is_leaf(value):
+                # an older {var}_{sub} name is refused naming its converter
+                supermodule_row_name(key, supermodule.get('module_type', ''),
+                                     submodule_path_parts(supermodule, registry),
+                                     where=f'{where}: parameterisation "{used}": ')
+            raise ValueError(
+                f'{where}: parameterisation "{used}" has "{key}" at its top, which is not one of '
+                f'the supermodule\'s instances ({sorted(names)}); a supermodule\'s parameters '
+                f'are its instances\' values, nested by instance, and its globals under '
+                f'"{parameters_file.GLOBAL}".')
+        out[key] = value
+    return out
+
+
+def _merge(under, over):
+    '''``over`` deep-merged onto a copy of ``under`` (nested parameters documents).'''
+    out = copy.deepcopy(under)
+    for key, value in over.items():
+        if (key in out and not parameters_file.is_leaf(value) and isinstance(out[key], dict)
+                and not parameters_file.is_leaf(out[key])):
+            out[key] = _merge(out[key], value)
+        else:
+            out[key] = copy.deepcopy(value)
+    return out
+
+
+def instance_values_from_version(supermodule, registry=None, parameterisation=None, where='',
+                                 _depth=0):
+    '''A new instance's values, ``{sub: {var: parameter}, nested sub: {its sub: ...}}``, of the
+    supermodule version ``supermodule`` (a registry entry): its template, the values of its
+    ``default_parameterisation`` with those of the parameterisation ``parameterisation`` (when
+    another is named) over them, with each nested supermodule instance's own version's template
+    under the values the template gives it. Every instance of the version has an entry, ``{}``
+    when nothing sets its values.'''
+    where = where or f'supermodule {_key(supermodule)}'
+    template = _template(supermodule, None, where, registry)
+    if parameterisation is not None and parameterisation != supermodule.get(
+            'default_parameterisation'):
+        template = _merge(template, _template(supermodule, parameterisation, where, registry))
+    values = {}
     for sub in supermodule['submodules']:
-        entry = template.get(sub['name']) or {'parameterisation': 'default', 'parameters': {}}
-        parameters = {}
         nested = (registry or {}).get(_key(sub))
+        inner = {}
         if nested is not None and _depth < _MAX_DEPTH:
-            inner = instance_parameters_from_version(nested, registry, _depth + 1)
-            for inner_name, inner_entry in inner['instances'].items():
-                for var, parameter in inner_entry['parameters'].items():
-                    parameters[f'{inner_name}{SEPARATOR}{var}'] = parameter
-        parameters.update(_copy.deepcopy(entry['parameters']))
-        instances[sub['name']] = {'parameterisation': entry['parameterisation'],
-                                  'parameters': parameters}
-    return {'schema_version': 1, 'instances': instances}
+            inner = instance_values_from_version(nested, registry, None,
+                                                 f'{where}, instance "{sub["name"]}"', _depth + 1)
+        own = template.get(sub['name']) or {}
+        if nested is not None:
+            leaves = [k for k, v in own.items() if parameters_file.is_leaf(v)]
+            if leaves:
+                raise ValueError(
+                    f'{where}: its template gives instance "{sub["name"]}", a supermodule '
+                    f'instance, the parameters {leaves}; its values are paths into it '
+                    f'({{"{sub["name"]}": {{"<its instance>": {{"<variable>": ...}}}}}}), and '
+                    f'a global is set under "{parameters_file.GLOBAL}".')
+        values[sub['name']] = _merge(inner, own)
+    return values
 
 
-def version_instance_parameters(records, registry):
-    '''``{name: new instance parameters file}`` for every supermodule instance among the module
-    array ``records``, each from its version (``instance_parameters_from_version``).'''
-    return {r['name']: instance_parameters_from_version(registry[_key(r)], registry)
-            for r in records if _key(r) in registry}
+def _model_document(parameters, where):
+    '''``(doc, path)`` of a model's parameters: ``parameters`` is its file (None when it does
+    not exist) or its document.'''
+    if isinstance(parameters, dict):
+        return parameters, None
+    if not os.path.isfile(str(parameters)):
+        return None, parameters
+    return parameters_file.read_parameters_file(parameters, where), parameters
 
 
-def write_instance_parameters(array_path, registry, instances=None, replace=False, dry_run=False):
+def check_model_instances(records, registry, array_path, parameters):
+    '''ValueError for a supermodule instance among the module array ``records`` (read from
+    ``array_path``) that the model's ``parameters`` (its file or document) has no entry for,
+    naming the command that writes it.'''
+    supers = [r['name'] for r in records if _key(r) in registry]
+    if not supers:
+        return
+    doc, path = _model_document(parameters, f'{array_path}: ')
+    missing = [n for n in supers if doc is None or n not in doc]
+    if missing:
+        where = (f'the model\'s parameters file {path}' if path is not None
+                 else 'the model\'s parameters')
+        state = ' does not exist' if doc is None and path is not None else \
+            f' has no entry for {missing}'
+        raise ValueError(
+            f'{array_path}: the supermodule instances {missing} have no values: {where}{state}. '
+            f'A supermodule instance\'s values are in the model\'s parameters file, under its '
+            f'name; write them once from its version with: {INSTANCES_COMMAND} {array_path} '
+            f'--module-library-dir <library> (the module sources the model is generated with).')
+
+
+def write_instance_parameters(array_path, registry, instances=None, replace=False, dry_run=False,
+                              parameters=None):
     '''
-    Write the parameters file (``config_schemas.supermodule_instance_parameters_path``) of each
-    supermodule instance of the model whose module array is ``array_path`` (those named in
-    ``instances``, default all), from its version's parameters file
-    (``instance_parameters_from_version``). Rows ``<submodule>/<variable>`` of the instance's
-    supermodule parameterisation go over those values: a supermodule parameterisation holds
-    globals only, so this moves such rows of a parameterisation written before into the model.
+    Write the values of each supermodule instance of the model whose module array is
+    ``array_path`` (those named in ``instances``, default all) into the model's parameters file
+    (``parameters``, default ``config_schemas.model_parameters_path``, made when it does not
+    exist), under the instance's name: a copy of its version's template
+    (``instance_values_from_version``: the version's default parameterisation, with the one the
+    record names over it).
 
-    An instance that has a file keeps it unless ``replace``. Returns ``[(name, path, action)]``,
-    ``action`` "written", "replaced" or "kept". ``registry`` is the supermodule registry
-    (``ModuleSources.supermodule_registry``). Raises ValueError for a name in ``instances`` that
-    is not a supermodule instance of the array.
+    An instance the file has an entry for keeps it unless ``replace``. Returns ``[(name, path,
+    action)]``, ``action`` "written", "replaced" or "kept". ``registry`` is the supermodule
+    registry (``ModuleSources.supermodule_registry``). Raises ValueError for a name in
+    ``instances`` that is not a supermodule instance of the array.
     '''
-    from libcuflynx.upgrade import parameter_from_row
+    path = parameters or model_parameters_path(array_path)
     records = read_module_array_records(array_path)
     supers = [r for r in records if _key(r) in registry]
     if instances is not None:
@@ -278,47 +295,21 @@ def write_instance_parameters(array_path, registry, instances=None, replace=Fals
             raise ValueError(f'{array_path}: {unknown} are not supermodule instances there (its '
                              f'supermodule instances: {[r["name"] for r in supers] or "none"}).')
         supers = [r for r in supers if r['name'] in instances]
+    doc = (parameters_file.read_parameters_file(path, f'{array_path}: ')
+           if os.path.isfile(path) else parameters_file.new_document())
     done = []
     for record in supers:
-        path = supermodule_instance_parameters_path(array_path, record['name'])
-        exists = os.path.isfile(path)
+        exists = record['name'] in doc
         if exists and not replace:
             done.append((record['name'], path, 'kept'))
             continue
-        supermodule = registry[_key(record)]
-        doc = instance_parameters_from_version(supermodule, registry)
         where = f'{array_path}: supermodule instance "{record["name"]}"'
-        _, rows = parameterisation_rows(supermodule, record_parameterisation(record, where), where)
-        for name in submodule_rows(rows, f'{where}: '):
-            row = next(r for r in rows if (r.get('variable_name') or '').strip() == name)
-            head, _, rest = name.partition(SEPARATOR)
-            if head not in doc['instances']:
-                raise ValueError(f'{where}: its parameterisation\'s row "{name}" names "{head}", '
-                                 f'which is not a submodule of it.')
-            doc['instances'][head]['parameters'][rest] = parameter_from_row(row)
-        if not dry_run:
-            write_supermodule_parameters_file(path, doc)
+        doc[record['name']] = instance_values_from_version(
+            registry[_key(record)], registry, record_parameterisation(record, where), where)
         done.append((record['name'], path, 'replaced' if exists else 'written'))
+    if not dry_run and any(action != 'kept' for _, _, action in done):
+        parameters_file.write_parameters_file(path, doc)
     return done
-
-
-def load_instance_parameters(array_path, record, supermodule, where):
-    '''``(instances, path)``: the ``{instance: entry}`` of the parameters file of the
-    supermodule instance ``record`` of the model whose module array is ``array_path``, checked
-    against its version ``supermodule``. ValueError naming the command that writes it when it
-    does not exist.'''
-    path = supermodule_instance_parameters_path(array_path, record['name'])
-    if not os.path.isfile(path):
-        raise ValueError(
-            f'{where}: its parameters file {path} does not exist. Each supermodule instance of '
-            f'a model has its own, which generation reads; write it once from its version\'s '
-            f'parameters file with: {INSTANCES_COMMAND} {array_path} --module-library-dir '
-            f'<library> (the module sources the model is generated with).')
-    doc = read_supermodule_parameters_file(path)
-    return (check_supermodule_parameters_instances(
-        doc, supermodule['submodules'], path,
-        supermodule_array_path(supermodule['config_path'], supermodule)
-        if supermodule.get('config_path') else 'its version'), path)
 
 
 def _head(key):
@@ -383,26 +374,7 @@ def _bind_to_interface(name, interface, by_name, per_inputs, per_outputs, compon
     return per_inputs, per_outputs
 
 
-def _instance_values(instance_parameters, record, supermodule, where):
-    '''``(instances, source)`` of the parameters file of the top-level supermodule instance
-    ``record``: from ``instance_parameters``, a module array path (the file beside it) or
-    ``{instance name: parameters file}``.'''
-    if isinstance(instance_parameters, dict):
-        if record['name'] not in instance_parameters:
-            raise ValueError(f'{where}: no parameters file was given for it.')
-        return (check_supermodule_parameters_instances(
-            instance_parameters[record['name']], supermodule['submodules'],
-            f'{where}: its parameters', 'its version\'s module array'), where)
-    if instance_parameters is None:
-        raise ValueError(f'{where}: a supermodule instance\'s values are in its parameters file '
-                         f'beside the model\'s module array, and no module array file was '
-                         f'given; expand the module array from its file '
-                         f'(config_schemas.load_module_array).')
-    return load_instance_parameters(instance_parameters, record, supermodule, where)
-
-
-def _expand_one(records, index, registry, source, ancestry, components=None,
-                instance_parameters=None):
+def _expand_one(records, index, registry, source, ancestry, components=None):
     instance = records[index]
     name = instance['name']
     key = _key(instance)
@@ -410,7 +382,6 @@ def _expand_one(records, index, registry, source, ancestry, components=None,
     where = f'{source}: supermodule instance "{name}" {key}'
 
     chain = ancestry.get(name, ())
-    top_level = name not in ancestry
     if key in chain or len(chain) >= _MAX_DEPTH:
         path = ' -> '.join(f'{k[0]}/{k[1]}' for k in chain + (key,))
         raise ValueError(f'{where}: supermodules nest in a cycle ({path}).')
@@ -578,11 +549,7 @@ def _expand_one(records, index, registry, source, ancestry, components=None,
 
     for record in new_records:
         ancestry[record['name']] = chain + (key,)
-    # a nested instance's values are in the parameters file of the top-level instance holding it
-    instances, instances_source = (_instance_values(instance_parameters, instance, supermodule, where)
-                                   if top_level else (None, None))
-    param_rows = read_supermodule_parameters(supermodule, instance, where, registry, instances,
-                                             instances_source)
+    param_rows = read_supermodule_parameters(supermodule, instance, where, registry)
     return records[:index] + new_records + records[index + 1:], param_rows, \
         _global_settings(param_rows, instance, supermodule, registry)
 
@@ -599,14 +566,15 @@ def _global_settings(rows, instance, supermodule, registry):
 
 
 
-def expand_supermodules(records, registry, source=None, settings=None, components=None,
-                        instance_parameters=None):
+def expand_supermodules(records, registry, source=None, settings=None, components=None):
     '''
     ``(records, extra_param_rows)``: ``records`` (normalised vessel records, see
     ``config_schemas.normalise_vessel_record``) with every supermodule instance -- a record
     whose (module_type, module_subtype) is in ``registry`` -- replaced by its prefixed submodules,
-    recursively, and the instances' renamed parameterisation rows, each name once, the first occurrence kept (so an outer supermodule's
-    values win over a nested one's). ``records`` is not modified.
+    recursively, and the globals of the instances' parameterisations, renamed, each name once,
+    the first occurrence kept (so an outer supermodule's values win over a nested one's). The
+    instances' values are the model's parameters file's (``check_model_instances``).
+    ``records`` is not modified.
 
     Raises ValueError, naming ``source`` and the instance, for an unknown supermodule type,
     an unknown submodule in per_submodule_*, a host that does not exist or does not name the
@@ -615,12 +583,6 @@ def expand_supermodules(records, registry, source=None, settings=None, component
     path that names nothing. ``components`` (the component registry) lets a host bind to an
     ``interface`` entry by its ports.
 
-    ``instance_parameters`` gives each supermodule instance of ``records`` its parameters file:
-    the path of the module array ``records`` were read from (each instance's file is beside it,
-    ``config_schemas.supermodule_instance_parameters_path``; a missing one is a ValueError naming
-    the command that writes it), or ``{instance name: parameters file}``
-    (``version_instance_parameters`` gives new instances'). With none, a supermodule instance is
-    a ValueError.
     '''
     source = source or 'module array'
     records = copy.deepcopy(list(records))
@@ -632,8 +594,7 @@ def expand_supermodules(records, registry, source=None, settings=None, component
         index = next((i for i, r in enumerate(records) if _is_instance(r, registry, source)), None)
         if index is None:
             break
-        records, rows, sets = _expand_one(records, index, registry, source, ancestry, components,
-                                          instance_parameters)
+        records, rows, sets = _expand_one(records, index, registry, source, ancestry, components)
         extra_param_rows += rows
         settings += sets
     for record in records:

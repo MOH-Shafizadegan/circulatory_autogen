@@ -478,7 +478,7 @@ def _emulator_config(base_user_inputs, temp_output_dir, temp_generated_models_di
         'file_prefix': 'heat_fenics',
         # Never read for an external model (it is a generation-only path), but the parser
         # builds an absolute path from it unconditionally.
-        'input_param_file': 'heat_fenics_parameters.csv',
+        'input_param_file': 'heat_fenics_parameters.json',
         'model_type': 'external_python',
         'solver': 'external',
         'external_model_path': _MODEL_PATH,

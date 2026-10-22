@@ -54,7 +54,7 @@ def _uq_config(base_user_inputs, resources_dir, temp_output_dir, obs_path, libra
     config = base_user_inputs.copy()
     config.update({
         'file_prefix': 'Simple_ODE_Benchmark',
-        'input_param_file': 'Simple_ODE_Benchmark_parameters.csv',
+        'input_param_file': 'Simple_ODE_Benchmark_parameters.json',
         'params_for_id_file': 'Simple_ODE_Benchmark_params_for_id.csv',
         'model_type': 'cellml',
         'solver': 'CVODE_myokit',

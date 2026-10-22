@@ -23,7 +23,7 @@ This file defines which parameters (constants and initial_states) within your mo
 The entries in the file are detailed as follows:
 
 - **vessel_name**: the name of the vessel/module the parameter is in
-- **param_name**: the name of the parameter in the cellml module (not including the "vessel_name" suffix that is included in the `[file_prefix]_parameters.csv` file).
+- **param_name**: the name of the parameter in the cellml module (the variable, without its vessel: `C` of `aortic_root/C` in the `[file_prefix]_parameters.json` file).
 - **param_type**: **"state"** or **"const"**; whether the parameter is the initial value of a state or a const. 
 - **min**: The minimimum of the range of possible values (min of the uniform distribution).
 - **max**: The maximum of the range of possible values (max of the uniform distribution).
@@ -861,7 +861,7 @@ To run the parameter identification we need to set a few entries in the `[CA_dir
     - **sigma0**: Initial standard deviation for CMA-ES (optional, default: 0.2 of parameter range)
     - Note: 
         - The number of parallel workers is automatically determined from the number of MPI processes
-        - Initial parameter values are automatically loaded from `{file_prefix}_parameters.csv`
+        - Initial parameter values are automatically loaded from `{file_prefix}_parameters.json`
     
     sp_minimize specific options:
 
@@ -871,7 +871,7 @@ To run the parameter identification we need to set a few entries in the `[CA_dir
 
     - **num_starts**: Number of L-BFGS-B descents to run (default: 10, or 4 when `DEBUG` is true). The starts are spread round-robin over the MPI ranks; make `num_starts` several times the rank count so the work balances (see the note under "Multi-start Gradient-based Optimizer" below).
     - **start_sampling**: How the starting points are scattered over the parameter bounds: `sobol` (default), `latin_hypercube` or `random`.
-    - **include_init_point**: If true (default), the first start is the initial parameter values from `{file_prefix}_parameters.csv`, so this method can never do worse than a single-start `sp_minimize` run.
+    - **include_init_point**: If true (default), the first start is the initial parameter values from `{file_prefix}_parameters.json`, so this method can never do worse than a single-start `sp_minimize` run.
     - **seed**: Seed for the start sampler (default: 0), so a run is repeatable.
     - **fd_step**: Finite-difference step used when an automatic-differentiation gradient isn't available — i.e. any configuration without an AD backend (see the gradient-backend note below), or when `do_ad: false` (default: 1e-4).
     - **cost_convergence**: Once any start reaches this cost, every MPI rank stops launching new starts (signalled between ranks with a non-blocking message), so no rank keeps working after a good-enough solution has been found. (Set `no_new_starts_on_convergence: false` to disable this.)
@@ -914,7 +914,7 @@ optimiser_options:
   num_calls_to_function: 10000  # shared option
   cost_convergence: 0.001         # shared option
   sigma0: 0.1                      # CMA-ES specific (optional, initial standard deviation)
-  # Note: Initial parameter values are automatically loaded from {file_prefix}_parameters.csv
+  # Note: Initial parameter values are automatically loaded from {file_prefix}_parameters.json
 ```
 
 ### Gradient-based Optimizer (sp_minimize)
@@ -950,7 +950,7 @@ optimiser_options:
   cost_convergence: 0.0001
   num_starts: 10              # number of L-BFGS-B descents
   start_sampling: sobol       # sobol | latin_hypercube | random
-  include_init_point: true    # first start is the x0 from {file_prefix}_parameters.csv
+  include_init_point: true    # first start is the x0 from {file_prefix}_parameters.json
   seed: 0
 ```
 
@@ -964,7 +964,7 @@ It also streams three live per-start histories *during* the run, appended one ro
 
 $$\dot V = c\left(V - \tfrac{V^3}{3} + R\right), \qquad \dot R = -\tfrac{1}{c}\left(V - a + bR\right)$$
 
-is a standard hard case for parameter estimation: its least-squares surface has many local minima, because a wrong recovery rate `c` puts the simulated spike train out of phase with the data (Ramsay et al. 2007, *J. R. Statist. Soc. B* 69(5), "Parameter estimation for differential equations: a generalized smoothing approach"). The supplied `FitzHugh_Nagumo_parameters.csv` starts at `(a, b, c) = (0.8, 0.9, 2.0)`, which sits inside a local basin; the true values are `(0.2, 0.2, 3.0)`.
+is a standard hard case for parameter estimation: its least-squares surface has many local minima, because a wrong recovery rate `c` puts the simulated spike train out of phase with the data (Ramsay et al. 2007, *J. R. Statist. Soc. B* 69(5), "Parameter estimation for differential equations: a generalized smoothing approach"). The supplied `FitzHugh_Nagumo_parameters.json` starts at `(a, b, c) = (0.8, 0.9, 2.0)`, which sits inside a local basin; the true values are `(0.2, 0.2, 3.0)`.
 
 `sp_minimize` never leaves the basin it starts in. The genetic algorithm escapes it but, being gradient-free, converges slowly. The multi-start finds the global basin *and* refines it with the gradient — whatever gradient backend drives it (finite differences, CasADi AD, or Myokit CVODES FSA). The table below is regenerated by the benchmark runner (`python benchmarks/run_benchmarks.py --update-docs`) and by the **Benchmarks** GitHub Actions workflow, so the published numbers stay current; they depend on the hardware and MPI rank count used.
 
@@ -1146,7 +1146,7 @@ identifiability analysis to it (see [Step kinds](#step-kinds)).
 Paths are relative to the workflow file. A **model** is one of:
 
 - **a module array** of CA, as `"resources/<prefix>_module_array.csv"` (or `.json`). Its
-  parameters file is `<prefix>_parameters.csv` beside it, or name it:
+  parameters file is `<prefix>_parameters.json` beside it, or name it:
   `{"module_array": "...", "parameters": "..."}`.
 - **a module of a module library**, as `{"module_type": "i_M", "version": "Argus2026_v01",
   "parameterisation": "davis2020_wistar"}`. The library is found through `module_library_dirs`
@@ -1187,16 +1187,16 @@ file of its own:
 A selection runs as one of the other models:
 
 - **one instance** -- a record, or `heart/lv` inside a super instance -- is its library module,
-  the record's version and parameterisation (a submodule's: the one the model's parameters file of
-  its super instance records it started from), placed at that instance as `"vessel"` would place
-  it. A selected supermodule instance is generated with the model's values for it;
+  the record's version and parameterisation (a submodule's: its version's default), placed at that
+  instance as `"vessel"` would place it. A selected supermodule instance is generated with the
+  model's values for it;
 - **several records** are the module array they form, cut from the target. A link to a record
   outside the selection is dropped, which leaves that port open.
 
-The step starts from the target's values for its instances: their rows of the target's
-parameters file and, for a nested instance, the values the model's parameters file of the super
-instance holding it gives it (`<prefix>_supermodule_parameters/<instance>.json`, see
-[A model's supermodule instances](design-model.md#a-models-supermodule-instances)). Values fixed from earlier steps go over those. Its obs_data and params_for_id name vessels as
+The step starts from the target's values for its instances: the entries of the target's
+parameters file under them, a nested instance's under its path (`heart/lv`; see
+[A model's supermodule instances](design-model.md#a-models-supermodule-instances)). Values fixed
+from earlier steps go over those. Its obs_data and params_for_id name vessels as
 the target does (`C/z`, `heart__lv/E`). For one instance, whose model is generated as `mod`,
 renamed copies are written to `<step_id>/inputs/` and run from there.
 
@@ -1211,13 +1211,11 @@ protocol in the step's obs_data, which sets its value while the step runs:
 Without one, it takes the parameterisation's value or the target's row. A parameter with none
 of these stops the step with an `UnsetParametersError`, whose `names` list them as the target's
 parameters file does (`C/x`), so a front end can ask for their protocols. The results merge
-into the target like any step's: in `<prefix>_calibrated_parameters.csv` (`write_calibrated`)
-only the rows the step calibrated change. A value inside a super instance (`heart/lv/E`) is
-written to the model's parameters file of that super instance instead (instance `lv`, parameter
-`E`, in `<prefix>_supermodule_parameters/heart.json`, in place), and to the CSV only where the
-target's parameters file has a row for it, which would win over the file. Only this model changes:
-the supermodule version's own parameters file, which new instances are copied from, is not
-touched.
+into the target like any step's: in `<prefix>_calibrated_parameters.json` (`write_calibrated`),
+a copy of the target's parameters file, only the values the step calibrated change, a value
+inside a super instance under its path (`heart/lv/E`).
+`write_calibrated_parameters_to(source, output_dir, path)` writes the same file to `path`, and
+nothing else: neither the target's files nor the supermodule version's template change.
 
 ### Step kinds
 
@@ -1342,9 +1340,10 @@ files its settings name under `settings/`. Paths in `settings` (`external_module
 `--from-step X` reruns X and everything after it, reusing the earlier results (and refusing if
 their obs_data, params_for_id or parameters changed since); `--only X` reruns one step.
 `--write-calibrated` writes the merged set beside the target's parameters file, as
-`<name>_calibrated_parameters.csv` (`<name>` is the module array's prefix or the
-parameterisation): the target's rows with the calibrated values in place, and new rows written
-`<vessel>/<variable>`.
+`<name>_calibrated_parameters.json` (`<name>` is the module array's prefix or the
+parameterisation), in the target's nested form: the target's parameters file with each calibrated
+value set at its path (`<vessel>/<variable>` in a module array's file, the module's own path in a
+parameterisation's), added where the file lacks it. The target's files are not changed.
 
 ### Distributions and priors
 

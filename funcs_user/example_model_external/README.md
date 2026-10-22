@@ -22,7 +22,7 @@ with [`../example_model_scipy/`](../example_model_scipy/) instead — same contr
 |---|---|
 | `heat1d_model.py` | The solver class plus `SIM_HELPER = Heat1D`. |
 | `heat1d_params_for_id.csv` | Parameters to calibrate / sweep (`k`, `u_D`) with bounds. |
-| `heat1d_parameters.csv` | Default parameter values (the calibration start point). |
+| `heat1d_parameters.json` | Default parameter values (the calibration start point). |
 | `heat1d_obs_data.json` | The `protocol_info` (the run window) plus target observables — the three probe means at the "true" `k=0.25, u_D=0.1`. |
 
 ## The contract
@@ -79,7 +79,7 @@ type.
 
 ```yaml
 file_prefix: heat1d
-input_param_file: heat1d_parameters.csv
+input_param_file: heat1d_parameters.json
 model_type: external_python
 solver: external
 # Default model location is funcs_user/{file_prefix}_model.py. This example lives in a

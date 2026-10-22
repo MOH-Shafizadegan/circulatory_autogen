@@ -953,7 +953,7 @@ def test_parse_user_inputs_warns_for_casadi_nonzero_pre_time():
     with pytest.warns(UserWarning, match='does not support nonzero pre_time'):
         YamlFileParser().parse_user_inputs_file({
             'file_prefix': '3compartment_nonstiff',
-            'input_param_file': '3compartment_nonstiff_parameters.csv',
+            'input_param_file': '3compartment_nonstiff_parameters.json',
             'model_type': 'casadi_python',
             'solver': 'casadi_integrator',
             'solver_info': {'method': 'cvodes', 'max_num_steps': 50000},
@@ -1487,7 +1487,7 @@ def test_the_parser_refuses_a_key_of_another_solver(capsys):
     with pytest.raises(SystemExit):
         YamlFileParser().parse_user_inputs_file({
             'file_prefix': '3compartment',
-            'input_param_file': '3compartment_parameters.csv',
+            'input_param_file': '3compartment_parameters.json',
             'model_type': 'python',
             'solver': 'solve_ivp',
             'solver_info': {'MaximumStep': 0.0001, 'method': 'BDF'},
@@ -1501,7 +1501,7 @@ def test_the_parser_refuses_a_key_of_another_solver(capsys):
 def test_a_cpp_config_with_dt_solver_parses(solver, tmp_path):
     parsed = YamlFileParser().parse_user_inputs_file({
         'file_prefix': '3compartment',
-        'input_param_file': '3compartment_parameters.csv',
+        'input_param_file': '3compartment_parameters.json',
         'model_type': 'cpp',
         'solver': solver,
         'solver_info': {'dt_solver': 1e-4},

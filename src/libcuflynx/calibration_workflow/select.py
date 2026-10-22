@@ -5,20 +5,19 @@ a workflow already has:
 
 * one instance (a record, or ``heart/lv`` inside a super instance) is its library module,
   placed at that instance (``naming.Placed``), as a step naming ``vessel`` would be. Its
-  parameterisation is the record's; a submodule's is the one its super instance's parameters file
-  in the model records (``"default"``: its version's default). A selected supermodule instance is
-  generated with the model's values for it as its own parameters file;
+  parameterisation is the record's; a submodule's is its version's default. A selected
+  supermodule instance is generated with the model's values for it as its instance's values;
 * several records are the module array they form, cut from the target (``naming.Renamed``,
   names unchanged). A link to a record outside the selection is dropped, which leaves that
   port open.
 
-Either way the step starts from the target's values for those instances. The target's
-parameters file rows for them (plus, for a nested instance, the values the parameters file of
-the model's super instance holding it gives it, ``<prefix>_supermodule_parameters/<instance>.json``)
-are the step model's parameters, under any values fixed from earlier steps; a cut array takes the
-model's parameters files of its supermodule instances. A cut port's boundary condition then takes its value from the step's
-obs_data protocol (``params_to_change``), the parameterisation, or the target's parameters
-file; one with none of these is an :class:`UnsetParametersError`.
+Either way the step starts from the target's values for those instances: the entries of the
+target's parameters file under them (``utilities/parameters_file.py``; a nested instance's under
+its path, ``heart/lv``) are the step model's parameters, under any values fixed from earlier
+steps; a cut array takes the target's entries of its records. A cut port's boundary condition
+then takes its value from the step's obs_data protocol (``params_to_change``), the
+parameterisation, or the target's parameters file; one with none of these is an
+:class:`UnsetParametersError`.
 
 The step's obs_data and params_for_id name the instances as the target does. A single
 instance's model is generated as ``mod``, so :func:`write_step_inputs` writes renamed copies
@@ -32,10 +31,11 @@ from dataclasses import dataclass, field
 
 from libcuflynx.calibration_workflow import naming
 from libcuflynx.calibration_workflow.spec import LibraryModule, ModuleArray, WorkflowError
-from libcuflynx.utilities.parameter_names import (flat_name, is_path_name, split_path_name)
+from libcuflynx.utilities import parameters_file
+from libcuflynx.utilities.parameter_names import flat_name
 from libcuflynx.utilities.parameterisations import (PARAMETERISATION_KEY,
                                                     parameterisation_rows)
-from libcuflynx.utilities.supermodules import load_instance_parameters
+from libcuflynx.utilities.supermodules import check_model_instances
 
 
 class UnsetParametersError(WorkflowError):
@@ -71,13 +71,13 @@ class SelectedArray(ModuleArray):
 class ResolvedSelection:
     '''What a selection step runs: ``model`` (a LibraryModule or SelectedArray), the target
     ``vessel`` a single instance sits at (None for several), ``rows``, the target's
-    parameter rows for the selection named as the step model's parameters file names them, and
-    ``instance_parameters``, the parameters file a single selected supermodule instance is
-    generated with (the model's values for it), else None.'''
+    parameters for the selection named as the step model's parameters file names them, and
+    ``instance_values``, the values a single selected supermodule instance is generated with
+    (the target's entry for it), else None.'''
     model: object
     vessel: str
     rows: list
-    instance_parameters: dict = None
+    instance_values: dict = None
 
 
 def _parts(name):
@@ -94,10 +94,14 @@ def resolve_selection(step, target, components, supermodules):
             raise WorkflowError(f'step "{step.id}" selects "{name}", which is not an instance '
                                 f'of the target {target.model.label()} (its records: '
                                 f'{sorted(by_name)}).')
-    host_rows = _host_rows(target.model.parameters)
+    doc = parameters_file.read_parameters_file(target.model.parameters)
+    try:
+        check_model_instances(target.records, supermodules, target.model.module_array,
+                              target.model.parameters)
+    except ValueError as exc:
+        raise WorkflowError(f'step "{step.id}": {exc}') from exc
     if len(names) == 1:
-        return _single(step, _parts(names[0]), by_name, host_rows, components, supermodules,
-                       target.model.module_array)
+        return _single(step, _parts(names[0]), by_name, doc, components, supermodules)
     nested = [n for n in names if len(_parts(n)) > 1]
     if nested:
         raise WorkflowError(f'step "{step.id}" selects {nested} inside a super instance along '
@@ -111,39 +115,27 @@ def resolve_selection(step, target, components, supermodules):
             for key in ('inp_instances', 'out_instances'):
                 record[key] = [i for i in record.get(key, []) if _parts(i)[0] in selected]
             records.append(record)
-    rows = [row for path, row in host_rows if not path or path[0] in selected]
+    rows = [row for path, row in _leaves(doc) if path[0] == parameters_file.GLOBAL
+            or path[0] in selected]
     model = SelectedArray(target.model.module_array, target.model.parameters, names=tuple(names),
                           records=records)
     return ResolvedSelection(model=model, vessel=None, rows=rows)
 
 
-def _single(step, parts, by_name, host_rows, components, supermodules, array_path):
+def _single(step, parts, by_name, doc, components, supermodules):
     record = by_name[parts[0]]
     where = f'step "{step.id}" (selects "{"/".join(parts)}")'
     entry = _entry(record, components, supermodules, where)
-    # the model's values for a super instance: the parameters file of its record, by instance,
-    # each parameter a path below it
-    instances = None
-    if (record['module_type'], record['module_subtype']) in supermodules:
-        try:
-            instances, _ = load_instance_parameters(array_path, record, entry, where)
-        except ValueError as exc:
-            raise WorkflowError(str(exc)) from exc
-    # the module at each level of the path and the parameterisation it runs as
-    levels = [(entry, record.get(PARAMETERISATION_KEY))]
+    # the module at the path: the record's parameterisation, or a submodule's version's default
+    parameterisation = record.get(PARAMETERISATION_KEY)
     for depth, name in enumerate(parts[1:], start=1):
         subs = {s['name']: s for s in entry.get('submodules', [])}
         if name not in subs:
             raise WorkflowError(
                 f'{where}: "{"/".join(parts[:depth])}" has no submodule "{name}" (it has '
                 f'{sorted(subs) or "none"}).')
-        # where its values started: the model's file records it for the record's own
-        # submodules, the version's file for those nested deeper
-        recorded = instances if depth == 1 else entry.get('instance_parameters')
-        started = ((recorded or {}).get(name) or {}).get('parameterisation', 'default')
         entry = _entry(subs[name], components, supermodules, where)
-        levels.append((entry, None if started == 'default' else started))
-    entry, parameterisation = levels[-1]
+        parameterisation = None
     try:
         chosen, _ = parameterisation_rows(entry, parameterisation, where)
     except ValueError as exc:
@@ -154,48 +146,35 @@ def _single(step, parts, by_name, host_rows, components, supermodules, array_pat
             f'to calibrate (no "parameterisation" and no default_parameterisation file).')
     model = LibraryModule(entry['module_type'], entry['module_subtype'], chosen)
 
-    # lowest precedence first: the model's parameters file of the super instance, then the host
-    rows, below = {}, parts[1:]
-    for instance, values in (instances or {}).items():
-        for key, parameter in values['parameters'].items():
-            path = (instance,) + tuple(key.split('/')[:-1])
-            if path[:len(below)] == below:
-                _put(rows, path[len(below):], key.split('/')[-1], {
-                    'units': parameter['units'], 'value': _value_text(parameter['value']),
-                    'data_reference': parameter.get('data_reference', '')})
-    for path, row in host_rows:
-        if tuple(path[:len(parts)]) == parts:
-            _put(rows, path[len(parts):], split_path_name(row['variable_name'])[1], row)
+    # the target's values under the selected instance, named for the step model
+    node = doc
+    for name in parts:
+        node = node.get(name) if isinstance(node, dict) else None
+        if node is None or parameters_file.is_leaf(node):
+            node = {}
+            break
+    rows = {}
+    for path, row in _leaves(node):
+        _put(rows, path[:-1], path[-1], row)
+    super_instance = (entry['module_type'], entry['module_subtype']) in supermodules
     return ResolvedSelection(model=model, vessel=flat_name(parts), rows=list(rows.values()),
-                             instance_parameters=_selected_instance_parameters(
-                                 entry, instances, below, supermodules))
+                             instance_values=copy.deepcopy(node) if super_instance else None)
 
 
-def _value_text(value):
-    return repr(value) if isinstance(value, float) else str(value)
-
-
-def _selected_instance_parameters(entry, instances, below, supermodules):
-    '''The parameters file a selected supermodule instance (``entry``, at ``below`` in its record's
-    ``instances``, the model's file; the record itself when ``below`` is empty) is generated
-    with: the model's values for it, each instance's "parameterisation" as recorded there (or
-    in its version's file). None when it is not a supermodule.'''
-    if (entry['module_type'], entry['module_subtype']) not in supermodules or instances is None:
-        return None
-    if not below:
-        return {'schema_version': 1, 'instances': copy.deepcopy(instances)}
-    template = entry.get('instance_parameters') or {}
-    out = {s['name']: {'parameterisation': (template.get(s['name']) or {}).get(
-               'parameterisation', 'default'), 'parameters': {}}
-           for s in entry['submodules']}
-    for instance, values in instances.items():
-        for key, parameter in values['parameters'].items():
-            path = (instance,) + tuple(key.split('/')[:-1])
-            if path[:len(below)] == below and len(path) > len(below):
-                rest = path[len(below):] + (key.split('/')[-1],)
-                if rest[0] in out:
-                    out[rest[0]]['parameters']['/'.join(rest[1:])] = copy.deepcopy(parameter)
-    return {'schema_version': 1, 'instances': out}
+def _leaves(node, path=()):
+    '''``[(path, row)]`` of every parameter below ``node`` (a parameters document or one of its
+    instances), the row named as the target's parameters file names it.'''
+    out = []
+    for key, value in node.items():
+        if key == parameters_file.SCHEMA_VERSION_KEY:
+            continue
+        if parameters_file.is_leaf(value):
+            name = '/'.join(path + (key,))
+            out.append((path + (key,), parameters_file.leaf_row(
+                key if path == (parameters_file.GLOBAL,) else name, value)))
+        else:
+            out += _leaves(value, path + (key,))
+    return out
 
 
 def _put(rows, sub_path, variable, row):
@@ -213,22 +192,6 @@ def _entry(record, components, supermodules, where):
         raise WorkflowError(f'{where}: no module {key[0]} version {key[1]} in the module '
                             f'library.')
     return entry
-
-
-def _host_rows(path):
-    '''``[(vessel path, row)]`` of a host parameters file; a global's path is ().'''
-    from libcuflynx.calibration_workflow.generate import read_parameter_rows
-    out = []
-    for row in read_parameter_rows(path):
-        name = (row.get('variable_name') or '').strip()
-        if not name:
-            continue
-        if is_path_name(name):
-            vessel_path, _ = split_path_name(name, f'{path}: ')
-            out.append((tuple(vessel_path), row))
-        else:
-            out.append(((), row))
-    return out
 
 
 # --------------------------------------------------------------------------------------------
