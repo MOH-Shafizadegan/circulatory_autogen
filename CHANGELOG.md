@@ -151,10 +151,13 @@ model's module configs and module array before its parameter names.
   `<prefix>_module_array.*`). A heart with one output no longer gets `par` and `pvn` added, by
   the generator or the converter: a heart is a module like any other, and the array lists every
   module. A model that relied on them adds the two rows the generator used to add,
-  `par,arterial_simple,vp,<heart>,pvn` and `pvn,arterial_simple,vp,par,<heart>`, with `par` last
-  in the heart's outputs and `pvn` last in its inputs, and their parameters. Without them the
-  heart's pulmonary ports are unconnected, so `heart/u_par` and `heart/v_pvn` are boundary
-  conditions that need values.
+  `par,arterial_simple,vp,<heart>,pvn` and `pvn,arterial_simple,vp,par,<heart>`, and their
+  parameters. A heart's vessel inputs fill its ports in order, `v_ivc`, `v_svc`, then `v_pvn`,
+  and its vessel outputs `v_aov` (aorta) then `v_puv` (`par`): list the inferior vena cava, the
+  superior vena cava, then `pvn` in its inputs, and `par` after the aorta in its outputs. A
+  heart with only one vena cava lists a `zero_flow` instance first in its inputs, as the
+  `3compartment` arrays do. Without the two rows the heart's pulmonary ports are unconnected,
+  so `heart/u_par` and `heart/v_pvn` are boundary conditions that need values.
 - Generation lists the missing parameters, and names each boundary condition that no connected
   module supplies with its module, so an unconnected port is easy to find.
 - Parameter names (`cuflynx-upgrade parameter-names --module-array ARRAY` or
