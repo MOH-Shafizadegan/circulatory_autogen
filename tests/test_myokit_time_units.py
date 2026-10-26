@@ -60,6 +60,66 @@ def test_derivative_wrt_ms_time_is_scaled_to_model_seconds(tmp_path):
     np.testing.assert_allclose(y, t, rtol=1e-6)                # the seconds module unchanged
 
 
+COUPLED_CELLML = """\
+<?xml version='1.0' encoding='UTF-8'?>
+<model name="coupled_{time_units}" xmlns="http://www.cellml.org/cellml/1.1#" xmlns:cellml="http://www.cellml.org/cellml/1.1#">
+  <units name="minute"><unit multiplier="60" units="second"/></units>
+  <units name="per_second"><unit units="second" exponent="-1"/></units>
+  <units name="per_minute"><unit units="minute" exponent="-1"/></units>
+  <component name="environment">
+    <variable name="time" units="second" public_interface="out"/>
+  </component>
+  <component name="a">
+    <variable name="t" units="second" public_interface="in"/>
+    <variable name="y" units="dimensionless" public_interface="in"/>
+    <variable name="x" units="dimensionless" initial_value="1" public_interface="out"/>
+    <math xmlns="http://www.w3.org/1998/Math/MathML">
+      <apply><eq/><apply><diff/><bvar><ci>t</ci></bvar><ci>x</ci></apply>
+        <apply><times/><apply><minus/><cn cellml:units="per_second">0.1</cn></apply>
+          <apply><minus/><ci>x</ci><ci>y</ci></apply></apply></apply>
+    </math>
+  </component>
+  <component name="b">
+    <variable name="t" units="{time_units}" public_interface="in"/>
+    <variable name="x" units="dimensionless" public_interface="in"/>
+    <variable name="y" units="dimensionless" initial_value="0" public_interface="out"/>
+    <math xmlns="http://www.w3.org/1998/Math/MathML">
+      <apply><eq/><apply><diff/><bvar><ci>t</ci></bvar><ci>y</ci></apply>
+        <apply><plus/>
+          <apply><times/><cn cellml:units="per_{time_units}">{k}</cn>
+            <apply><minus/><ci>x</ci><ci>y</ci></apply></apply>
+          <apply><times/><cn cellml:units="per_{time_units}">{f}</cn>
+            <apply><sin/><apply><times/><cn cellml:units="per_{time_units}">{w}</cn><ci>t</ci></apply></apply></apply>
+        </apply></apply>
+    </math>
+  </component>
+  <connection><map_components component_1="environment" component_2="a"/><map_variables variable_1="time" variable_2="t"/></connection>
+  <connection><map_components component_1="environment" component_2="b"/><map_variables variable_1="time" variable_2="t"/></connection>
+  <connection><map_components component_1="a" component_2="b"/><map_variables variable_1="x" variable_2="x"/><map_variables variable_1="y" variable_2="y"/></connection>
+</model>
+"""
+
+
+def _run_coupled(tmp_path, time_units, k, f, w):
+    path = tmp_path / f'coupled_{time_units}.cellml'
+    path.write_text(COUPLED_CELLML.format(time_units=time_units, k=k, f=f, w=w))
+    helper = get_simulation_helper(model_path=str(path), solver='CVODE_myokit',
+                                   model_type='cellml', dt=1.0, sim_time=180.0, pre_time=0.0)
+    helper.run()
+    return [np.asarray(r).ravel() for r in helper.get_results([['a/x'], ['b/y']], flatten=True)]
+
+
+def test_minute_module_solves_like_the_same_module_in_seconds(tmp_path):
+    """Module b written in minutes (rates per minute, a forcing of period 1 min in its own
+    t) coupled to module a in seconds gives the same solution as b rewritten in seconds:
+    the scaled derivatives are the same ODEs, so the two agree to round-off."""
+    x_s, y_s = _run_coupled(tmp_path, 'second', k=3 / 60, f=6 / 60, w=2 * np.pi / 60)
+    x_min, y_min = _run_coupled(tmp_path, 'minute', k=3, f=6, w=2 * np.pi)
+    assert np.ptp(y_s) > 0.5   # the forcing and coupling both act over the run
+    np.testing.assert_allclose(x_min, x_s, rtol=1e-9, atol=1e-12)
+    np.testing.assert_allclose(y_min, y_s, rtol=1e-9, atol=1e-12)
+
+
 MS_DECAY_CELLML = """\
 <?xml version='1.0' encoding='UTF-8'?>
 <model name="modules" xmlns="http://www.cellml.org/cellml/1.1#" xmlns:cellml="http://www.cellml.org/cellml/1.1#">
