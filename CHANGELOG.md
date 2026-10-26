@@ -18,7 +18,8 @@ prefixed again. Generating again from it alone, with
 the same module array, gives the same model. A calibration workflow's calibrated parameters
 (`write_calibrated`, `write_calibrated_parameters_to`) are the target's parameters file completed
 with every other value its model uses, with the calibrated values set, so a result reproduces the
-run without the module library; `write_calibrated_parameters_to` still writes only its `path`. A
+run without the module library; `write_calibrated_parameters_to` builds on the run's own target
+used file (regenerating the target only when the run has none) and still writes only its `path`. A
 parameter's data_reference is no longer cut at 80 characters in the generated
 `<prefix>_parameters.csv`.
 

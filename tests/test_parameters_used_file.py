@@ -220,6 +220,26 @@ def test_write_calibrated_parameters_to_writes_a_complete_result_to_its_path_onl
     assert os.listdir(os.path.dirname(path)) == ['chain_parameters.json']
 
 
+
+@pytest.mark.integration
+def test_a_result_written_later_holds_the_values_the_run_used(chain, tmp_path):
+    """write_calibrated_parameters_to builds on the run's own target used file: a library
+    default changed after the run does not reach the result. With no target model in the run,
+    the target is generated again, against the library as it is then."""
+    out, path = str(tmp_path / 'run'), str(tmp_path / 'send' / 'chain_parameters.json')
+    run_calibration_workflow(chain['chain_array'], output_dir=out)
+    default = os.path.join(chain['modules'], 'lin_c', 'versions', 'v1', 'parameterisations',
+                           'default', 'default_parameters.json')
+    write_parameters(default, [dict(r, value='2.0') if r['variable_name'] == 'k' else r
+                               for r in read_parameters(default, parameters_file.MODULE)],
+                     parameters_file.MODULE)
+    write_calibrated_parameters_to(chain['chain_array'], out, path)
+    assert _assert_complete_result(path)['C/k']['value'] == '1.0'
+    shutil.rmtree(os.path.join(out, '_target'))
+    write_calibrated_parameters_to(chain['chain_array'], out, path)
+    assert {r['variable_name']: r['value'] for r in read_parameters(path)}['C/k'] == '2.0'
+
+
 @pytest.mark.integration
 def test_a_library_module_s_calibrated_result_has_only_a_library_s_keys(tmp_path):
     """A library target's result, in its parameterisation directory, holds every value its model

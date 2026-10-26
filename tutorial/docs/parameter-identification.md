@@ -1231,7 +1231,10 @@ the target's parameters file completed with every other value its model uses (it
 `<prefix>_parameters_used.json`), only the values the step calibrated change, a value
 inside a super instance under its path (`heart/lv/E`).
 `write_calibrated_parameters_to(source, output_dir, path)` writes the same file to `path`, and
-nothing else: neither the target's files nor the supermodule version's template change.
+nothing else: neither the target's files nor the supermodule version's template change. It builds
+on the run's own `_target/` used parameters file, so a library default changed after the run does
+not reach the result; only a run without a target model has the target generated again, against
+the library as it is then.
 
 ### Step kinds
 

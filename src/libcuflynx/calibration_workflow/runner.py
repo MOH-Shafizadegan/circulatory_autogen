@@ -775,7 +775,12 @@ def write_calibrated_parameters_to(source, output_dir, path, module_library_dirs
 
     Reads the run's ``workflow_result.json``, so a run made one step at a time (``only``,
     ``from_step``) can be written once every step has a result. WorkflowError when there is no
-    result, or a step has not run or is stale (its inputs changed since it ran).'''
+    result, or a step has not run or is stale (its inputs changed since it ran).
+
+    The values the target's parameters file does not set are those the run used: the
+    ``<prefix>_parameters_used.json`` of the target model it generated in ``output_dir``
+    (``_target/``), whatever the module library holds now. Only when the run has none is the
+    target generated again, against the library as it is now.'''
     workflow = source if hasattr(source, 'steps') else load_workflow(source, module_library_dirs)
     result_path = os.path.join(output_dir, WORKFLOW_RESULT)
     if not os.path.isfile(result_path):
@@ -787,10 +792,23 @@ def write_calibrated_parameters_to(source, output_dir, path, module_library_dirs
         raise WorkflowError(f'workflow "{workflow.name}": steps {waiting} have no current result '
                             f'in {output_dir} (not run, or their inputs changed since); run '
                             f'them before writing the calibrated parameters.')
-    merged = _read_json(result_path)['merged_parameters']
+    result = _read_json(result_path)
     resolved = resolve_workflow(workflow)
-    return write_calibrated_parameters(resolved.target, merged, workflow.name, path=path,
-                                       library_inputs=resolved.library_inputs)
+    return write_calibrated_parameters(resolved.target, result['merged_parameters'],
+                                       workflow.name, path=path,
+                                       library_inputs=resolved.library_inputs,
+                                       used_path=run_target_used_parameters(output_dir, result))
+
+
+def run_target_used_parameters(output_dir, workflow_result=None):
+    '''The ``<prefix>_parameters_used.json`` of the target model the run in ``output_dir``
+    generated (``workflow_result['target_model']``, else its place under ``_target/``); None
+    when the run has none.'''
+    from libcuflynx.utilities.parameters_file import used_parameters_file_name
+    candidates = [((workflow_result or {}).get('target_model') or {}).get('used_parameters_path'),
+                  os.path.join(output_dir, TARGET_DIR, 'model', 'generated_models', TARGET_PREFIX,
+                               used_parameters_file_name(TARGET_PREFIX))]
+    return next((p for p in candidates if p and os.path.isfile(p)), None)
 
 
 def target_used_parameters(target, library_inputs=None, used_path=None):
@@ -798,8 +816,8 @@ def target_used_parameters(target, library_inputs=None, used_path=None):
     (``<prefix>_parameters_used.json``) at ``used_path``, or, without one, of the target
     generated as it stands in a temporary directory. A module array's is a model's document; a
     library module's is rooted at the module, as its parameterisations are (its instance's
-    values and the model's globals). WorkflowError when the target alone leaves a parameter
-    without a value.'''
+    values and the model's globals). WorkflowError when, generated again, the target alone
+    leaves a parameter without a value.'''
     from libcuflynx.utilities import parameters_file as pf
     if used_path is None:
         with tempfile.TemporaryDirectory() as work_dir:
