@@ -61,6 +61,51 @@ def test_derivative_wrt_ms_time_is_scaled_to_model_seconds(tmp_path):
     np.testing.assert_allclose(y, t, rtol=1e-6)                # the seconds module unchanged
 
 
+MS_DERIVATIVE_CELLML2 = """\
+<?xml version='1.0' encoding='UTF-8'?>
+<model name="ms_derivative" xmlns="http://www.cellml.org/cellml/2.0#">
+  <units name="ms"><unit prefix="milli" units="second"/></units>
+  <units name="per_ms"><unit prefix="milli" units="second" exponent="-1"/></units>
+  <component name="environment">
+    <variable name="time" units="second" interface="public"/>
+  </component>
+  <component name="decay">
+    <variable name="t_ms" units="ms" interface="public"/>
+    <variable name="k" units="per_ms" initial_value="0.001"/>
+    <variable name="x" units="dimensionless" initial_value="1"/>
+    <math xmlns="http://www.w3.org/1998/Math/MathML">
+      <apply><eq/><apply><diff/><bvar><ci>t_ms</ci></bvar><ci>x</ci></apply>
+        <apply><times/><apply><minus/><ci>k</ci></apply><ci>x</ci></apply></apply>
+    </math>
+  </component>
+  <connection component_1="environment" component_2="decay">
+    <map_variables variable_1="time" variable_2="t_ms"/>
+  </connection>
+</model>
+"""
+
+
+def test_myokit_import_does_not_yet_scale_derivatives_for_bvar_time_units(tmp_path):
+    """Guard for CA's correction: Myokit's own CellML import leaves dx/dt_ms per second
+    unscaled (-k*x = -0.001 at x=1, where the CellML means -1 per second).
+    scale_derivatives_to_free_time in myokit_helper.py supplies the factor of 1000."""
+    from libcuflynx.solver_wrappers.myokit_helper import myokit
+    import myokit.formats
+
+    path = tmp_path / 'ms_derivative.cellml'
+    path.write_text(MS_DERIVATIVE_CELLML2)
+    model = myokit.formats.importer('cellml').model(str(path))
+    dot_x = model.get('decay.x').rhs().eval()
+    if dot_x == pytest.approx(-1.0):
+        pytest.fail(f'Myokit {myokit.__version__} now scales derivatives for bvar time units;'
+                    ' remove CA\'s correction in myokit_helper.py'
+                    ' (scale_derivatives_to_free_time, #604/#605) or it will double-scale.')
+    assert dot_x == pytest.approx(-1e-3), (
+        f'Myokit {myokit.__version__} imports dx/dt_ms as {dot_x} per second (expected the'
+        ' unscaled -0.001 that scale_derivatives_to_free_time corrects); check the'
+        ' correction in myokit_helper.py still applies.')
+
+
 COUPLED_CELLML = """\
 <?xml version='1.0' encoding='UTF-8'?>
 <model name="coupled_{time_units}" xmlns="http://www.cellml.org/cellml/1.1#" xmlns:cellml="http://www.cellml.org/cellml/1.1#">
