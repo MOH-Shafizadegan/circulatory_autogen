@@ -208,3 +208,33 @@ def test_conflicting_units_raise(tmp_path):
 def test_missing_library_dir_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
         ModuleSources({'external_modules_dir': None, 'module_library_dirs': [str(tmp_path / 'nope')]})
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize('use_builtin_modules', [True, False])
+def test_user_units_in_external_modules_dir(tmp_path, use_builtin_modules):
+    """A ``user_units.cellml`` in a flat external_modules_dir supplies the units of the
+    modules next to it, with or without the built-in modules (issue #603)."""
+    library_dir = str(tmp_path / 'library')
+    module_dir = _write_module(library_dir, 'decay', 'decay', 'decay_type')
+    external_dir = tmp_path / 'external_modules'
+    external_dir.mkdir()
+    for name in ('decay_modules.cellml', 'decay_modules_config.json'):
+        os.replace(os.path.join(module_dir, name), external_dir / name)
+    os.replace(os.path.join(module_dir, 'decay_units.cellml'), external_dir / 'user_units.cellml')
+    _write_resources(str(tmp_path / 'resources'), 'ext_decay', 'decay')
+
+    config = _config(tmp_path, 'ext_decay', None, use_builtin_modules)
+    del config['module_library_dirs']
+    config['external_modules_dir'] = str(external_dir)
+    assert generate_with_new_architecture(False, config)
+
+    generated_dir = tmp_path / 'generated_models' / 'ext_decay'
+    assert 'lib_test_per_second' in (generated_dir / 'ext_decay_units.cellml').read_text()
+    helper = get_simulation_helper(model_path=str(generated_dir / 'ext_decay.cellml'),
+                                   solver='CVODE_myokit', model_type='cellml',
+                                   dt=0.01, sim_time=2.0, pre_time=0.0)
+    helper.run()
+    x = np.asarray(helper.get_results([['decay/x']], flatten=True)).ravel()
+    t = np.asarray(helper.get_time())
+    np.testing.assert_allclose(x, 2.0 * np.exp(-0.5 * t), rtol=1e-4)
