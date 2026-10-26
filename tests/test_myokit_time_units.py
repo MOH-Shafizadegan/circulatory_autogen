@@ -14,6 +14,7 @@ import pytest
 
 from libcuflynx.scripts.script_generate_with_new_architecture import generate_with_new_architecture
 from libcuflynx.solver_wrappers import get_simulation_helper
+from libcuflynx.utilities import parameters_file
 
 MIXED_TIME_CELLML = """\
 <?xml version='1.0' encoding='UTF-8'?>
@@ -188,15 +189,17 @@ def test_generated_model_with_ms_module_runs_at_model_time(tmp_path):
         name,module_subtype,module_type,inp_instances,out_instances
         decay,nn,ms_decay,,
         """))
-    (resources_dir / 'ms_decay_parameters.csv').write_text(textwrap.dedent("""\
-        variable_name,units,value,data_reference
-        decay/x_init,dimensionless,2.0,test
-        decay/k,per_ms_test,5e-4,test
-        """))
+    parameters = parameters_file.new_document()
+    parameters['decay'] = {
+        'x_init': {'value': 2.0, 'units': 'dimensionless', 'data_reference': 'test'},
+        'k': {'value': 5e-4, 'units': 'per_ms_test', 'data_reference': 'test'},
+    }
+    parameters_file.write_parameters_file(str(resources_dir / 'ms_decay_parameters.json'),
+                                          parameters)
 
     config = {
         'file_prefix': 'ms_decay',
-        'input_param_file': 'ms_decay_parameters.csv',
+        'input_param_file': 'ms_decay_parameters.json',
         'model_type': 'cellml',
         'solver': 'CVODE_myokit',
         'resources_dir': str(resources_dir),
