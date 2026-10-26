@@ -282,7 +282,7 @@ def test_a_single_calibration_flow_chart_has_its_stages():
 def _goodwin_methods(**kwargs):
     return calibration_methods_latex(
         GOODWIN, os.path.join(RESOURCES, 'Goodwin_obs_data.json'),
-        os.path.join(RESOURCES, 'Goodwin_params_for_id.csv'),
+        os.path.join(RESOURCES, 'Goodwin_params_for_id.json'),
         settings={'param_id_method': 'genetic_algorithm',
                   'optimiser_options': {'num_calls_to_function': 500,
                                         'cost_type': 'gaussian_MLE'},
@@ -394,7 +394,7 @@ def test_the_commands_write_the_mapping_and_the_methods(tmp_path):
     out = str(tmp_path / 'goodwin.tex')
     assert methods_latex_script.main([
         '--model', GOODWIN, '--obs-data', os.path.join(RESOURCES, 'Goodwin_obs_data.json'),
-        '--params-for-id', os.path.join(RESOURCES, 'Goodwin_params_for_id.csv'),
+        '--params-for-id', os.path.join(RESOURCES, 'Goodwin_params_for_id.json'),
         '--mapping', mapping, '-o', out, '--body-only']) == 0
     with open(out) as f:
         assert r'\section{Model}' in f.read()
@@ -433,17 +433,3 @@ def test_a_source_cites_the_keys_of_its_bibliography(tmp_path):
     assert cite('definitional; user_defined', entries) == r'definitional; user\_defined'
     out = write_bib({k: entries[k] for k in ['martin2023modelling']}, str(tmp_path / 'o.bib'))
     assert read_bib([out]).keys() == {'martin2023modelling'}
-
-
-def test_a_bare_list_obs_data_is_tabulated_like_a_document():
-    from libcuflynx.reporting.methods import observables_text
-
-    class Symbols:
-        def variable(self, name):
-            return name
-
-    item = {'data_item_name': 'mean of x', 'data_type': 'constant', 'unit': 'dimensionless',
-            'operands': ['main/x'], 'operation': 'mean', 'value': 1.0, 'std': 0.1}
-    as_list = observables_text([item], Symbols(), 'gaussian_MLE')
-    assert as_list == observables_text({'data_items': [item]}, Symbols(), 'gaussian_MLE')
-    assert 'mean of x' in as_list[0]

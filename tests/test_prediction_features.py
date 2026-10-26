@@ -49,8 +49,7 @@ def _parsed_prediction_info(items, sim_times=((2.0,),)):
            "prediction_items": items,
            "protocol_info": {"pre_times": [0.0] * len(sim_times),
                              "sim_times": [list(t) for t in sim_times]}}
-    parsed = ObsAndParamDataParser().parse_obs_data_json(obs_data_dict=doc, pre_time=0.0,
-                                                          sim_time=2.0)
+    parsed = ObsAndParamDataParser().parse_obs_data_json(obs_data_dict=doc)
     return parsed["prediction_info"], parsed["protocol_info"]
 
 
@@ -341,7 +340,7 @@ def _benchmark_obs(tmp_path, items=PREDICTION_ITEMS, resources_dir=None):
 
 def _parsed_benchmark(obs_path, scratch):
     parser = ObsAndParamDataParser()
-    parsed = parser.parse_obs_data_json(param_id_obs_path=obs_path, pre_time=0.0, sim_time=8.0)
+    parsed = parser.parse_obs_data_json(param_id_obs_path=obs_path)
     os.makedirs(scratch, exist_ok=True)
     obs_info = parser.process_obs_info(gt_df=parsed['gt_df'], output_dir=scratch, dt=0.05)
     protocol_info = parser.process_protocol_and_weights(
@@ -356,7 +355,7 @@ def _stub_trainer(resources_dir, tmp_path, include):
     obs_info, protocol_info, prediction_info = _parsed_benchmark(obs_path,
                                                                  str(tmp_path / 'scratch'))
     param_id_info = ObsAndParamDataParser().get_param_id_info(
-        os.path.join(resources_dir, 'Simple_ODE_Benchmark_params_for_id.csv'))
+        os.path.join(resources_dir, 'Simple_ODE_Benchmark_params_for_id.json'))
     pid = SimpleNamespace(sim_helper=SimpleNamespace(emulates_features=False),
                           obs_info=obs_info, protocol_info=protocol_info,
                           prediction_info=prediction_info, param_id_info=param_id_info,
@@ -454,12 +453,12 @@ def _emulator_config(base_user_inputs, resources_dir, tmp_path, obs_path):
     config = base_user_inputs.copy()
     config.update({
         'file_prefix': 'Simple_ODE_Benchmark',
-        'input_param_file': 'Simple_ODE_Benchmark_parameters.csv',
+        'input_param_file': 'Simple_ODE_Benchmark_parameters.json',
         'model_type': 'cellml',
         'resources_dir': resources_dir,
         'param_id_obs_path': obs_path,
         'params_for_id_path': os.path.join(resources_dir,
-                                           'Simple_ODE_Benchmark_params_for_id.csv'),
+                                           'Simple_ODE_Benchmark_params_for_id.json'),
         'param_id_output_dir': str(tmp_path / 'param_id_output'),
         'param_id_method': 'genetic_algorithm',
         'DEBUG': True,
@@ -597,7 +596,7 @@ def _benchmark_config(base_user_inputs, resources_dir, temp_output_dir,
     config = base_user_inputs.copy()
     config.update({
         'file_prefix': 'Simple_ODE_Benchmark',
-        'input_param_file': 'Simple_ODE_Benchmark_parameters.csv',
+        'input_param_file': 'Simple_ODE_Benchmark_parameters.json',
         'model_type': 'cellml',
         'solver': 'CVODE_myokit',
         'param_id_method': 'genetic_algorithm',
@@ -608,10 +607,10 @@ def _benchmark_config(base_user_inputs, resources_dir, temp_output_dir,
         'do_uq': False,
         'do_ia': False,
         'plot_predictions': False,
-        'solver_info': {'MaximumStep': 0.01, 'MaximumNumberOfSteps': 5000},
+        'solver_info': {'MaximumStep': 0.01},
         'param_id_obs_path': obs_path,
         'params_for_id_path': os.path.join(resources_dir,
-                                           'Simple_ODE_Benchmark_params_for_id.csv'),
+                                           'Simple_ODE_Benchmark_params_for_id.json'),
         'param_id_output_dir': temp_output_dir,
         'resources_dir': resources_dir,
         'generated_models_dir': temp_generated_models_dir,

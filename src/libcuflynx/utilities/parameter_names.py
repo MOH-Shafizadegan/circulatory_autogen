@@ -15,29 +15,26 @@ written                                 where                           model na
                                         expanded submodule
 ``global/R`` or ``R``                   any                             ``R``
 ``lv/E``                                a supermodule's parameter set   ``E_<instance>__lv``
-                                        or default_parameters           (record ``<instance>``)
+                                                                        (record ``<instance>``)
 ``soma/i_M/rho_M``                      same, a nested submodule        ``rho_M_<instance>__soma__i_M``
 ======================================  ==============================  =======================
 
 An expanded submodule's vessel joins the levels of its path with ``__`` (``LEVEL_SEPARATOR``):
 ``heart/lv`` is the vessel ``heart__lv``. A module-array or submodule name may not contain
 ``__``, nor begin or end with ``_`` (``check_instance_name``), so a flat name splits back into
-its path one way only. Names joined with a single ``_``, as before #582 (``heart_lv``,
-``E_heart_lv``), are still read with a FutureWarning when they name one vessel; when they could
-name more than one they are an error (``legacy_flat_name``).
+its path one way only.
 
 The model names cannot contain ``/`` (or ``.``), because CellML names cannot: only what people
-write uses it. The older forms are still read: ``C_aortic_root`` in a host file (unambiguous
-there, as it is looked up rather than split), and ``E_lv`` in a supermodule's rows, which has to
-be split -- longest submodule suffix first, the only reading available -- and is warned about.
-``cuflynx-migrate-parameter-names`` rewrites old names in either kind of file.
+write uses it. The older forms -- ``C_aortic_root`` in a host file, ``E_lv`` in a supermodule's
+rows, and nested levels joined with a single ``_`` (``E_heart_lv``) -- are refused, naming
+``cuflynx-upgrade parameter-names``, which rewrites them.
 '''
 
-import warnings
+from libcuflynx.upgrade import COMMAND as UPGRADE_COMMAND
 
 SEPARATOR = '/'
 GLOBAL = 'global'
-MIGRATE_COMMAND = 'cuflynx-migrate-parameter-names'
+MIGRATE_COMMAND = f'{UPGRADE_COMMAND} parameter-names'
 #: joins the levels of a nested instance's path in its flat (vessel) name: heart/lv -> heart__lv
 LEVEL_SEPARATOR = '__'
 
@@ -83,8 +80,15 @@ def flat_name(parts):
 
 def check_instance_name(name, where=''):
     '''ValueError unless ``name`` (a module-array or submodule record's) can be a level of a flat
-    name: no ``__``, and no ``_`` at either end.'''
+    name -- no ``__``, and no ``_`` at either end -- and a key of a parameters file: not one of
+    ``parameters_file.RESERVED_NAMES`` (``global``, ``value``, ``schema_version``).'''
+    from libcuflynx.utilities.parameters_file import RESERVED_NAMES
     name = str(name)
+    if name in RESERVED_NAMES:
+        raise ValueError(
+            f'{where}: name "{name}" cannot be used. A parameters file nests values by instance, '
+            f'and {", ".join(RESERVED_NAMES)} are reserved there ("global" holds the global '
+            f'constants, "value" a parameter\'s value).')
     if LEVEL_SEPARATOR in name or name.startswith('_') or name.endswith('_'):
         raise ValueError(
             f'{where}: name "{name}" cannot be used. A nested instance\'s vessel joins the levels '
@@ -93,47 +97,16 @@ def check_instance_name(name, where=''):
     return name
 
 
-def legacy_flat_name(name, known, where=''):
-    '''``name`` as one of the ``known`` vessel names, reading the single-``_`` joins used
-    before #582 (``heart_lv`` for ``heart__lv``).
-
-    A known name is returned as it is. A name that is one known name with each ``__`` written
-    ``_`` is returned as that name, with a FutureWarning; one that could be several is a
-    ValueError. Anything else is returned unchanged, for the caller to report.'''
-    known = set(known)
-    if name in known:
+def output_model_name(name):
+    '''The model's name ``<vessel>/<variable>`` of an output written with its vessel's path:
+    ``SN/soma/membrane/V`` -> ``SN__soma__membrane/V``. The path form is the one to write; a
+    name with one ``/`` (``aortic_root/u``, or the flat ``SN__soma__membrane/V``) is returned
+    unchanged.'''
+    name = str(name).strip()
+    path, _, variable = name.rpartition(SEPARATOR)
+    if SEPARATOR not in path:
         return name
-    matches = sorted(k for k in known
-                     if LEVEL_SEPARATOR in k and k.replace(LEVEL_SEPARATOR, '_') == name)
-    if len(matches) > 1:
-        raise ValueError(f'{where}: "{name}" could be any of {matches}; nested levels are '
-                         f'joined with "{LEVEL_SEPARATOR}" now, so write one of those.')
-    if matches:
-        warnings.warn(f'{where}: "{name}" joins nested levels with "_"; write "{matches[0]}" '
-                      f'(levels are joined with "{LEVEL_SEPARATOR}").', FutureWarning,
-                      stacklevel=2)
-        return matches[0]
-    return name
-
-
-def legacy_model_name(name, vessels, where=''):
-    '''A parameter's model name ``{var}_{vessel}`` whose vessel is written with the
-    single-``_`` joins used before #582 (``E_heart_lv``), as the current name
-    (``E_heart__lv``) with a FutureWarning. ``vessels`` are the model's vessel names; a name
-    that could be read for two of them is a ValueError, and one that is not in the older form
-    is returned unchanged.'''
-    matches = sorted({f'{name[:-len(old) - 1]}_{v}' for v in vessels if LEVEL_SEPARATOR in v
-                      for old in [v.replace(LEVEL_SEPARATOR, '_')]
-                      if name.endswith('_' + old) and len(name) > len(old) + 1})
-    if len(matches) > 1:
-        raise ValueError(f'{where}: parameter "{name}" could be any of {matches}; nested levels '
-                         f'are joined with "{LEVEL_SEPARATOR}" now, so write one of those.')
-    if matches:
-        warnings.warn(f'{where}: parameter "{name}" joins nested levels with "_"; write '
-                      f'"{matches[0]}" (levels are joined with "{LEVEL_SEPARATOR}").',
-                      FutureWarning, stacklevel=2)
-        return matches[0]
-    return name
+    return f'{flat_name(p.strip() for p in path.split(SEPARATOR))}{SEPARATOR}{variable.strip()}'
 
 
 def is_path_name(name):
@@ -166,83 +139,76 @@ def model_name(name, where=''):
 
 def supermodule_row_name(name, instance, submodule_paths, where=''):
     '''The model name of a row of a supermodule's parameterisation or default_parameters
-    file, for the supermodule record ``instance``. ``submodule_paths`` are the supermodule's submodules as
-    tuples of names (``('lv',)``, and ``('soma', 'i_M')`` for one nested in a submodule).
-    Returns ``(model name, old_form)``.
+    file, for the supermodule record ``instance``. ``submodule_paths`` are the supermodule's
+    submodules as tuples of names (``('lv',)``, and ``('soma', 'i_M')`` for one nested in a
+    submodule).
 
     ``lv/E`` -> ``E_<instance>__lv``; ``soma/i_M/rho_M`` -> ``rho_M_<instance>__soma__i_M``
     (the path must be one of ``submodule_paths``); ``global/R`` and ``R`` -> ``R``. A name in
-    the older ``E_lv`` form ends with ``_<submodule path>`` (levels joined with ``_`` or
-    ``__``): it is split at the longest such suffix and ``old_form`` is True.
+    the older ``E_lv`` form (ending ``_<submodule path>``) is a ValueError naming the converter.
     '''
     paths = [tuple(p) for p in submodule_paths]
     if is_path_name(name):
         path, variable = split_path_name(name, where)
         if not path:
-            return variable, False
+            return variable
         if tuple(path) not in paths:
             known = sorted('/'.join(p) for p in paths)
             raise ValueError(
                 f'{where}parameter "{name}": "{"/".join(path)}" is not a submodule of this '
                 f'supermodule (its submodules: {known}; a nested one is written '
                 f'<submodule>/<its submodule>).')
-        return f'{variable}_{flat_name((instance,) + tuple(path))}', False
-    joins = sorted(((joined, p) for p in paths
-                    for joined in {'_'.join(p), flat_name(p)}), key=lambda j: -len(j[0]))
-    for joined, path in joins:
-        suffix = '_' + joined
-        if name.endswith(suffix) and len(name) > len(suffix):
-            return f'{name[:-len(suffix)]}_{flat_name((instance,) + path)}', True
-    return name, False
+        return f'{variable}_{flat_name((instance,) + tuple(path))}'
+    for path in paths:
+        for joined in {'_'.join(path), flat_name(path)}:
+            if name.endswith('_' + joined) and len(name) > len(joined) + 1:
+                raise ValueError(
+                    f'{where}parameter "{name}" is written {{variable}}_{{submodule}}; libcuflynx '
+                    f'reads <submodule>/<variable> ({"/".join(path)}/{name[:-len(joined) - 1]}). '
+                    f'Convert the file once with: {MIGRATE_COMMAND} --supermodule-config '
+                    f'<its modules_config.json>')
+    return name
 
 
-def warn_old_supermodule_names(old_names, where):
-    '''One FutureWarning for a file whose rows use the older ``{var}_{submodule}`` form.'''
-    if not old_names:
-        return
-    example = old_names[0]
-    warnings.warn(
-        f'{where}: {len(old_names)} parameter name(s) are written {{variable}}_{{submodule}} '
-        f'(e.g. "{example}"), which has to be guessed apart where a variable or submodule name '
-        f'contains "_". Write <submodule>/<variable> instead (nested: '
-        f'<submodule>/<its submodule>/<variable>); {MIGRATE_COMMAND} --supermodule-config '
-        f'<config> rewrites the file.', FutureWarning, stacklevel=3)
-
-
-def host_model_names(names, vessels, where):
+def host_model_names(names, vessels, where, check_globals=True):
     '''The model names of a host parameters file's ``names``, checked against the model.
 
     ``vessels`` is ``{vessel name: {variable name: kind}}`` for the model's (expanded) module
     array, ``kind`` as in a module config's ``variables_and_units`` (``constant``,
     ``global_constant`` ...). A ``/`` name whose vessel is not in the model, whose variable its
     module does not have, or that addresses a global constant through a vessel would not be
-    used: all of them are reported in one ValueError. So are two rows naming one parameter
-    (``aortic_root/C`` and ``C_aortic_root``). A vessel written with the single-``_`` joins used
-    before #582 (``heart_lv/E``, ``E_heart_lv``) is read as the current one, with a
-    FutureWarning (``legacy_flat_name``, ``legacy_model_name``).
+    used, nor would a global's name (``R``, ``global/R``) that is no module's global constant
+    (checked unless ``check_globals`` is false): all of them are reported in one ValueError. One written ``{variable}_{vessel}``
+    (``C_aortic_root``), as before, is a ValueError naming the converter.
     '''
-    model_names, seen, unused = [], {}, []
+    model_names, seen, unused, old = [], {}, [], []
+    globals_ = {var for variables in vessels.values() for var, kind in variables.items()
+                if kind == 'global_constant'}
     for name in names:
         name = str(name)
         path = vessel = None
         if is_path_name(name):
             path, variable = split_path_name(name, where=f'{where}: ')
             if path:
-                vessel = legacy_flat_name(flat_name(path), vessels, where)
+                vessel = flat_name(path)
                 translated = f'{variable}_{vessel}'
             else:
                 translated = variable
-        elif any(name.endswith('_' + v) and name[:-len(v) - 1] in variables
-                 for v, variables in vessels.items()):
-            translated = name
         else:
-            translated = legacy_model_name(name, vessels, where)
+            translated = name
+            if any(name.endswith('_' + joined)
+                   and variables.get(name[:-len(joined) - 1]) not in (None, 'global_constant')
+                   for v, variables in vessels.items()
+                   for joined in {v, v.replace(LEVEL_SEPARATOR, '_')}):
+                old.append(name)
         if translated in seen and seen[translated] != name:
             raise ValueError(f'{where}: "{seen[translated]}" and "{name}" both set parameter '
                              f'{translated}; keep one.')
         seen.setdefault(translated, name)
         model_names.append(translated)
         if not path:
+            if check_globals and name not in old and translated not in globals_:
+                unused.append(f'{name} (no module in the model has a global constant "{translated}")')
             continue
         if vessel not in vessels:
             unused.append(f'{name} (no vessel "{vessel}" in the module array)')
@@ -251,6 +217,11 @@ def host_model_names(names, vessels, where):
         elif vessels[vessel][variable] == 'global_constant':
             unused.append(f'{name} ("{variable}" is a global constant: write global/{variable} '
                           f'or {variable})')
+    if old:
+        raise ValueError(f'{where}: {len(old)} parameter(s) are written {{variable}}_{{vessel}} '
+                         f'(e.g. "{old[0]}"); libcuflynx reads <vessel>/<variable>. Convert the '
+                         f'file once with: {MIGRATE_COMMAND} --module-array <its module array> '
+                         f'--module-library-dir <library>')
     if unused:
         raise ValueError(f'{where}: {len(unused)} parameter(s) name something the model does '
                          f'not have: ' + '; '.join(unused))

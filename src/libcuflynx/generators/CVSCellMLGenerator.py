@@ -16,7 +16,7 @@ from libcuflynx.utilities.package_resources import package_data_dir
 from libcuflynx.utilities.paths import default_resources_dir
 from libcuflynx.utilities.module_library import (ModuleSources, ModuleShadowWarning, collect_units,
                                                  CELLML_1_1_NS)
-from libcuflynx.utilities.config_schemas import is_heart_module_type
+from libcuflynx.generators.port_order import neighbour_port_index
 from libcuflynx.utilities.vessel_bc import is_vessel_module
 
 generators_dir = os.path.dirname(__file__)
@@ -81,9 +81,6 @@ class CVS0DCellMLGenerator(object):
         self.BC_set = {}
         self.all_units = []
         self.DEBUG = inp_data_dict['DEBUG'] 
-
-        # this is a temporary hack to include zero flow ivc if only one input to heart TODO make more robust
-        self.ivc_connection_done = 0
 
         # this is a list of converter components that are used to convert units
         self.unit_converter_components = []
@@ -239,7 +236,7 @@ class CVS0DCellMLGenerator(object):
         if python_error:
             print(f'Python error: {python_error}')
         print('Enter the values in '
-              f'{os.path.join(self.resources_dir, f"{self.file_prefix}_parameters_unfinished.csv")}')
+              f'{os.path.join(self.resources_dir, f"{self.file_prefix}_parameters_unfinished.json")}')
         return False
 
     def _validate_with_myokit(self, cellml_path):
@@ -462,24 +459,52 @@ class CVS0DCellMLGenerator(object):
                 f'{self.model.param_id_date}_identified'
 
     def __generate_parameters_csv(self):
-        # check if all the required parameters have been defined, if not we make an "unfinished"
-        # csv file which makes it easy for the user to include the required parameters
+        # The model's parameters, named as it names them, beside the generated model. When not
+        # all the required parameters have been defined, the model's parameters file is written
+        # instead as <prefix>_parameters_unfinished.json in the resources directory, with
+        # EMPTY_MUST_BE_FILLED where a value is missing, for the user to complete.
+        df = pd.DataFrame(self.model.parameters_array)
+        if not self.all_parameters_defined:
+            print(self.__missing_parameters_report(
+                df.loc[df["value"] == 'EMPTY_MUST_BE_FILLED', "variable_name"]))
+        df = df.drop(columns=["const_type"])
         if self.all_parameters_defined:
             file_to_create = os.path.join(self.output_dir, f'{self.file_prefix}_parameters.csv')
-        else:
-            file_to_create = os.path.join(self.resources_dir,
-                                          f'{self.file_prefix}_parameters_unfinished.csv')
-            print(f'\n WARNING \nRequired parameters are missing. \nCreating a file {file_to_create},\n'
-                  f'which has EMPTY_MUST_BE_FILLED tags where parameters\n'
-                  f'need to be included. The user should include these parameters then remove \n'
-                  f'the "_unfinished" ending of the file name, then rerun the model generation \n'
-                  f'with the new parameters file as input.\n')
-        df = pd.DataFrame(self.model.parameters_array)
-        df = df.drop(columns=["const_type"])
-        self._write_text_file_atomic(
-            file_to_create,
-            lambda wf: df.to_csv(wf, index=None, header=True),
-        )
+            self._write_text_file_atomic(
+                file_to_create,
+                lambda wf: df.to_csv(wf, index=None, header=True),
+            )
+            return
+        from libcuflynx.utilities.parameters_file import dump_parameters, rows_to_document
+        file_to_create = os.path.join(self.resources_dir,
+                                      f'{self.file_prefix}_parameters_unfinished.json')
+        print(f'\n WARNING \nRequired parameters are missing. \nCreating a file {file_to_create},\n'
+              f'which has EMPTY_MUST_BE_FILLED tags where parameters\n'
+              f'need to be included. The user should include these parameters then remove \n'
+              f'the "_unfinished" ending of the file name, then rerun the model generation \n'
+              f'with the new parameters file as input.\n')
+        names = getattr(self.model, 'parameter_file_names', {})
+        rows = [dict(row, variable_name=names.get(row['variable_name'], row['variable_name']))
+                for row in df.astype(str).to_dict('records')]
+        text = dump_parameters(rows_to_document(rows, duplicates=[]))
+        self._write_text_file_atomic(file_to_create, lambda wf: wf.write(text))
+
+    def __missing_parameters_report(self, missing):
+        """The ``missing`` parameter names, one per line. A boundary_condition variable that no
+        connected module supplies is named with its module: either a port of that module is not
+        connected in the module array, or the parameter needs a value."""
+        unset_bcs = getattr(self, '_unset_bcs', {})
+        lines = ['Missing parameters:']
+        for name in missing:
+            if name in unset_bcs:
+                module, variable = unset_bcs[name]
+                lines.append(f'  {module}/{variable}: a boundary condition of "{module}" that no '
+                             f'connected module supplies. If a port of "{module}" should be '
+                             f'connected, add the module it connects to in the module array; '
+                             f'otherwise give it a value.')
+            else:
+                lines.append(f'  {name}')
+        return '\n'.join(lines) + '\n'
 
     def __copy_solver_make_files(self):
         # Copy the solver build/run scripts (src/solver1d/Make_files) into the generated model
@@ -536,7 +561,7 @@ class CVS0DCellMLGenerator(object):
 
             # A set, built once: this is tested on every line of every module file, and with
             # pandas 3 a test against `.values` (a StringArray) costs ~2 s per generation.
-            used_component_types = set(self.model.vessels_df.component_type) | {'zero_flow'}
+            used_component_types = set(self.model.vessels_df.component_type)
             for II, module_file_path in enumerate(self.module_scripts):
                 with open(module_file_path, 'r') as rf:
                     # skip first lines that are either intro lines written above or comments.
@@ -602,23 +627,6 @@ class CVS0DCellMLGenerator(object):
                 continue
             self.__write_import(wf, vessel_tup)
 
-        # the heart is found by its module_type, so it can have any name (a heart inside a
-        # supermodule is <instance>_<submodule>)
-        hearts = [n for n, vt in zip(vessel_df["name"], vessel_df["module_type"]) if is_heart_module_type(vt)]
-        if len(hearts) == 1:
-            heart_inputs = vessel_df.loc[vessel_df["name"] == hearts[0]].inp_instances.values[0]
-            # add a zero mapping to heart ivc or svc flow input if only one input is specified
-            if "venous_ivc" not in heart_inputs or "venous_svc" not in heart_inputs:
-                wf.writelines([f'<import xlink:href="{self.file_prefix}_modules.cellml">\n',
-                               f'    <component component_ref="zero_flow" name="zero_flow_module"/>\n',
-                               '</import>\n'])
-            if "venous_ivc" not in heart_inputs and "venous_svc" not in heart_inputs:
-                print('either venous_ivc, or venous_svc, or both must be inputs to the heart, exiting')
-                exit()
-        elif len(hearts) > 1:
-            print('you have declared more that one heart module, exiting')
-            exit()
-
     def __write_module_mappings(self, wf, module_df):
         """This function maps between ports of the modules in a module dataframe."""
         self._multiport_sums = {}
@@ -627,6 +635,9 @@ class CVS0DCellMLGenerator(object):
         # one-to-one mapped variable pairs, and BCs computed by a sum, Multiply or junction
         self._plain_links = []
         self._bcs_supplied = set()
+        # boundary_condition variables no connected module supplies, so they are parameters:
+        # {model parameter name: (module, variable)}
+        self._unset_bcs = {}
         # set connected to false for all entrance and general ports TODO this might be a better way to check connected for exit ports too
         entrance_general_ports_connected = {}
         for module_row_idx in range(len(module_df)):
@@ -679,6 +690,9 @@ class CVS0DCellMLGenerator(object):
                     if not self.BC_set[module_df.iloc[module_row_idx]["name"]] \
                             [module_df.iloc[module_row_idx]["variables_and_units"][II][0]]:
                         module_df.iloc[module_row_idx]["variables_and_units"][II][3] = 'constant'
+                        self._unset_bcs[full_variable_name] = (
+                            module_df.iloc[module_row_idx]["name"],
+                            module_df.iloc[module_row_idx]["variables_and_units"][II][0])
                         # self.model.parameters_array[np.where(self.model.parameters_array["variable_name"] == 
                         #                                      full_variable_name)][0][2] = 'constant'
                     else:
@@ -804,6 +818,17 @@ class CVS0DCellMLGenerator(object):
                 for II in range(len(entrance_port_types)):
                     if entrance_port_types[II]["port_type"] == port_types[port_type_idx]["port_type"]:
                         entrance_port_type_idx = II
+                        # several entrance ports of this type: the module's inputs take them in
+                        # the order its inp_instances lists them (generators/port_order.py)
+                        ordered_idx = None
+                        if out_module in entrance_general_ports_connected:
+                            ordered_idx = self.__ordered_entrance_port(
+                                out_module_row, main_module, port_types[port_type_idx]["port_type"],
+                                module_df)
+                        if ordered_idx is not None and \
+                                not entrance_general_ports_connected[out_module][ordered_idx]:
+                            entrance_port_idx = ordered_idx
+                            break
                         for JJ in entrance_port_types[II]["entrance_port_idxs"]:
                             if out_module in entrance_general_ports_connected: #XXX Bea's addition
                                 if not entrance_general_ports_connected[out_module][JJ]:
@@ -849,25 +874,6 @@ class CVS0DCellMLGenerator(object):
                     #         if out_module_row["inp_instances"][II] == main_module:
                     #             entrance_port_idx = entrance_port_types[entrance_port_type_idx]["entrance_port_idxs"][II]
                     #             break
-
-                    # TODO this part is kind of hacky, but it works, there is definitely a better way to do the mapping with the
-                    #  heart module!
-                    if is_heart_module_type(out_module_row["module_type"]):
-                        if len(out_module_row["inp_instances"]) == 2 and self.ivc_connection_done == 0:
-                            # this is the case if there is only one vc and one pulmonary
-                            # We map the ivc to a zero flow mapping
-                            self.__write_mapping(wf, 'zero_flow_module', out_module + '_module', ['v_zero'], ['v_ivc'])
-                            self.ivc_connection_done = 1
-                            self.__set_bc_supplied(out_module, 'v_ivc')
-                            # TODO the above isnt robust
-
-                        for heart_inp_idx in range(3):
-                            # there are three vessel_port entrances to the heart, ivc, svc, and pulmonary
-                            # in the module_array file, they must be ordered ivc, svc, pulmonary
-                            if main_module == out_module_row["inp_instances"][heart_inp_idx]:
-                                # if the ivc connection was done artificially, then we need to skip it
-                                entrance_port_idx = heart_inp_idx + self.ivc_connection_done
-                                break
 
                     module_exit_general_ports = module_row["exit_ports"] + module_row["general_ports"]
                     out_module_entrance_general_ports = out_module_row["entrance_ports"] + out_module_row["general_ports"]
@@ -1143,6 +1149,22 @@ class CVS0DCellMLGenerator(object):
             self.__write_mapping(wf, comp1, comp2, vars_1, vars_2, check_unit=True)
 
         return entrance_general_ports_connected
+
+    @staticmethod
+    def __ordered_entrance_port(out_module_row, main_module, port_type, module_df):
+        '''The index of the entrance port of ``out_module_row`` that ``main_module`` connects to
+        through ``port_type``, when the module has several single entrance ports of that type:
+        the n-th input (in inp_instances) with a port of the type takes the n-th of them.
+        None otherwise.'''
+        def facing_port_types(name):
+            rows = module_df.loc[module_df["name"] == name]
+            if rows.empty:
+                return []
+            row = rows.iloc[0]
+            return [p["port_type"] for p in list(row["exit_ports"]) + list(row["general_ports"])]
+        return neighbour_port_index(out_module_row["entrance_ports"],
+                                    out_module_row["inp_instances"], main_module, port_type,
+                                    facing_port_types)
 
     @staticmethod
     def __is_per_variable_pair(main_port, out_port):

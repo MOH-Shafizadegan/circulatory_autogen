@@ -5,6 +5,184 @@ next release; add to that section as you land a change.
 
 ## Unreleased
 
+### Changed — a supermodule names its submodule versions; its instances are its own module array
+
+A supermodule version's config lists the module versions it is built from, `submodule_versions:
+[{"module_type", "module_subtype"}]`. Its instances and their connections are a module array of their
+own, `<module_type>_<module_subtype>_module_array.json` beside the config, whose records name no
+`parameterisation`. Its default parameterisation is the template of a new instance's values. An inline
+`submodules` list is refused; `cuflynx-upgrade module-config <file> --module-library-dir <library>`
+converts it: the records to the module array, and each instance's values (from the parameterisation it
+named, else its version's default, with the supermodule's default parameterisation's
+`<instance>/<variable>` rows over them) into the default parameterisation, nested by instance.
+
+### Changed — parameter values are nested JSON
+
+A model's parameter values are `<prefix>_parameters.json` beside its module array (schema
+`parameters.schema.json`), nested instance, sub-instance, variable:
+
+```json
+{"schema_version": 1,
+ "global": {"R": {"value": 8.314, "units": "J_per_mol_K", "data_reference": "..."}},
+ "aortic_root": {"C": {"value": 1.2e-8, "units": "m3_per_Pa", "data_reference": "Liang2009"}},
+ "heart": {"lv": {"E_A": {"value": 366575000, "units": "J_per_m6", "data_reference": "..."}}}}
+```
+
+- A parameter is an object with `value` (a number, or text such as `EMPTY_MUST_BE_FILLED`; an empty
+  one is read as `EMPTY_MUST_BE_FILLED`), `units`, `data_reference` and any other string key (a
+  library's `sourced`). A number keeps the text it is written with. Every other object is an instance
+  or sub-instance. `global` holds the global constants. `global`, `value` and `schema_version` are
+  reserved: no module-array record, submodule or variable may have those names.
+- A path is the name users write: `aortic_root/C`, `heart/lv/E_A`, `global/R` or `R`.
+- A parameterisation, `parameterisations/<name>/<name>_parameters.json`, has the same form rooted at
+  its module: a component's own variables at the top (`{"C": {...}}`) and its global constants under
+  `global`; a supermodule's sub-instances (`{"lv": {"E_A": {...}}}`) and its globals.
+- A supermodule instance's values are in the model's file under its name. `cuflynx-upgrade
+  supermodule-instances <module array> --module-library-dir <library> [--instance N] [--replace]
+  [--parameters FILE]` copies them once from the version's template (its default parameterisation,
+  or the one the record names in its place, which must set every instance value the default sets,
+  and nested supermodules' templates under it); an instance that
+  has an entry keeps it. Generation refuses a supermodule instance the file has no entry for, naming that command.
+  Of a supermodule's parameterisation it reads only the globals; a value the model's file lacks comes
+  from the submodule version's `default_parameterisation`.
+- Calibration workflows write `<name>_calibrated_parameters.json` in the same form: a module array
+  target's full file with the calibrated values set, or a parameterisation's.
+- A parameters CSV is refused. `cuflynx-upgrade parameters <file | *_modules_config.json | directory>`
+  converts it to the `.json` beside it: a model's file (and the per-instance
+  `<prefix>_supermodule_parameters/` files beside its module array, moved in under each instance), a
+  parameterisation (globals by its config), a config's parameterisations (and a supermodule version's
+  `<module_type>_<module_subtype>_parameters.json`, folded into its default parameterisation), or every
+  one below a directory. Name the `.json` file in `input_param_file`.
+- Generation writes the generated model's parameters as `<prefix>_parameters.csv` beside the
+  generated model, named as the model names them. A model with missing values gets
+  `<prefix>_parameters_unfinished.json` in its resources directory.
+
+### Changed — params_for_id is JSON
+
+A calibration's parameters are `<prefix>_params_for_id.json` (schema `params_for_id.schema.json`), a
+flat list of entries, not nested by instance: an entry groups parameters or modifies them, so it is
+not one parameter.
+
+```json
+{"version": 1,
+ "params": [
+  {"targets": ["aortic_root/C"], "min": 1e-9, "max": 5e-8, "name_for_plotting": "C_{ao}"},
+  {"targets": ["heart/lv/E_A", "heart/rv/E_A"], "min": 1e8, "max": 5e8},
+  {"name": "R_scale", "modifies": ["venous_svc/R", "venous_ivc/R"], "modifier": "scale", "min": 0.5, "max": 2}]}
+```
+
+- Parameters are named as users write them: `<vessel>/<variable>`, a nested vessel by its path
+  (`heart/lv/E_A`, read as the model's `heart__lv`) and a global as `global/<variable>`.
+- A params_for_id CSV is refused (`params_for_id_file`, the default `<prefix>_params_for_id.*`, a
+  workflow step's `params_for_id`). `cuflynx-upgrade params-for-id <CSV | directory>` writes the
+  `.json` beside each CSV and removes it: one entry per row, `vessel_name "a b"` with `param_name "C"`
+  as `"targets": ["a/C", "b/C"]`, the `prior_*` columns under `prior_params`, numbers as written.
+  `ObsAndParamDataParser.params_for_id_csv_to_json` returns the same document.
+- Calibration workflows write a step's params_for_id with its priors' parameters, and a reduction's,
+  as `<step>_params_for_id.json`; a prior over parameters of different names is no longer refused.
+
+### Added — trace inputs and time courses in `prediction_plots`
+
+- An input reference (`x`, `series`) takes an optional `reduce` that makes a trace one number:
+  `"final"`, `"mean"`, `"max"`, `"min"` or `{"at": <seconds from the start of the
+  sub-experiment>}`. A trace without `reduce` is no longer refused when the obs_data is read:
+  that experiment's point is left out with a `PredictionPlotWarning`.
+- Two kinds drawn from a simulation: `input_and_output` (per experiment, a `params_to_change`
+  input and a model output over time on two y-axes, with sub-experiment boundaries and any
+  series data for the output) and `output_vs_input` (the output against the input at the same
+  times, one line per experiment). Both take `{"name", "kind", "input": {"params_to_change"},
+  "output", "experiments"?}`; the schema enforces each kind's keys.
+
+### Changed — the heart is connected like any other module
+
+Nothing in generation depends on a module being a heart or on an instance's name:
+- A module's inputs take its entrance ports of one `port_type` in the order its
+  `inp_instances` lists them (instances with no port of that type skipped), as its outputs
+  already took its exit ports in `out_instances` order. The rows' order no longer decides it:
+  a junction with two entrance ports of a type took its inputs in the order of their rows.
+  A model whose junction inputs were listed against their rows' order lists them in the order
+  it was generated with (CA's `physiological`, `control_phys*`, `cerebral*`, `elic`,
+  `FinalModel` arrays are reordered; their models are unchanged).
+- No zero-flow vena cava is added for a heart with one vena cava. List a `zero_flow`
+  instance (`module_type` `zero_flow`, `module_subtype` `nn`, a new built-in module with a
+  `vessel_port` exit) first among the heart's vessel inputs, as `3compartment` now does.
+  Otherwise its two vessel inputs take the `v_ivc` and `v_svc` ports, and `heart/v_pvn` is a
+  boundary condition to fill, named in the missing-parameters report. The `zero_flow` component
+  is in a model's `_modules.cellml` only when an instance uses it.
+- A model may have more than one heart.
+- A 1D vessel is coupled to the port of its 0D neighbour that joins them, found as above,
+  in the cpp generator and in `convert_0d_to_1d` (which takes the module sources as
+  `module_sources_inputs`); a heart's 1D outflow vessel no longer needs `aorta` in its name,
+  nor its venous inputs `ivc`, `svc` or `pvn`.
+- The CasADi solver diagnostics report, for each stiff mode, the inertance `I_<module>` of the
+  module of its dominant state and the inertance that would make it steppable, in place of the
+  `par` and `systemic_T` estimates.
+
+### Changed — `solver: CVODE` for a cellml model is `CVODE_myokit`
+
+`solver: CVODE` (or `solver_info.solver: CVODE`) with `model_type: cellml` is read as
+`CVODE_myokit` when user_inputs are read, with one printed line saying so; a `solver_info` error
+then names the shorthand. The dated `user_inputs_<yymmdd>.yaml` keeps `CVODE`, as written; a
+pipeline bundle's config records `CVODE_myokit`, since its `run_pipeline.py` does not go through
+the reader. `CVODE` for a cpp model is unchanged. The shorthand is listed in
+`SOLVER_SCHEMA['solver_aliases_by_model_type']`.
+
+### Changed — a nested vessel is written by its path
+
+An output or obs_data operand names a nested vessel by its path, as a host parameter already
+does: `SN/soma/membrane/V` (everything before the last `/` is the vessel's path) for the
+model's `SN__soma__membrane/V`. The flat `__` form is still accepted. A host parameter without
+a vessel (`R`, `global/R`) that no module of the model declares as a global constant is
+refused, as `<vessel>/<variable>` names the model doesn't have already are; models with 1D
+vessels are not checked.
+
+### Removed — older module config, module array, parameter name and obs_data forms
+
+libcuflynx reads only the current forms of its input files. A file in an older form is refused
+with an error naming the `cuflynx-upgrade` command that converts it once, in place. Convert a
+model's module configs and module array before its parameter names.
+- Module configs (`cuflynx-upgrade module-config FILE`): the keys `vessel_type`, `BC_type`,
+  `module_file` and `module_type` (the component) -> `module_type`, `module_subtype`,
+  `component_file`, `component_type`; `default_instance` -> `default_parameterisation`; a
+  supermodule's `default_parameters` CSV -> its parameterisation `parameterisations/default/`;
+  `multi_port: "False"` (leave it out, or `null`/`false`).
+- Module arrays (`cuflynx-upgrade module-array FILE`): the keys and columns `vessel_type`,
+  `BC_type`, `inp_vessels`, `out_vessels`; `<prefix>_vessel_array.*` file names (renamed
+  `<prefix>_module_array.*`). A heart with one output no longer gets `par` and `pvn` added, by
+  the generator or the converter: a heart is a module like any other, and the array lists every
+  module. A model that relied on them adds the two rows the generator used to add,
+  `par,arterial_simple,vp,<heart>,pvn` and `pvn,arterial_simple,vp,par,<heart>`, and their
+  parameters. A heart's vessel inputs fill its ports in order, `v_ivc`, `v_svc`, then `v_pvn`,
+  and its vessel outputs `v_aov` (aorta) then `v_puv` (`par`): list the inferior vena cava, the
+  superior vena cava, then `pvn` in its inputs, and `par` after the aorta in its outputs. A
+  heart with only one vena cava lists a `zero_flow` instance first in its inputs, as the
+  `3compartment` arrays do. Without the two rows the heart's pulmonary ports are unconnected,
+  so `heart/u_par` and `heart/v_pvn` are boundary conditions that need values.
+- Generation lists the missing parameters, and names each boundary condition that no connected
+  module supplies with its module, so an unconnected port is easy to find.
+- Parameter names (`cuflynx-upgrade parameter-names --module-array ARRAY` or
+  `--supermodule-config CONFIG`, with `--module-library-dir` for library modules): a host
+  parameters file names a module's parameter `<vessel>/<variable>` (`aortic_root/C`), and
+  `C_aortic_root` is refused; a name without `/` is a global. A supermodule parameterisation row
+  is `<submodule>/<variable>`; `{var}_{sub}` is refused. Nested levels joined with a single `_`
+  are refused (`__` is the join).
+- Parameterisations: a version with an `instances/` directory and no `parameterisations/` is
+  refused; rename the directory.
+- obs_data (`cuflynx-upgrade obs-data FILE --user-inputs user_inputs.yaml`, or `--pre-time T
+  --sim-time T`, which win over the yaml's values): an obs_data must
+  have a `protocol_info` with `pre_times` and `sim_times`. A bare list of data items, or an
+  object without `protocol_info` timed by user_inputs.yaml's `pre_time`/`sim_time`, is refused.
+  `parse_obs_data_json` no longer takes `pre_time` / `sim_time`.
+- `python -m libcuflynx.utilities.config_schemas to-json` no longer takes `--style`, and
+  `module_array_to_json` no longer takes `style`: they write the current keys.
+
+### Added — `cuflynx-upgrade`
+
+`cuflynx-upgrade module-config | module-array | obs-data | parameter-names` converts files written
+for an earlier libcuflynx, in place, and prints what it changed; `--dry-run` only prints. A file
+already in the current form is left as it is. It replaces `cuflynx-migrate-parameter-names`, which
+is removed (`cuflynx-upgrade parameter-names` takes the same options).
+
 ### Removed — old obs_data and params_for_id spellings, and `cuflynx-migrate-obs-data`
 
 No shipped or library file used them, so they are no longer read; the schema refuses them by name
@@ -21,7 +199,42 @@ No shipped or library file used them, so they are no longer read; the schema ref
   distribution `cost_type` and `prob_dist_params`.
 
 `cuflynx-migrate-obs-data`, which rewrote those spellings, is removed with them. A bare list of
-data items is still read as an obs_data.
+data items is refused too (see above).
+
+### Removed — old configuration keys and Python names
+
+`user_inputs.yaml` keys and values that are no longer read are refused with a `ValueError`
+naming what to write instead:
+- `ga_options` / `debug_ga_options` -> `optimiser_options` / `debug_optimiser_options`.
+- `do_mcmc` / `mcmc_options` / `debug_mcmc_options` -> `do_uq` / `UQ_options` /
+  `debug_UQ_options`.
+- `model_type: cellml_only` -> `cellml`.
+- AADC `method: bdf_tape` / `bdf_kernel` -> `method: semi_implicit_signed` with
+  `gradient_strategy: tape` / `kernel`.
+- `sa_options.gradient_method: analytic` -> `auto`.
+- solver_info keys of another solver are no longer moved across: `MaximumStep` on solve_ivp
+  (`max_step`), casadi_integrator (`max_step_size`) or the cpp solvers (`dt_solver`), and
+  `MaximumNumberOfSteps` on solve_ivp or CVODE_myokit (no such setting) or casadi_integrator
+  (`max_num_steps`). The error lists the solver's own keys.
+
+External funcs files import the built-in funcs as `libcuflynx.funcs.cost_funcs_user` (and
+`operation_funcs_user`, `modifier_funcs_user`); the bare `from cost_funcs_user import ...` is
+refused with that import.
+
+Python names removed (use the second):
+- `OpencorParamID`, `OpencorMCMC` -> `ParamID`, `MCMC`.
+- `CVS0DParamID.run_mcmc()` -> `run_UQ()`; the `mcmc_options=` argument of `CVS0DParamID`,
+  `run_UQ`, `MCMC`, `MCMC.from_param_id` and `MCMC_plotter` -> `UQ_options=`.
+- `PARAM_MODIFIER_OPERATIONS`, `DEFAULT_PARAM_MODIFIER_OPERATION`, `param_modifier_operations`
+  -> `PARAM_MODIFIERS`, `DEFAULT_PARAM_MODIFIER`, `param_modifiers`.
+- `MODEL_TYPE_ALIASES`, `normalise_model_type`, `AADC_LEGACY_METHOD_ALIASES`,
+  `migrate_legacy_solver_info_keys` (none needed), `paramID.TAPE_CONSISTENT_AADC_METHODS` ->
+  `aadc_backend.TAPE_CONSISTENT_METHODS`, `CSV0DModelParser.split_0d_1d_vessel_array` ->
+  `split_0d_1d_module_array`, `sobol_SA.create_SA_info` -> `_create_SA_info`.
+- `libcuflynx.utilities.protocol_funcs` -> `libcuflynx.protocol_runners.ProtocolRunner`, and
+  the dead `libcuflynx.obsolete` package.
+
+The exported `run_pipeline.py` imports `libcuflynx.*` only and reads `do_uq` / `UQ_options`.
 
 ### Changed — input files are checked against their JSON Schemas on read
 
@@ -101,18 +314,17 @@ core dependency.
   `component_file`, `component_type`, `inp_instances`, `out_instances`. **Files CA writes use
   them**, and so do `resources/`, `module_config_user/` and the built-in module configs. The
   older `vessel_type`, `BC_type`, `module_file`, `module_type` (= the component, beside the other
-  older keys), `inp_vessels` and `out_vessels` are still read, with no warning; mixing the two in
-  one entry or record is an error. Code reading a module dataframe's columns, or a normalised
-  record's keys, sees the new names. `python -m libcuflynx.utilities.config_schemas to-json
-  --style libcuflynx` still writes the older keys.
+  older keys), `inp_vessels` and `out_vessels` are refused; `cuflynx-upgrade module-config` and
+  `cuflynx-upgrade module-array` convert them. Code reading a module dataframe's columns, or a
+  normalised record's keys, sees the new names.
 
 ### Changed — nested names, path references and interfaces (#582)
 
 - **Nested levels are joined with `__`**: the submodule `lv` of the supermodule instance `heart`
   is `heart__lv`, its parameter `E_heart__lv`. A module-array or submodule name may not contain
   `__` nor begin or end with `_`. Names joined with a single `_` (`heart_lv/q`, `E_heart_lv`)
-  are still read in parameters files, params_for_id and obs operands, with a `FutureWarning`,
-  when they name one vessel; an ambiguous one is an error.
+  are refused in parameters files, params_for_id and obs operands; `cuflynx-upgrade
+  parameter-names` converts a parameters file.
 - A host may name a submodule by its path (`heart/ra`, `neuron/soma/membrane`) in its own
   inp/out list, keeping its own order; a `per_submodule_*` key may be a path into a nested
   instance.
@@ -200,12 +412,12 @@ Ordered calibrations and analyses are run by `cuflynx-calibration-workflow`.
 - **The `/` form.** A parameters file may name a module's parameter `aortic_root/C` (or `heart/lv/E`, for a supermodule's expanded submodule; `global/R` or `R` for a global). A supermodule's parameterisation and `default_parameters` rows name a submodule's parameter `lv/E`, or `soma/i_M/rho_M` when nested.
   - Generated models keep their names (`C_aortic_root`), because CellML names cannot contain `/`.
 - **Why.** The `_` form cannot be split reliably when names contain `_`, which supermodule rows had to do: `g_leak_Na` is `g` of `leak_Na` or `g_leak` of `Na`.
-- **The old form still works.** In host parameters files it is read as before; setting a parameter both ways is an error. In supermodule rows it is read with a `FutureWarning`.
+- **The old form is refused**, in host parameters files and supermodule rows; `cuflynx-upgrade parameter-names` converts it.
 - **Checks on the new form.**
   - A host `/` row naming a vessel or variable the model does not have, or a global constant through a vessel, is an error.
   - A supermodule row naming a path that is not a submodule is an error.
   - A parameterisation's rows must stay bare variable names.
-- **`cuflynx-migrate-parameter-names`** rewrites old names, in a host file (`--module-array`) or in a supermodule's files (`--supermodule-config`). It rewrites a name only when exactly one reading of it names a real variable of that module, and reports the others.
+- **`cuflynx-upgrade parameter-names`** rewrites old names, in a host file (`--module-array`) or in a supermodule's files (`--supermodule-config`). It rewrites a name only when exactly one reading of it names a real variable of that module, and reports the others.
 
 ### Changed — local SA differentiates prediction features analytically
 
@@ -260,17 +472,15 @@ library that copies built-in modules needed `use_builtin_modules: false`.
 ### Changed — vessel arrays are now called module arrays
 
 The file is `[file_prefix]_module_array.json` or `.csv`, and every model in `resources/` has been
-renamed. A `[file_prefix]_vessel_array.json`/`.csv` is still read, after the new names, with a
-`FutureWarning` asking for it to be renamed; to rename yours, run
-`for f in *_vessel_array.*; do git mv "$f" "${f/_vessel_array./_module_array.}"; done`. The
+renamed. A `[file_prefix]_vessel_array.json`/`.csv` is refused; `cuflynx-upgrade module-array`
+renames and converts it. The
 functions and constants that carried the old name are renamed in the same way
 (`module_array_path`, `read_module_array_records`, `load_module_array`, `module_array_to_json`,
 `PHLYNX_MODULE_ARRAY_COLUMNS`, ...), without aliases, as none of them was released;
-`CSV0DModelParser.split_0d_1d_vessel_array`, which was, is now `split_0d_1d_module_array`, and
-the old name still works with a `FutureWarning`. The 0D/1D split writes `[file_prefix]_{0d,1d}_module_array.csv`,
+`CSV0DModelParser.split_0d_1d_vessel_array`, which was, is now `split_0d_1d_module_array`
+(the old name is removed). The 0D/1D split writes `[file_prefix]_{0d,1d}_module_array.csv`,
 `convert_0d_to_1d` writes `[model]_hybrid_module_array.*`, and the JSON Schema is
-`libcuflynx/schemas/module_array.schema.json`. The record keys (`vessel_type`, `BC_type`,
-`inp_vessels`, `out_vessels`) and the `vessels_csv_abs_path` config key are unchanged.
+`libcuflynx/schemas/module_array.schema.json`. The `vessels_csv_abs_path` config key is unchanged (the record keys are renamed by #163, above).
 
 ### Added — writing a model and its calibration up in LaTeX
 
@@ -330,9 +540,8 @@ A module version's named parameter sets live in `parameterisations/<name>/<name>
 (with `<name>_obs_data.json` and `<name>_params_for_id.csv`); a record or submodule picks one with
 `"parameterisation"`, and a config entry names its default with `"default_parameterisation"`.
 "Instance" now means one use of a version in a module array, as a PhLynx node does. The older
-names are still read for module configs: `instances/` is used when a version has no
-`parameterisations/`, and `"default_instance"` is read as `"default_parameterisation"` (both with
-different values is a ValueError). A module-array record or submodule must use
+names are refused: rename an `instances/` directory to `parameterisations/`, and convert
+`"default_instance"` with `cuflynx-upgrade module-config`. A module-array record or submodule must use
 `"parameterisation"`: `"instance"` there is a ValueError, and invalid in the JSON Schemas. The
 module is `libcuflynx.utilities.parameterisations` (was `module_instances`), with
 `record_parameterisation`, `parameterisations_dir`, `parameterisation_parameters_path`,

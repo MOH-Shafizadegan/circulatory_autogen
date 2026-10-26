@@ -5,7 +5,7 @@ The parameter identification part of Circulatory_Autogen is designed to allow ca
 - **params_for_id**
 - **param id observables**
 
-Those files should be added to the `[CA_dir]/resources` directory (or your custom `resources_dir`). Proper names of the files are **[file_prefix]_params_for_id.csv** and **[file_prefix]_obs_data.json**, respectively. You can also set `params_for_id_file` in `user_inputs.yaml` if you want to use a non-standard filename.
+Those files should be added to the `[CA_dir]/resources` directory (or your custom `resources_dir`). Proper names of the files are **[file_prefix]_params_for_id.json** and **[file_prefix]_obs_data.json**, respectively. You can also set `params_for_id_file` in `user_inputs.yaml` if you want to use a non-standard filename.
 
 ## Prerequisites
 
@@ -16,59 +16,76 @@ Those files should be added to the `[CA_dir]/resources` directory (or your custo
 
 ## Creating params_for_id file
 
-This file defines which parameters (constants and initial_states) within your model that you will vary in the parameter id process and their allowed ranges (prior distribution). Following is an example of the `params_for_id.csv` file.
+This file defines which parameters (constants and initial_states) within your model that you will vary in the parameter id process and their allowed ranges (prior distribution). It is JSON, a flat list of entries, one per calibrated value:
 
-![params_for_id.csv](images/params-for-id.png)
+```json
+{
+ "version": 1,
+ "params": [
+  {"targets": ["global/q_lv_init"], "min": 200e-6, "max": 1500e-6, "param_type": "const", "name_for_plotting": "q_{sbv}"},
+  {"targets": ["aortic_root/C"], "min": 1e-9, "max": 5e-8, "param_type": "const", "name_for_plotting": "C_{ao}"},
+  {"targets": ["heart/lv/E_A", "heart/rv/E_A"], "min": 1e8, "max": 5e8, "name_for_plotting": "E_A"},
+  {"name": "R_scale", "modifies": ["venous_svc/R", "venous_ivc/R"], "modifier": "scale", "min": 0.5, "max": 2.0}
+ ]
+}
+```
 
-The entries in the file are detailed as follows:
+The keys of an entry:
 
-- **vessel_name**: the name of the vessel/module the parameter is in
-- **param_name**: the name of the parameter in the cellml module (not including the "vessel_name" suffix that is included in the `[file_prefix]_parameters.csv` file).
-- **param_type**: **"state"** or **"const"**; whether the parameter is the initial value of a state or a const. 
-- **min**: The minimimum of the range of possible values (min of the uniform distribution).
-- **max**: The maximum of the range of possible values (max of the uniform distribution).
-- **data_item_name**: The unique name of this prediction, as for a `data_item`.
-- **trace_name_for_plotting**: The name (latex format) used when automatically plotting
-  comparisons with observables and predictions.
+- **targets**: the model parameters this calibrated value sets, all to the same value, named as in the `[file_prefix]_parameters.json` file: `<vessel>/<variable>` (`aortic_root/C`), a nested vessel by its path (`heart/lv/E_A`, a supermodule instance's submodule) and a global constant as `global/<variable>`.
+- **modifies**, **modifier**, **inputs** (instead of **targets**): a modifier entry, whose calibrated value acts on the parameters it lists through a modifier function (`scale`, `remainder`, or your own, see `modifier_funcs_external_path`).
+- **name**: the entry's name, unique in the file; by default its first target.
+- **min**, **max**: the range of possible values (the uniform prior's bounds, the optimiser's search box).
+- **param_type**: **"state"** or **"const"**; whether the parameter is the initial value of a state or a const.
+- **name_for_plotting**: the name (latex format) used in plots.
+- **prior**, **prior_params**, **unbounded**, **comment**: see below.
+
+The file is flat, not nested by instance like the parameters file, because an entry is not one parameter: it groups parameters or modifies them. An optional `"defaults"` object gives keys every entry takes unless it sets its own.
 
 !!! Note
     **param_type** will be deprecated. All should be **"const"**. Initial values that need to identified should be defined as constants within the cellml module.
 
+A params_for_id CSV (`vessel_name,param_name,min,max,...`, the older form) is refused. Convert it once with
+
+```
+cuflynx-upgrade params-for-id <params_for_id CSV | directory>...
+```
+
+which writes the `.json` beside each CSV and removes the CSV: each row becomes one entry, `vessel_name "a b"` with `param_name "C"` becomes `"targets": ["a/C", "b/C"]` (a nested `heart__lv` as its path, `heart/lv/C`), and the `prior_*` columns go under `"prior_params"`. Name the `.json` wherever the CSV was named (`params_for_id_file`, a workflow step's `params_for_id`).
+
 ### Priors
 
-Without further columns every parameter has a uniform prior on `[min, max]`. An optional
-**prior** column chooses another, with its settings in further columns:
+Without further keys every parameter has a uniform prior on `[min, max]`. An optional
+**prior** chooses another, with its settings in **prior_params**:
 
-| `prior` | Columns | Notes |
+| `prior` | `prior_params` | Notes |
 |---|---|---|
 | `uniform` (default) | — | flat on `[min, max]` |
 | `normal` | `prior_mean`, `prior_std` | default mean: the middle of the range; default std: a sixth of it |
 | `exponential` | `prior_scale` (or `prior_lambda`), `prior_origin` | decays from `prior_origin`; scale defaults to `max / prior_lambda` |
 
-Each prior is truncated to `[min, max]` unless the **unbounded** column is set, in which case
+Each prior is truncated to `[min, max]` unless **unbounded** is `true`, in which case
 the range is derived from the prior. Priors shape the log posterior, so they affect MCMC (`do_uq`)
 and optimisers run with `objective_function: likelihood` (the genetic algorithm); a calibration
 that minimises the cost does not see them. A calibration workflow can also give a step a prior
 over several parameters at once, from an earlier step's posterior (see
 [Calibration workflows](#calibration-workflows)).
 
-### JSON form and schemas
+### Schemas
 
-`params_for_id` may also be written as JSON (`[file_prefix]_params_for_id.json`); a CSV is
-converted to that form when it is read (`ObsAndParamDataParser.params_for_id_csv_to_json`), each
-row becoming one entry of `"params"` with `vessel_name "a b"` and `param_name "C"` as
-`"targets": ["a/C", "b/C"]` and the `prior_*` columns under `"prior_params"`. The JSON form also
-takes a `"defaults"` block and modifier entries (`"modifies"`, `"modifier"`, `"inputs"`). Every
-input file has a JSON Schema shipped in `libcuflynx/schemas/` (`params_for_id.schema.json`,
-`obs_data.schema.json`, `module_config.schema.json`, `module_array.schema.json`; load one with
-`libcuflynx.schemas.load_schema`), describing each key and its default. libcuflynx checks every
-file against its schema when it reads it, so editors and other tools validating against the
-schema agree with libcuflynx. An error lists every problem, each with where it is (an item by
-its name, e.g. `data_items[2] ('systolic').value`) and what the field is for.
+Every input file has a JSON Schema shipped in `libcuflynx/schemas/` (`params_for_id.schema.json`,
+`obs_data.schema.json`, `parameters.schema.json`, `module_config.schema.json`,
+`module_array.schema.json`; load one with `libcuflynx.schemas.load_schema`), describing each key
+and its default. libcuflynx checks every file against its schema when it reads it, so editors and
+other tools validating against the schema agree with libcuflynx. An error lists every problem,
+each with where it is (an item by its name, e.g. `data_items[2] ('systolic').value`) and what the
+field is for.
 
 ## Creating param id observables file
 
 This file defines the simulation protocol (protocol_info), and ground truth observables that will be used in the cost function for the parameter id optimisation algorithm. It also defines the measurement standard deviation, and weighting for each observable.
+
+Every obs_data is a JSON object with a `protocol_info` that has `pre_times` and `sim_times`. A bare list of data items, or an object without `protocol_info`, is refused; convert it once with `cuflynx-upgrade obs-data [file] --user-inputs [user_inputs.yaml]`, which writes a one-experiment `protocol_info` from that yaml's `pre_time` and `sim_time`.
 
 File path of the `obs_data.json` file should be defined as **param_id_obs_path** in `[CA_dir]/user_run_files/user_inputs.yaml`. This path can be absolute or relative to the location of your `user_inputs.yaml`.
 
@@ -579,9 +596,11 @@ the validation uses.
 
 #### Plots across experiments (`prediction_plots`)
 
-A family of experiments, each summarised by one feature, is read as a curve: peak current
-against step potential (I–V), a feature against a dose. The optional top-level
-`prediction_plots` list draws one figure per entry:
+A family of experiments is often read as one picture: peak current against step potential
+(I–V), a feature against a dose, a clamp protocol beside the current it drives. The optional
+top-level `prediction_plots` list draws one figure per entry. There are four kinds.
+
+**Feature kinds: one point per experiment.**
 
 ```json
 "prediction_plots": [
@@ -596,16 +615,57 @@ against step potential (I–V), a feature against a dose. The optional top-level
   (written, or its default). A group has at most one item per experiment, and each item is a
   scalar feature.
 - A **point** is one experiment: y is the `y` group's item for it; x is the `x` group's item
-  for the same experiment (`feature_vs_feature`) or the number `params_to_change[key]` is set to
-  in that sub-experiment (`feature_vs_input`, which must be a number, not a trace).
+  for the same experiment (`feature_vs_feature`) or the value `params_to_change[key]` takes in
+  that sub-experiment (`feature_vs_input`).
 - `series` (an input reference, optional) draws one line per value of that input. Points are
   sorted by x; an item's `value`/`std` is drawn as error bars.
+- An **input reference** is `{"params_to_change": <key>, "subexperiment_idx": <i>}` with an
+  optional `"reduce"`. A number is used as it is. A trace (a `protocol_traces` or
+  `protocol_shapes` name) needs `reduce` to become one number: `"final"`, `"mean"`, `"max"`,
+  `"min"`, or `{"at": <seconds from the start of that sub-experiment>}`. These are taken over
+  the trace as the sub-experiment applies it (linear between its points, held past its ends,
+  cut at the end of the sub-experiment). An experiment whose input is a trace with no `reduce`
+  has no point: it is left out with a warning that names it.
 
-The structure is checked when the obs_data is read; a group that misses an experiment the
-other group has is an error, not a gap. `save_prediction_data` draws `<name>.png` in the output
-directory after a calibration, with a data_item's model value from the cost path; and
-`cuflynx-run-predictions` draws them without a calibration (a data_item there shows its data
-only).
+```json
+{"name": "Peak I vs ramp end", "kind": "feature_vs_input", "y": "I_peak",
+ "x": {"params_to_change": "clamp/V_cmd", "subexperiment_idx": 1, "reduce": "final"}}
+```
+
+**Time-course kinds: an input and a model output over time.**
+
+```json
+"prediction_plots": [
+  {"name": "Clamp and current", "kind": "input_and_output",
+   "input": {"params_to_change": "clamp/V_cmd"}, "output": "cell/membrane/I_Na",
+   "experiments": [0, 2]},
+  {"name": "I-V loop", "kind": "output_vs_input",
+   "input": {"params_to_change": "clamp/V_cmd"}, "output": "cell/membrane/I_Na"}
+]
+```
+
+- `input_and_output` draws one figure per experiment, `<name>_exp_<idx>.png`. The input is on
+  the left y-axis and the model output on the right, against the time since the end of the
+  warm-up. Sub-experiment boundaries are dashed. A data_item that has the output as a series
+  (its first operand, no operation) in that experiment is overlaid.
+- `output_vs_input` draws the output against the input sampled at the same times, one line per
+  experiment (for example an I–V loop under a voltage ramp), in `<name>.png`.
+- `input` is a `params_to_change` key. Across the experiment, a number is drawn as a step and a
+  trace as its waveform.
+- `output` is written as an obs_data operand is: `<vessel>/<variable>`, a nested vessel by its
+  path (`SN/soma/membrane/V`), or a global's bare name. It is recorded the way prediction items
+  are, in a simulation of those experiments (at the best fit, after a calibration), so any
+  model variable can be drawn. An output the model does not have is refused before anything
+  runs.
+- `experiments` (optional) lists the experiments to draw. The default is all of them.
+
+The structure is checked when the obs_data is read: a `params_to_change` key the protocol does
+not set, a `subexperiment_idx` or experiment out of range, a malformed `reduce`, an `at` after
+the end of its sub-experiment, and the wrong keys for a kind are refused. A feature group that
+misses an experiment the other group has is an error, not a gap. `save_prediction_data` draws
+the figures in the output directory after a calibration, with a data_item's model value from
+the cost path. `cuflynx-run-predictions` draws them without a calibration; a data_item point
+there shows its data only.
 
 ## Running external cellml models
 
@@ -653,14 +713,14 @@ Note:
 Before doing calibration, a solver for the model needs to be chosen
 
 - **solver** defines the solver family. Options depend on `model_type`:
-    - CellML (`model_type: cellml`): `CVODE` defaults to `CVODE_myokit` (Myokit). Use `CVODE_opencor` explicitly if you want the OpenCOR backend instead.
+    - CellML (`model_type: cellml`): `CVODE_myokit` (Myokit, the default) or `CVODE_opencor` (OpenCOR). `CVODE` is read as `CVODE_myokit`.
     - Python (`model_type: python`): `solve_ivp` with `solver_info.method` set to `RK45`, `BDF`, etc.
     - CasADi Python (`model_type: casadi_python`): `casadi_integrator` with `solver_info.method` set to `cvodes`, `idas`, `collocation`, `rk`, `semi_implicit_euler`, or `bdf`.
     - C++ (`model_type: cpp`): `CVODE`, `RK4`, or `PETSC`.
 - **solver_info** defines settings for the chosen solver:
     - **dt_solver**: solver time step (for CVODE this sets `MaximumStep` when provided)
-    - **MaximumStep**: maximum step size for adaptive solvers
-    - **MaximumNumberOfSteps**: maximum number of substeps before stepping
+    - **MaximumStep**: maximum step size (`CVODE_myokit`, `CVODE_opencor`)
+    - **MaximumNumberOfSteps**: maximum number of substeps before stepping (`CVODE_opencor` and the C++ solvers)
     - **method**: any method for `solve_ivp` or `casadi_integrator`, e.g. `RK45`, `BDF`, `cvodes`, etc.
 
 !!! note "Automatic differentiation supports `constant` and `series` observables only"
@@ -800,20 +860,13 @@ To run the parameter identification we need to set a few entries in the `[CA_dir
     - **bayesian**: Bayesian optimization using scikit-optimize (deprecated, untested)
     - **sp_minimize**: Gradient-based optimizer (L-BFGS-B, local only)
     - **multi_start_sp_minimize**: Multi-start L-BFGS-B — a gradient-based descent from many scattered starting points, so it exploits the gradient but still escapes local minima
-- **pre_time**: this is the amount of time the simulation is run to get to steady state before comparing to the observables from `obs_data.json`. IMPORTANT: THis is overwritten by the pre_times within the obs_data.json file, see the next section.
-- **sim_time**: The amount of time used to compare simulation output and observable data. This should be equal to the length of a series observable entry divided by the "sample_rate". If not, only up to the minimum length of observable data and modelled data will be compared. 
+- **pre_time**: the unlogged time a plain simulation (no obs_data) runs to reach steady state. A calibration is timed by the `pre_times` and `sim_times` in the obs_data's `protocol_info`, which every obs_data must have (see the next section).
+- **sim_time**: the logged duration of a plain simulation (no obs_data). A calibration takes its durations from the obs_data's `sim_times`. 
 - **dt**: The output (sample) time step for model outputs
 - **solver_info.dt_solver**: The solver time step for CVODE (sets MaximumStep when provided)
 - **solver_info.MaximumStep**: The CVODE maximum step size if dt_solver is not provided
 - **param_id_obs_path**: the path to the `obs_data.json` file described above (absolute or relative to your `user_inputs.yaml`).
-- **ga_options**: Legacy dictionary (deprecated, use `optimiser_options` instead):
-	- **cost_type**: "AE" or "MSE" for absolute error or mean squared error.
-	- **num_calls_to_function**: How many forward simulations of pre_time+sim_time will be run in the optimisation algorithm.
-	- **cost_convergence**: If the cost value is lower than this threshold then the calibration run is complete.
-	- **max_patience**: If the cost doesn't improve for this number of simulations, then calibration is complete (we assume that the cost has converged to the global minima or can't get out of a local minima).
-  - Note: For backwards compatibility, entries in `ga_options` are automatically merged into `optimiser_options` if not already present. It is recommended to use `optimiser_options` instead.
-
-- **optimiser_options**: Dictionary for optimizer-specific options (preferred over `ga_options`). Common options shared across optimisers:
+- **optimiser_options**: Dictionary for optimizer-specific options. Common options shared across optimisers:
     - **num_calls_to_function**: Maximum number of function evaluations (default: 10000)
     - **cost_convergence**: Convergence tolerance for cost (default: 0.0001)
     - **max_patience**: Maximum patience for convergence (default: 10)
@@ -824,7 +877,7 @@ To run the parameter identification we need to set a few entries in the `[CA_dir
     - **sigma0**: Initial standard deviation for CMA-ES (optional, default: 0.2 of parameter range)
     - Note: 
         - The number of parallel workers is automatically determined from the number of MPI processes
-        - Initial parameter values are automatically loaded from `{file_prefix}_parameters.csv`
+        - Initial parameter values are automatically loaded from `{file_prefix}_parameters.json`
     
     sp_minimize specific options:
 
@@ -834,7 +887,7 @@ To run the parameter identification we need to set a few entries in the `[CA_dir
 
     - **num_starts**: Number of L-BFGS-B descents to run (default: 10, or 4 when `DEBUG` is true). The starts are spread round-robin over the MPI ranks; make `num_starts` several times the rank count so the work balances (see the note under "Multi-start Gradient-based Optimizer" below).
     - **start_sampling**: How the starting points are scattered over the parameter bounds: `sobol` (default), `latin_hypercube` or `random`.
-    - **include_init_point**: If true (default), the first start is the initial parameter values from `{file_prefix}_parameters.csv`, so this method can never do worse than a single-start `sp_minimize` run.
+    - **include_init_point**: If true (default), the first start is the initial parameter values from `{file_prefix}_parameters.json`, so this method can never do worse than a single-start `sp_minimize` run.
     - **seed**: Seed for the start sampler (default: 0), so a run is repeatable.
     - **fd_step**: Finite-difference step used when an automatic-differentiation gradient isn't available — i.e. any configuration without an AD backend (see the gradient-backend note below), or when `do_ad: false` (default: 1e-4).
     - **cost_convergence**: Once any start reaches this cost, every MPI rank stops launching new starts (signalled between ranks with a non-blocking message), so no rank keeps working after a good-enough solution has been found. (Set `no_new_starts_on_convergence: false` to disable this.)
@@ -857,8 +910,6 @@ To run the parameter identification we need to set a few entries in the `[CA_dir
         cardiovascular model. See [Optional third-party backends](getting-started.md) if you
         already hold a Matlogica licence.
 
-- **ga_options**: Legacy dictionary for optimization options. For backwards compatibility, entries in `ga_options` are automatically merged into `optimiser_options` if not already present. It is recommended to use `optimiser_options` instead.
-
 
 ## Choosing an Optimization Method
 
@@ -879,7 +930,7 @@ optimiser_options:
   num_calls_to_function: 10000  # shared option
   cost_convergence: 0.001         # shared option
   sigma0: 0.1                      # CMA-ES specific (optional, initial standard deviation)
-  # Note: Initial parameter values are automatically loaded from {file_prefix}_parameters.csv
+  # Note: Initial parameter values are automatically loaded from {file_prefix}_parameters.json
 ```
 
 ### Gradient-based Optimizer (sp_minimize)
@@ -915,7 +966,7 @@ optimiser_options:
   cost_convergence: 0.0001
   num_starts: 10              # number of L-BFGS-B descents
   start_sampling: sobol       # sobol | latin_hypercube | random
-  include_init_point: true    # first start is the x0 from {file_prefix}_parameters.csv
+  include_init_point: true    # first start is the x0 from {file_prefix}_parameters.json
   seed: 0
 ```
 
@@ -929,7 +980,7 @@ It also streams three live per-start histories *during* the run, appended one ro
 
 $$\dot V = c\left(V - \tfrac{V^3}{3} + R\right), \qquad \dot R = -\tfrac{1}{c}\left(V - a + bR\right)$$
 
-is a standard hard case for parameter estimation: its least-squares surface has many local minima, because a wrong recovery rate `c` puts the simulated spike train out of phase with the data (Ramsay et al. 2007, *J. R. Statist. Soc. B* 69(5), "Parameter estimation for differential equations: a generalized smoothing approach"). The supplied `FitzHugh_Nagumo_parameters.csv` starts at `(a, b, c) = (0.8, 0.9, 2.0)`, which sits inside a local basin; the true values are `(0.2, 0.2, 3.0)`.
+is a standard hard case for parameter estimation: its least-squares surface has many local minima, because a wrong recovery rate `c` puts the simulated spike train out of phase with the data (Ramsay et al. 2007, *J. R. Statist. Soc. B* 69(5), "Parameter estimation for differential equations: a generalized smoothing approach"). The supplied `FitzHugh_Nagumo_parameters.json` starts at `(a, b, c) = (0.8, 0.9, 2.0)`, which sits inside a local basin; the true values are `(0.2, 0.2, 3.0)`.
 
 `sp_minimize` never leaves the basin it starts in. The genetic algorithm escapes it but, being gradient-free, converges slowly. The multi-start finds the global basin *and* refines it with the gradient — whatever gradient backend drives it (finite differences, CasADi AD, or Myokit CVODES FSA). The table below is regenerated by the benchmark runner (`python benchmarks/run_benchmarks.py --update-docs`) and by the **Benchmarks** GitHub Actions workflow, so the published numbers stay current; they depend on the hardware and MPI rank count used.
 
@@ -1000,8 +1051,6 @@ True parameters: Vmax_GLK=226.452, Vmax_PGI=339.677, Vmax_PYK=1088.71, Vmax_GAPD
 <!-- BENCHMARK_RESULTS_END -->
 
 The stiff 3compartment cardiovascular benchmark (long warmup, Myokit/CasADi — no OpenCOR needed) runs in the same set; it is slower, so the workflow schedule is weekly. See `benchmarks/README.md`.
-
-Note: For backwards compatibility, `ga_options` can still be used and will be automatically merged into `optimiser_options`.
 
 ## Running parameter identification
 
@@ -1100,11 +1149,11 @@ identifiability analysis to it (see [Step kinds](#step-kinds)).
     {"id": "aorta-compliance",
      "model": "resources/aorta_only_module_array.csv",
      "obs_data": "data/aorta_obs_data.json",
-     "params_for_id": "data/aorta_params_for_id.csv"},
+     "params_for_id": "data/aorta_params_for_id.json"},
     {"id": "whole-circulation",
      "model": "resources/circulation_module_array.csv",
      "obs_data": "data/circulation_obs_data.json",
-     "params_for_id": "data/circulation_params_for_id.csv",
+     "params_for_id": "data/circulation_params_for_id.json",
      "fixed_from": ["aorta-compliance"]}
   ]
 }
@@ -1113,7 +1162,7 @@ identifiability analysis to it (see [Step kinds](#step-kinds)).
 Paths are relative to the workflow file. A **model** is one of:
 
 - **a module array** of CA, as `"resources/<prefix>_module_array.csv"` (or `.json`). Its
-  parameters file is `<prefix>_parameters.csv` beside it, or name it:
+  parameters file is `<prefix>_parameters.json` beside it, or name it:
   `{"module_array": "...", "parameters": "..."}`.
 - **a module of a module library**, as `{"module_type": "i_M", "version": "Argus2026_v01",
   "parameterisation": "davis2020_wistar"}`. The library is found through `module_library_dirs`
@@ -1165,18 +1214,18 @@ The keys that pass something on, each naming one step of the kind shown:
 
 A **reduction** ranks the sensitivity step's parameters by the `criterion` (`max`, default, or
 `mean`) over the observables of their `index_type` index (`ST`, total, default, or `S1`), keeps
-the `top_n` best, dropping any scoring below `threshold`, and writes those rows of the sensitivity
-step's params_for_id -- bounds and all -- as `<step_id>/<step_id>_params_for_id.csv`:
+the `top_n` best, dropping any scoring below `threshold`, and writes those entries of the sensitivity
+step's params_for_id -- bounds and all -- as `<step_id>/<step_id>_params_for_id.json`:
 
 ```json
 {"id": "screen", "kind": "sensitivity", "model": {...}, "obs_data": "...",
- "params_for_id": "candidates_params_for_id.csv",
+ "params_for_id": "candidates_params_for_id.json",
  "settings": {"sa_options": {"method": "sobol", "num_samples": 256}}},
 {"id": "keep-5", "kind": "reduction", "sensitivity_from": "screen",
  "reduction": {"top_n": 5, "index_type": "ST", "criterion": "max", "threshold": 0.01}},
 {"id": "fit", "model": {...}, "obs_data": "...", "params_for_id_from": "keep-5"},
 {"id": "ia", "kind": "identifiability", "model": {...}, "obs_data": "...",
- "params_for_id": "fitted_params_for_id.csv", "result_from": "fit",
+ "params_for_id": "fitted_params_for_id.json", "result_from": "fit",
  "settings": {"ia_options": {"method": "Laplace", "gradient_source": "FD"}}}
 ```
 
@@ -1188,7 +1237,7 @@ can also be used on its own:
 ```python
 from libcuflynx.sensitivity_analysis.parameter_reduction import SobolReduction
 SobolReduction(top_n=5, threshold=0.01).reduce(
-    'sa/all_outputs_n256_Sobol_indices.csv', 'candidates_params_for_id.csv', 'kept.csv')
+    'sa/all_outputs_n256_Sobol_indices.csv', 'candidates_params_for_id.json', 'kept.json')
 ```
 
 An emulator can be trained on the kept parameters alone, and MCMC run on it: an `emulation`
@@ -1203,10 +1252,10 @@ generated model), and moves through the target's names:
 - **A module array** keeps its vessel names. A value calibrated on `aortic_root` in one model
   fixes `aortic_root` in another, and lands on `aortic_root` in the target. When the names
   differ, `vessel_map` renames the step's vessels into the target's.
-- **A library module** is generated alone as one vessel named `mod`, so its params_for_id rows
-  are `mod, <param>` (`mod_<submodule>, <param>` for a supermodule) and its obs_data operands
+- **A library module** is generated alone as one vessel named `mod`, so its params_for_id targets
+  are `mod/<param>` (`mod/<submodule>/<param>` for a supermodule) and its obs_data operands
   `mod/<variable>`. In the target it is renamed to where it sits: the submodule `i_M` of a
-  supermodule target (`rho_M_mod_i_M` in the model, `i_M/rho_M` in its parameterisation CSV),
+  supermodule target (`rho_M_mod__i_M` in the model, `i_M/rho_M` in its parameterisation),
   or the vessel of a module-array target that it is.
 
 `--dry-run` checks that every calibrated parameter lands on a vessel the target has, and prints
@@ -1239,7 +1288,7 @@ prior.
     <step_id>/sensitivity/            a sensitivity step's indices and plots
     <step_id>/emulator/               an emulation step's emulator
     <step_id>/<step_id>_laplace_*.npy an identifiability step's Laplace mean and covariance (also in step_result.json)
-    <step_id>/<step_id>_params_for_id.csv  a reduction's params_for_id
+    <step_id>/<step_id>_params_for_id.json a reduction's params_for_id
     _target/model/                    the target generated with every calibrated value
     <workflow_name>_cuflynx_study.json  the study manifest CUFLynx opens (below)
 ```
@@ -1261,10 +1310,10 @@ files its settings name under `settings/`. Paths in `settings` (`external_module
 `--from-step X` reruns X and everything after it, reusing the earlier results (and refusing if
 their obs_data, params_for_id or parameters changed since); `--only X` reruns one step.
 `--write-calibrated` writes the merged set beside the target's parameters file, as
-`<name>_calibrated_parameters.csv` (`<name>` is the module array's prefix or the
-parameterisation): the target's rows with the calibrated values in place, matched whichever
-form a row is written in (`aortic_root/C` or `C_aortic_root`), and new rows written
-`<vessel>/<variable>`.
+`<name>_calibrated_parameters.json` (`<name>` is the module array's prefix or the
+parameterisation), in the target's nested form: the target's parameters file with each calibrated
+value set at its path (`<vessel>/<variable>` in a module array's file, the module's own path in a
+parameterisation's), added where the file lacks it. The target's files are not changed.
 
 ### Distributions and priors
 

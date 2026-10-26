@@ -66,14 +66,13 @@ def build_config(output_dir, resources_dir, generated_models_dir,
     return {
         'DEBUG': True,
         'file_prefix': FILE_PREFIX,
-        'input_param_file': FILE_PREFIX + '_parameters.csv',
+        'input_param_file': FILE_PREFIX + '_parameters.json',
         'model_type': 'cellml',
-        # Named explicitly: a bare 'CVODE' resolves to the OpenCOR backend, whose
-        # Python module is not on PyPI, so a pip-installed libcuflynx cannot run
-        # it -- and this has to run wherever the tests do.
+        # Myokit, not OpenCOR: OpenCOR's Python module is not on PyPI, and this has to
+        # run wherever the tests do.
         'solver': 'CVODE_myokit',
         'solver_info': {'solver': 'CVODE_myokit',
-                        'MaximumStep': 0.001, 'MaximumNumberOfSteps': 5000},
+                        'MaximumStep': 0.001},
         'param_id_method': 'genetic_algorithm',
         'pre_time': 20,
         'sim_time': 2,
@@ -87,7 +86,7 @@ def build_config(output_dir, resources_dir, generated_models_dir,
         # predictive check does -- bypasses that, and a missing params_for_id
         # leaves param_id_info None and every evaluation raising.
         'params_for_id_path': os.path.join(
-            resources_dir, FILE_PREFIX + '_params_for_id.csv'),
+            resources_dir, FILE_PREFIX + '_params_for_id.json'),
         'param_id_output_dir': output_dir,
         'generated_models_dir': generated_models_dir,
         # gaussian_MLE throughout: MCMC needs ln L = -cost, and a calibration on

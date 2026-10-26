@@ -10,7 +10,8 @@ Writes to the output directory:
   over its segment, time from the end of the experiment's warm-up;
 - ``features.csv``: ``data_item_name,value`` per scalar feature item;
 - ``validation_results.json``: the items that carry a value against the model;
-- ``<name>.png`` per ``prediction_plots`` entry of the obs_data.
+- ``<name>.png`` per ``prediction_plots`` entry of the obs_data (``<name>_exp_<idx>.png`` per
+  experiment for an ``input_and_output`` entry).
 
 ``--params`` is a CSV of ``name,value`` rows (``vessel/param`` names) applied at the start of
 each experiment, for example a calibrated parameter set.

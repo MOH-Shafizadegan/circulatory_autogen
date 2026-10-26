@@ -28,17 +28,19 @@ def _read_resource(filename):
 
 def _generate(tmp_path, prefix, module_array, parameters, model_type='cellml',
               external_modules_dir=None):
-    """Write ``{prefix}_module_array.csv`` / ``_parameters.csv`` and generate the model.
+    """Write ``{prefix}_module_array.csv`` / ``_parameters.json`` (``parameters`` laid out as
+    CSV rows) and generate the model.
 
     Returns the directory the model was generated into.
     """
     resources_dir = tmp_path / 'resources'
     resources_dir.mkdir(exist_ok=True)
     (resources_dir / f'{prefix}_module_array.csv').write_text(textwrap.dedent(module_array))
-    (resources_dir / f'{prefix}_parameters.csv').write_text(textwrap.dedent(parameters))
+    from _parameters import write_parameters
+    write_parameters(resources_dir / f'{prefix}_parameters.json', textwrap.dedent(parameters))
     config = {
         'file_prefix': prefix,
-        'input_param_file': f'{prefix}_parameters.csv',
+        'input_param_file': f'{prefix}_parameters.json',
         'model_type': model_type,
         'solver': 'solve_ivp' if model_type == 'python' else 'CVODE_myokit',
         'resources_dir': str(resources_dir),
@@ -196,10 +198,10 @@ def test_python_model_with_eq_or_not_min_runs(tmp_path, k, expected_x_rate):
         """,
         f"""\
         variable_name,units,value,data_reference
-        k_eqmod,dimensionless,{k},test
-        k_logic,dimensionless,{k},test
-        a_logic,per_s,2.0,test
-        b_logic,per_s,0.5,test
+        eqmod/k,dimensionless,{k},test
+        logic/k,dimensionless,{k},test
+        logic/a,per_s,2.0,test
+        logic/b,per_s,0.5,test
         """,
         model_type='python', external_modules_dir=str(modules_dir))
 
@@ -314,7 +316,7 @@ def test_empty_sum_multi_port_is_zero(tmp_path, capsys):
     module_array = _read_resource('3compartment_module_array.csv').rstrip('\n') + \
         '\nextra_sum, nn, volume_sum, , \n'
     generated_dir = _generate(tmp_path, 'empty_sum', module_array,
-                              _read_resource('3compartment_parameters.csv'))
+                              _read_resource('3compartment_parameters.json'))
     warnings = [line for line in capsys.readouterr().out.splitlines() if 'WARNING' in line]
     assert any('extra_sum' in line for line in warnings), warnings
 
@@ -337,12 +339,12 @@ def test_empty_sum_multi_port_is_zero(tmp_path, capsys):
 # ---------------------------------------------------------------------------------------
 
 VESSEL_PARAMETERS = """\
-    R_va,Js_per_m6,1.0e7,test
-    C_va,m6_per_J,1.0e-8,test
-    I_va,Js2_per_m6,1.0e5,test
-    q_0_va,m3,0,test
-    u_0_va,J_per_m3,0,test
-    u_ext_va,J_per_m3,0,test
+    va/R,Js_per_m6,1.0e7,test
+    va/C,m6_per_J,1.0e-8,test
+    va/I,Js2_per_m6,1.0e5,test
+    va/q_0,m3,0,test
+    va/u_0,J_per_m3,0,test
+    va/u_ext,J_per_m3,0,test
     """
 
 
@@ -360,8 +362,8 @@ def test_constant_flow_into_vessel_draining_to_constant_pressure(tmp_path):
         """,
         """\
         variable_name,units,value,data_reference
-        v_flow_in,m3_per_s,1.0e-4,test
-        P_p_out,J_per_m3,666.0,test
+        flow_in/v,m3_per_s,1.0e-4,test
+        p_out/P,J_per_m3,666.0,test
         """ + VESSEL_PARAMETERS)
     _, res = _run(generated_dir / 'const_flow_bc.cellml', ['va/v', 'va/u'], sim_time=2.0)
     # Steady state: the vessel passes the imposed inflow, at P_out + R v.
@@ -382,8 +384,8 @@ def test_constant_pressure_into_vessel_drained_by_constant_flow(tmp_path):
         """,
         """\
         variable_name,units,value,data_reference
-        P_p_in,J_per_m3,12000.0,test
-        v_flow_out,m3_per_s,1.0e-4,test
+        p_in/P,J_per_m3,12000.0,test
+        flow_out/v,m3_per_s,1.0e-4,test
         """ + VESSEL_PARAMETERS)
     _, res = _run(generated_dir / 'const_pressure_bc.cellml', ['va/v', 'va/u'], sim_time=2.0)
     # Steady state: the vessel carries the imposed outflow, at P_in - R v.
@@ -400,15 +402,15 @@ def test_constant_pressure_into_vessel_drained_by_constant_flow(tmp_path):
 # resistive pressure drop across the junction is large enough to check.
 JUNCTION_PARAMETERS = """\
     variable_name,units,value,data_reference
-    v_inflow_a,m3_per_s,4.0e-5,test
-    v_inflow_b,m3_per_s,7.0e-5,test
-    P_outp,J_per_m3,12665.6,test
-    u_0_junc,J_per_m3,10640.0,test
-    u_ext_junc,J_per_m3,0.0,test
-    theta_junc,dimensionless,90.0,test
-    E_junc,J_per_m3,4.0e5,test
-    l_junc,metre,0.014796,test
-    r_0_junc,metre,0.0133364,test
+    inflow_a/v,m3_per_s,4.0e-5,test
+    inflow_b/v,m3_per_s,7.0e-5,test
+    outp/P,J_per_m3,12665.6,test
+    junc/u_0,J_per_m3,10640.0,test
+    junc/u_ext,J_per_m3,0.0,test
+    junc/theta,dimensionless,90.0,test
+    junc/E,J_per_m3,4.0e5,test
+    junc/l,metre,0.014796,test
+    junc/r_0,metre,0.0133364,test
     mu,Js_per_m3,1.0,test
     rho,Js2_per_m5,1.0,test
     g,m_per_s2,9.81,test

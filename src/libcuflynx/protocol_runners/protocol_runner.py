@@ -88,15 +88,9 @@ class ProtocolRunner:
         self.MaximumStep = solver_info.get('MaximumStep', 0.001)
         self.MaximumNumberOfSteps = solver_info.get('MaximumNumberOfSteps', 5000)
 
-        # Preserve all solver_info keys (e.g. rtol/atol/method) and only fill in
-        # MaximumStep / MaximumNumberOfSteps defaults — previously the extra keys
-        # were silently dropped, so tight tolerances passed by callers were ignored.
-        #
-        # The MaximumNumberOfSteps default is conditional: this relays solver_info
-        # to the backend rather than consuming it, so seeding it unconditionally
-        # put the key back for solvers whose helper ignores it (CVODE_myokit) --
-        # undoing migrate_legacy_solver_info_keys and re-creating a setting that
-        # looks live but does nothing.
+        # Keep every solver_info key (e.g. rtol/atol/method) and fill in the
+        # MaximumStep / MaximumNumberOfSteps defaults. MaximumNumberOfSteps is seeded
+        # only for solvers that read it (not CVODE_myokit).
         full_solver_info = dict(solver_info)
         if _solver_accepts(solver, 'MaximumNumberOfSteps'):
             full_solver_info.setdefault('MaximumNumberOfSteps', self.MaximumNumberOfSteps)

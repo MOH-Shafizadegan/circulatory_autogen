@@ -5,6 +5,8 @@ These tests verify that parameter identification works correctly for various mod
 """
 import copy
 import os
+from _obs_data import retimed_obs_data
+from _params_for_id import write_params_for_id
 import pytest
 import numpy as np
 from mpi4py import MPI
@@ -57,6 +59,9 @@ def test_operation_and_cost_dicts_are_backend_independent():
     # casadi-mode reductions still take a casadi symbol and stay symbolic.
     s = ca.SX.sym("s", 4)
     assert casadi_ops["mean"](s).shape == (1, 1)
+    # ...nor the module's own backend, which a direct call of a func uses
+    from libcuflynx.param_id import operation_funcs
+    assert float(operation_funcs.mean(x)) == pytest.approx(2.5)
     # bind_backend preserves the @differentiable / series_to_constant markers used by the AD path.
     assert is_circulatory_differentiable(numpy_ops["mean"])
     assert getattr(numpy_ops["mean"], "series_to_constant", False)
@@ -358,9 +363,9 @@ def test_param_id_nke_pump_succeeds(base_user_inputs, resources_dir, temp_output
     config = base_user_inputs.copy()
     config.update({
         'file_prefix': 'NKE_pump',
-        'input_param_file': 'NKE_pump_parameters.csv',
+        'input_param_file': 'NKE_pump_parameters.json',
         'model_type': 'cellml',
-        'solver': 'CVODE',
+        'solver': 'CVODE_myokit',
         'param_id_method': 'genetic_algorithm',
         # Keep runtime short under MPI tests
         'pre_time': 0.5,
@@ -371,7 +376,6 @@ def test_param_id_nke_pump_succeeds(base_user_inputs, resources_dir, temp_output
         'plot_predictions': True,
         'solver_info': {
             'MaximumStep': 0.001,
-            'MaximumNumberOfSteps': 5000,
         },
         'param_id_obs_path': os.path.join(temp_output_dir, 'NKE_pump_obs_data.json'),
         'param_id_output_dir': temp_output_dir,
@@ -422,9 +426,9 @@ def test_param_id_3compartment_succeeds(base_user_inputs, resources_dir, temp_ou
     config = base_user_inputs.copy()
     config.update({
         'file_prefix': '3compartment',
-        'input_param_file': '3compartment_parameters.csv',
+        'input_param_file': '3compartment_parameters.json',
         'model_type': 'cellml',
-        'solver': 'CVODE',
+        'solver': 'CVODE_myokit',
         'param_id_method': 'genetic_algorithm',
         'pre_time': 20,
         'sim_time': 2,
@@ -436,7 +440,6 @@ def test_param_id_3compartment_succeeds(base_user_inputs, resources_dir, temp_ou
         'ia_options': {'method': 'Laplace'},
         'solver_info': {
             'MaximumStep': 0.001,
-            'MaximumNumberOfSteps': 5000,
         },
         'param_id_obs_path': os.path.join(resources_dir, '3compartment_obs_data.json'),
         'param_id_output_dir': temp_output_dir,
@@ -477,7 +480,7 @@ def test_param_id_3compartment_genetic_algorithm_myokit_fast(
     config = base_user_inputs.copy()
     config.update({
         'file_prefix': '3compartment',
-        'input_param_file': '3compartment_parameters.csv',
+        'input_param_file': '3compartment_parameters.json',
         'model_type': 'cellml',
         'solver': 'CVODE_myokit',
         'param_id_method': 'genetic_algorithm',
@@ -488,8 +491,8 @@ def test_param_id_3compartment_genetic_algorithm_myokit_fast(
         'do_uq': False,
         'plot_predictions': False,
         'do_ia': False,
-        'solver_info': {'MaximumStep': 0.001, 'MaximumNumberOfSteps': 5000},
-        'param_id_obs_path': os.path.join(resources_dir, '3compartment_obs_data.json'),
+        'solver_info': {'MaximumStep': 0.001},
+        'param_id_obs_path': retimed_obs_data(os.path.join(resources_dir, '3compartment_obs_data.json'), 2, 1, temp_output_dir),
         'param_id_output_dir': temp_output_dir,
         'generated_models_dir': temp_generated_models_dir,
         # num_calls must exceed the genetic-algorithm population (28 for these 4 params); keep it
@@ -530,7 +533,7 @@ def test_param_id_3compartment_casadi_genetic_algorithm_fast(
     config = base_user_inputs.copy()
     config.update({
         'file_prefix': '3compartment',
-        'input_param_file': '3compartment_parameters.csv',
+        'input_param_file': '3compartment_parameters.json',
         'model_type': 'casadi_python',
         'solver': 'casadi_integrator',
         'param_id_method': 'genetic_algorithm',
@@ -543,7 +546,7 @@ def test_param_id_3compartment_casadi_genetic_algorithm_fast(
         'plot_predictions': False,
         'do_ia': False,
         'solver_info': {'method': 'bdf'},
-        'param_id_obs_path': os.path.join(resources_dir, '3compartment_obs_data.json'),
+        'param_id_obs_path': retimed_obs_data(os.path.join(resources_dir, '3compartment_obs_data.json'), 2, 1, temp_output_dir),
         'param_id_output_dir': temp_output_dir,
         'generated_models_dir': temp_generated_models_dir,
         # num_calls must exceed the DEBUG genetic-algorithm population (28 for these 4 params).
@@ -586,9 +589,9 @@ def test_param_id_3compartment_extra_ops_succeeds(base_user_inputs, resources_di
     config = base_user_inputs.copy()
     config.update({
         'file_prefix': '3compartment_extra_ops',
-        'input_param_file': '3compartment_extra_ops_parameters.csv',
+        'input_param_file': '3compartment_extra_ops_parameters.json',
         'model_type': 'cellml',
-        'solver': 'CVODE',
+        'solver': 'CVODE_myokit',
         'param_id_method': 'genetic_algorithm',
         'pre_time': 20,
         'sim_time': 2,
@@ -600,7 +603,6 @@ def test_param_id_3compartment_extra_ops_succeeds(base_user_inputs, resources_di
         'ia_options': {'method': 'Laplace'},
         'solver_info': {
             'MaximumStep': 0.001,
-            'MaximumNumberOfSteps': 5000,
         },
         'param_id_obs_path': os.path.join(resources_dir, '3compartment_extra_ops_obs_data.json'),
         'param_id_output_dir': temp_output_dir,
@@ -647,9 +649,9 @@ def test_param_id_3compartment_cmaes_succeeds(base_user_inputs, resources_dir, t
     config = base_user_inputs.copy()
     config.update({
         'file_prefix': '3compartment',
-        'input_param_file': '3compartment_parameters.csv',
+        'input_param_file': '3compartment_parameters.json',
         'model_type': 'cellml',
-        'solver': 'CVODE',
+        'solver': 'CVODE_myokit',
         'param_id_method': 'CMA-ES',
         'pre_time': 20,
         'sim_time': 2,
@@ -660,7 +662,6 @@ def test_param_id_3compartment_cmaes_succeeds(base_user_inputs, resources_dir, t
         'do_ia': False,
         'solver_info': {
             'MaximumStep': 0.001,
-            'MaximumNumberOfSteps': 5000,
         },
         'param_id_obs_path': os.path.join(resources_dir, '3compartment_obs_data.json'),
         'param_id_output_dir': temp_output_dir,
@@ -711,7 +712,7 @@ def test_param_id_3compartment_python_succeeds(base_user_inputs, resources_dir, 
     config = base_user_inputs.copy()
     config.update({
         'file_prefix': '3compartment',
-        'input_param_file': '3compartment_parameters.csv',
+        'input_param_file': '3compartment_parameters.json',
         'model_type': 'python',
         'solver': 'solve_ivp',
         'param_id_method': 'genetic_algorithm',
@@ -728,7 +729,7 @@ def test_param_id_3compartment_python_succeeds(base_user_inputs, resources_dir, 
             'rtol': 1e-6,
             'atol': 1e-8,
         },
-        'param_id_obs_path': os.path.join(resources_dir, '3compartment_obs_data.json'),
+        'param_id_obs_path': retimed_obs_data(os.path.join(resources_dir, '3compartment_obs_data.json'), 0.5, 0.3, temp_output_dir),
         'param_id_output_dir': temp_output_dir,
         'generated_models_dir': temp_generated_models_dir,
         'optimiser_options': {'num_calls_to_function': 40, 'max_patience': 10, 'cost_convergence': 1e-3},
@@ -775,9 +776,9 @@ def test_param_id_test_fft_cost_is_zero(base_user_inputs, resources_dir, temp_ou
     config = base_user_inputs.copy()
     config.update({
         'file_prefix': 'test_fft',
-        'input_param_file': 'test_fft_parameters.csv',
+        'input_param_file': 'test_fft_parameters.json',
         'model_type': 'cellml',
-        'solver': 'CVODE',
+        'solver': 'CVODE_myokit',
         'param_id_method': 'genetic_algorithm',
         'pre_time': 1,
         'sim_time': 1,
@@ -789,9 +790,8 @@ def test_param_id_test_fft_cost_is_zero(base_user_inputs, resources_dir, temp_ou
         'ia_options': {'method': 'Laplace'},
         'solver_info': {
             'MaximumStep': 0.001,
-            'MaximumNumberOfSteps': 5000,
         },
-        'param_id_obs_path': os.path.join(resources_dir, 'test_fft_obs_data.json'),
+        'param_id_obs_path': retimed_obs_data(os.path.join(resources_dir, 'test_fft_obs_data.json'), 1, 1, temp_output_dir),
         'param_id_output_dir': temp_output_dir,
         'generated_models_dir': temp_generated_models_dir,
         'debug_optimiser_options': {'num_calls_to_function': 2000, 'max_patience': 500, 'cost_type': 'gaussian_MLE'},  
@@ -858,19 +858,17 @@ def test_param_id_calibration_outputs_match_rerun(base_user_inputs, resources_di
 
     config = base_user_inputs.copy()
     params_for_id_path = os.path.join(
-        temp_output_dir, "3compartment_python_offline_params_for_id.csv"
+        temp_output_dir, "3compartment_python_offline_params_for_id.json"
     )
     if rank == 0:
-        with open(params_for_id_path, "w") as f:
-            f.write(
-                "vessel_name,param_name,param_type,min,max,name_for_plotting\n"
-                "aortic_root,C,const,1e-9,5e-8,C_{ao}\n"
-            )
+        write_params_for_id(params_for_id_path, [
+            {"targets": ["aortic_root/C"], "min": 1e-9, "max": 5e-8, "param_type": "const",
+             "name_for_plotting": "C_{ao}"}])
     mpi_comm.Barrier()
 
     config.update({
         "file_prefix": "3compartment",
-        "input_param_file": "3compartment_parameters.csv",
+        "input_param_file": "3compartment_parameters.json",
         "params_for_id_file": params_for_id_path,
         "model_type": "cellml",
         "solver": "CVODE_myokit",
@@ -884,9 +882,8 @@ def test_param_id_calibration_outputs_match_rerun(base_user_inputs, resources_di
         "do_ia": False,
         "solver_info": {
             "MaximumStep": 0.001,
-            "MaximumNumberOfSteps": 5000,
         },
-        "param_id_obs_path": os.path.join(resources_dir, "3compartment_obs_data.json"),
+        "param_id_obs_path": retimed_obs_data(os.path.join(resources_dir, '3compartment_obs_data.json'), 0.0, 0.2, temp_output_dir),
         "param_id_output_dir": temp_output_dir,
         "generated_models_dir": temp_generated_models_dir,
         "optimiser_options": {
@@ -1004,8 +1001,8 @@ def test_param_id_SN_simple_CVODE_myokit_ga_smoke(
     config.update(
         {
             "file_prefix": "SN_simple",
-            "input_param_file": "SN_simple_parameters.csv",
-            "params_for_id_file": "SN_simple_params_for_id.csv",
+            "input_param_file": "SN_simple_parameters.json",
+            "params_for_id_file": "SN_simple_params_for_id.json",
             "model_type": "cellml",
             "solver": "CVODE_myokit",
             "param_id_method": "genetic_algorithm",
@@ -1018,7 +1015,6 @@ def test_param_id_SN_simple_CVODE_myokit_ga_smoke(
             "do_ia": False,
             "solver_info": {
                 "MaximumStep": 0.02,
-                "MaximumNumberOfSteps": 50000,
             },
             "param_id_obs_path": obs_path,
             "param_id_output_dir": temp_output_dir,
@@ -1133,9 +1129,9 @@ def test_param_id_simple_physiological_succeeds(base_user_inputs, resources_dir,
     config = base_user_inputs.copy()
     config.update({
         'file_prefix': 'simple_physiological',
-        'input_param_file': 'simple_physiological_parameters.csv',
+        'input_param_file': 'simple_physiological_parameters.json',
         'model_type': 'cellml',
-        'solver': 'CVODE',
+        'solver': 'CVODE_myokit',
         'param_id_method': 'genetic_algorithm',
         'pre_time': 20,
         'sim_time': 2,
@@ -1147,7 +1143,6 @@ def test_param_id_simple_physiological_succeeds(base_user_inputs, resources_dir,
         'ia_options': {'method': 'Laplace'},
         'solver_info': {
             'MaximumStep': 0.001,
-            'MaximumNumberOfSteps': 5000,
         },
         'param_id_obs_path': os.path.join(resources_dir, 'simple_physiological_obs_data.json'),
         'param_id_output_dir': temp_output_dir,
@@ -1200,7 +1195,7 @@ def test_param_id_lotka_volterra_sp_minimize_succeeds(base_user_inputs, resource
     config = base_user_inputs.copy()
     config.update({
         'file_prefix': 'Lotka_Volterra',
-        'input_param_file': 'Lotka_Volterra_parameters.csv',
+        'input_param_file': 'Lotka_Volterra_parameters.json',
         'model_type': 'casadi_python',
         'solver': 'casadi_integrator',
         'param_id_method': 'sp_minimize',
@@ -1286,7 +1281,7 @@ def test_param_id_lotka_volterra_sp_minimize_ad_vs_fd(base_user_inputs, resource
     base_config = base_user_inputs.copy()
     base_config.update({
         'file_prefix': 'Lotka_Volterra',
-        'input_param_file': 'Lotka_Volterra_parameters.csv',
+        'input_param_file': 'Lotka_Volterra_parameters.json',
         'model_type': 'casadi_python',
         'solver': 'casadi_integrator',
         'param_id_method': 'sp_minimize',
@@ -1421,7 +1416,7 @@ def test_param_id_lotka_volterra_sp_minimize_ad_vs_fd_aadc(base_user_inputs, res
     base_config = base_user_inputs.copy()
     base_config.update({
         'file_prefix': 'Lotka_Volterra',
-        'input_param_file': 'Lotka_Volterra_parameters.csv',
+        'input_param_file': 'Lotka_Volterra_parameters.json',
         'model_type': 'aadc_python',
         'solver': 'aadc_semi_implicit',
         'param_id_method': 'sp_minimize',
@@ -1519,7 +1514,7 @@ def test_param_id_lotka_volterra_sp_minimize_gt_vs_calculated_params(base_user_i
     config = base_user_inputs.copy()
     config.update({
         'file_prefix': 'Lotka_Volterra',
-        'input_param_file': 'Lotka_Volterra_parameters.csv',
+        'input_param_file': 'Lotka_Volterra_parameters.json',
         'model_type': 'casadi_python',
         'solver': 'casadi_integrator',
         'param_id_method': 'sp_minimize',
@@ -1727,8 +1722,8 @@ def test_3compartment_nonstiff_casadi_forward_and_gradient(
     config = base_user_inputs.copy()
     config.update({
         'file_prefix': '3compartment_nonstiff',
-        'input_param_file': '3compartment_nonstiff_parameters.csv',
-        'params_for_id_file': '3compartment_nonstiff_params_for_id.csv',
+        'input_param_file': '3compartment_nonstiff_parameters.json',
+        'params_for_id_file': '3compartment_nonstiff_params_for_id.json',
         'model_type': 'casadi_python',
         'solver': 'casadi_integrator',
         'param_id_method': 'sp_minimize',
@@ -1745,7 +1740,7 @@ def test_3compartment_nonstiff_casadi_forward_and_gradient(
             'max_num_steps': 50000,
             'method': 'cvodes',
         },
-        'param_id_obs_path': os.path.join(resources_dir, '3compartment_obs_data.json'),
+        'param_id_obs_path': retimed_obs_data(os.path.join(resources_dir, '3compartment_obs_data.json'), 0.0, 0.3, temp_output_dir),
         'param_id_output_dir': temp_output_dir,
         'generated_models_dir': temp_generated_models_dir,
         'resources_dir': resources_dir,
@@ -1761,7 +1756,7 @@ def test_3compartment_nonstiff_casadi_forward_and_gradient(
 
     runner = CVS0DParamID.init_from_dict(parsed)
 
-    with open(os.path.join(resources_dir, '3compartment_obs_data.json')) as f:
+    with open(retimed_obs_data(os.path.join(resources_dir, '3compartment_obs_data.json'), 0.0, 0.3, temp_output_dir)) as f:
         obs_data = json.load(f)
     runner.set_ground_truth_data(obs_data)
 
@@ -1854,11 +1849,13 @@ def _build_3compartment_casadi_runner(
     """
     import json
 
+    obs_path = retimed_obs_data(os.path.join(resources_dir, obs_file), pre_time, sim_time,
+                                temp_output_dir)
     config = base_user_inputs.copy()
     config.update({
         'file_prefix': '3compartment',
-        'input_param_file': '3compartment_parameters.csv',
-        'params_for_id_file': '3compartment_params_for_id.csv',
+        'input_param_file': '3compartment_parameters.json',
+        'params_for_id_file': '3compartment_params_for_id.json',
         'model_type': 'casadi_python',
         'solver': 'casadi_integrator',
         'param_id_method': 'sp_minimize',
@@ -1875,7 +1872,7 @@ def _build_3compartment_casadi_runner(
             'max_num_steps': 50000,
             'method': method,
         },
-        'param_id_obs_path': os.path.join(resources_dir, obs_file),
+        'param_id_obs_path': obs_path,
         'param_id_output_dir': temp_output_dir,
         'generated_models_dir': temp_generated_models_dir,
         'resources_dir': resources_dir,
@@ -1890,7 +1887,7 @@ def _build_3compartment_casadi_runner(
     parsed['one_rank'] = True
 
     runner = CVS0DParamID.init_from_dict(parsed)
-    with open(os.path.join(resources_dir, obs_file)) as f:
+    with open(obs_path) as f:
         obs_data = json.load(f)
     runner.set_ground_truth_data(obs_data)
 
@@ -2080,11 +2077,13 @@ def _build_3compartment_fsa_runner(
     """
     import json
 
+    obs_path = retimed_obs_data(os.path.join(resources_dir, obs_file), pre_time, sim_time,
+                                temp_output_dir)
     config = base_user_inputs.copy()
     config.update({
         'file_prefix': '3compartment',
-        'input_param_file': '3compartment_parameters.csv',
-        'params_for_id_file': '3compartment_params_for_id.csv',
+        'input_param_file': '3compartment_parameters.json',
+        'params_for_id_file': '3compartment_params_for_id.json',
         'model_type': 'cellml',
         'solver': 'CVODE_myokit',
         'param_id_method': 'sp_minimize',
@@ -2096,9 +2095,9 @@ def _build_3compartment_fsa_runner(
         'do_uq': False,
         'plot_predictions': False,
         'do_ia': False,
-        'solver_info': {'MaximumStep': 0.005, 'MaximumNumberOfSteps': 50000,
+        'solver_info': {'MaximumStep': 0.005,
                         'rtol': 1e-9, 'atol': 1e-9},
-        'param_id_obs_path': os.path.join(resources_dir, obs_file),
+        'param_id_obs_path': obs_path,
         'param_id_output_dir': temp_output_dir,
         'generated_models_dir': temp_generated_models_dir,
         'resources_dir': resources_dir,
@@ -2113,7 +2112,7 @@ def _build_3compartment_fsa_runner(
     parsed['one_rank'] = True
 
     runner = CVS0DParamID.init_from_dict(parsed)
-    with open(os.path.join(resources_dir, obs_file)) as f:
+    with open(obs_path) as f:
         obs_data = json.load(f)
     runner.set_ground_truth_data(obs_data)
 
@@ -2298,8 +2297,8 @@ def _lotka_multisub_fsa_config(base_user_inputs, resources_dir, output_dir, gene
     config = base_user_inputs.copy()
     config.update({
         'file_prefix': 'Lotka_Volterra',
-        'input_param_file': 'Lotka_Volterra_parameters.csv',
-        'params_for_id_file': 'Lotka_Volterra_params_for_id.csv',
+        'input_param_file': 'Lotka_Volterra_parameters.json',
+        'params_for_id_file': 'Lotka_Volterra_params_for_id.json',
         'model_type': 'cellml',
         'solver': 'CVODE_myokit',
         'do_ad': True,
@@ -2310,7 +2309,7 @@ def _lotka_multisub_fsa_config(base_user_inputs, resources_dir, output_dir, gene
         'do_uq': False,
         'plot_predictions': False,
         'do_ia': False,
-        'solver_info': {'MaximumStep': 0.005, 'MaximumNumberOfSteps': 50000,
+        'solver_info': {'MaximumStep': 0.005,
                         'rtol': 1e-9, 'atol': 1e-9},
         'param_id_obs_path': os.path.join(resources_dir, 'Lotka_Volterra_multisub_obs_data.json'),
         'param_id_output_dir': output_dir,
@@ -2431,7 +2430,7 @@ def test_param_id_3compartment_nonstiff_casadi_succeeds(
 
     rank = mpi_comm.Get_rank()
 
-    # Ground-truth values for identified parameters (from 3compartment_nonstiff_parameters.csv)
+    # Ground-truth values for identified parameters (from 3compartment_nonstiff_parameters.json)
     GT = {
         'global/q_lv_init': 0.002,
         'global/E_lv_A':    366575000.0,
@@ -2451,8 +2450,8 @@ def test_param_id_3compartment_nonstiff_casadi_succeeds(
     config = base_user_inputs.copy()
     config.update({
         'file_prefix': '3compartment_nonstiff',
-        'input_param_file': '3compartment_nonstiff_parameters.csv',
-        'params_for_id_file': '3compartment_nonstiff_params_for_id.csv',
+        'input_param_file': '3compartment_nonstiff_parameters.json',
+        'params_for_id_file': '3compartment_nonstiff_params_for_id.json',
         'model_type': 'casadi_python',
         'solver': 'casadi_integrator',
         'param_id_method': 'sp_minimize',
@@ -2505,7 +2504,7 @@ def test_param_id_3compartment_nonstiff_casadi_succeeds(
 
         # --- Step 2: build obs_data from GT simulation ---
         # Replace every item in the template with values from the GT simulation.
-        with open(os.path.join(resources_dir, '3compartment_obs_data.json')) as f:
+        with open(retimed_obs_data(os.path.join(resources_dir, '3compartment_obs_data.json'), 0.0, 0.3, temp_output_dir)) as f:
             obs_template = json.load(f)
 
         _op_map = {
@@ -2514,7 +2513,7 @@ def test_param_id_3compartment_nonstiff_casadi_succeeds(
             'min':           lambda a: float(a.min()),
             'max_minus_min': lambda a: float(a.max() - a.min()),
         }
-        for item in obs_template:
+        for item in obs_template['data_items']:
             op = item.get('operation')
             operand_name = item.get('operands', [None])[0]
             if op in _op_map and operand_name in results:
@@ -2526,31 +2525,24 @@ def test_param_id_3compartment_nonstiff_casadi_succeeds(
         with open(obs_data_path, 'w') as f:
             json.dump(obs_template, f, indent=2)
 
-        # --- Step 3: perturb parameters in a copy of the CSV and regenerate the model ---
+        # --- Step 3: perturb parameters in a copy of the parameters file and regenerate the model ---
         # sp_minimize starts from param_init = CSV values (see paramID.run_param_id).
         # Ground-truth observables stay at GT; only the optimiser starting point moves +3 %.
-        src_csv = os.path.join(resources_dir, '3compartment_nonstiff_parameters.csv')
-        pert_csv = os.path.join(temp_output_dir, '3compartment_nonstiff_parameters_perturbed.csv')
-        with open(src_csv, newline='') as f_in:
-            reader = csv_module.DictReader(f_in)
-            fieldnames = reader.fieldnames
-            rows = []
-            for row in reader:
-                for pk, csv_name in GT_CSV_NAMES.items():
-                    if row['variable_name'] == csv_name:
-                        row['value'] = str(perturbed_gt[pk])
-                rows.append(row)
-        with open(pert_csv, 'w', newline='') as f_out:
-            writer = csv_module.DictWriter(f_out, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(rows)
+        from libcuflynx.utilities import parameters_file
+        src_csv = os.path.join(resources_dir, '3compartment_nonstiff_parameters.json')
+        pert_csv = os.path.join(temp_output_dir, '3compartment_nonstiff_parameters_perturbed.json')
+        doc = parameters_file.read_parameters_file(src_csv)
+        for pk, csv_name in GT_CSV_NAMES.items():
+            parameters_file.get_leaf(doc, parameters_file.name_path(csv_name))['value'] = \
+                str(perturbed_gt[pk])
+        parameters_file.write_parameters_file(pert_csv, doc)
 
         config['input_param_file'] = pert_csv
         success = generate_with_new_architecture(False, config)
         assert success, "Regeneration with perturbed parameters should succeed"
 
         print("\nGT observables used for cost (from GT simulation):")
-        for item in obs_template:
+        for item in obs_template["data_items"]:
             if item.get('weight', 0) != 0:
                 print(
                     f"  {item['operation']:>14} {item['operands'][0]:<20} "
@@ -2615,8 +2607,8 @@ def test_param_id_3compartment_nonstiff_python_succeeds(
     config = base_user_inputs.copy()
     config.update({
         'file_prefix': '3compartment_nonstiff',
-        'input_param_file': '3compartment_nonstiff_parameters.csv',
-        'params_for_id_file': '3compartment_nonstiff_params_for_id.csv',
+        'input_param_file': '3compartment_nonstiff_parameters.json',
+        'params_for_id_file': '3compartment_nonstiff_params_for_id.json',
         'model_type': 'python',
         'solver': 'solve_ivp',
         'param_id_method': 'genetic_algorithm',
@@ -2633,7 +2625,7 @@ def test_param_id_3compartment_nonstiff_python_succeeds(
             'atol': 1e-8,
             'max_step': 1e-3,
         },
-        'param_id_obs_path': os.path.join(resources_dir, '3compartment_obs_data.json'),
+        'param_id_obs_path': retimed_obs_data(os.path.join(resources_dir, '3compartment_obs_data.json'), 0.5, 0.3, temp_output_dir),
         'param_id_output_dir': temp_output_dir,
         'generated_models_dir': temp_generated_models_dir,
         'optimiser_options': {'num_calls_to_function': 40, 'max_patience': 10, 'cost_convergence': 1e-3},
@@ -2703,7 +2695,7 @@ def test_param_id_lotka_volterra_sp_minimize_numpy_only_operation(base_user_inpu
     config = base_user_inputs.copy()
     config.update({
         'file_prefix': 'Lotka_Volterra',
-        'input_param_file': 'Lotka_Volterra_parameters.csv',
+        'input_param_file': 'Lotka_Volterra_parameters.json',
         'model_type': 'casadi_python',
         'solver': 'casadi_integrator',
         'param_id_method': 'sp_minimize',
@@ -2795,9 +2787,9 @@ def test_laplace_approximation_hessian_validation(base_user_inputs, resources_di
     config = base_user_inputs.copy()  
     config.update({  
         'file_prefix': 'Simple_ODE_Benchmark',  # Replace with your model name  
-        'input_param_file': 'Simple_ODE_Benchmark_parameters.csv',  # Replace with your CSV  
+        'input_param_file': 'Simple_ODE_Benchmark_parameters.json',  # Replace with your CSV  
         'model_type': 'cellml',  
-        'solver': 'CVODE',  
+        'solver': 'CVODE_myokit',  
         'param_id_method': 'genetic_algorithm',  
         'pre_time': 0.5,  
         'sim_time': 10.0,  
@@ -2808,7 +2800,7 @@ def test_laplace_approximation_hessian_validation(base_user_inputs, resources_di
         'plot_predictions': False,  
         'do_ia': True,  
         'ia_options': {'method': 'Laplace', 'sub_method': 'numdifftools_finite_diff'},  # Options: numdifftools_finite_diff, AD, parabola_fit
-        "params_for_id_file": "Simple_ODE_Benchmark_params_for_id.csv",  # Specify which params to identify
+        "params_for_id_file": "Simple_ODE_Benchmark_params_for_id.json",  # Specify which params to identify
         'param_id_obs_path': os.path.join(resources_dir, 'Simple_ODE_Benchmark_obs_data.json'),  
         'param_id_output_dir': temp_output_dir,  
         'debug_optimiser_options': {'num_calls_to_function': 20, 'cost_type': 'gaussian_MLE'},  
@@ -2905,8 +2897,8 @@ def test_offline_pre_time_lotka_volterra_outputs_match(
     config = base_user_inputs.copy()
     config.update({
         "file_prefix": "Lotka_Volterra",
-        "input_param_file": "Lotka_Volterra_parameters.csv",
-        "params_for_id_file": "Lotka_Volterra_params_for_id.csv",
+        "input_param_file": "Lotka_Volterra_parameters.json",
+        "params_for_id_file": "Lotka_Volterra_params_for_id.json",
         "model_type": "cellml",
         "solver": "CVODE_myokit",
         "param_id_method": "genetic_algorithm",
@@ -2920,7 +2912,6 @@ def test_offline_pre_time_lotka_volterra_outputs_match(
         "generated_models_dir": temp_generated_models_dir,
         "solver_info": {
             "MaximumStep": 0.001,
-            "MaximumNumberOfSteps": 5000,
         },
     })
 
@@ -2962,13 +2953,13 @@ def test_offline_pre_time_3compartment_outputs_match(
 
     rank = mpi_comm.Get_rank()
 
-    base_obs_path = os.path.join(resources_dir, "3compartment_obs_data.json")
+    base_obs_path = retimed_obs_data(os.path.join(resources_dir, '3compartment_obs_data.json'), 2.0, 2.0, temp_output_dir)
 
     config = base_user_inputs.copy()
     config.update({
         "file_prefix": "3compartment",
-        "input_param_file": "3compartment_parameters.csv",
-        "params_for_id_file": "3compartment_q_lv_only_params_for_id.csv",
+        "input_param_file": "3compartment_parameters.json",
+        "params_for_id_file": "3compartment_q_lv_only_params_for_id.json",
         "model_type": "cellml",
         "solver": "CVODE_myokit",
         "param_id_method": "genetic_algorithm",
@@ -2982,7 +2973,6 @@ def test_offline_pre_time_3compartment_outputs_match(
         "generated_models_dir": temp_generated_models_dir,
         "solver_info": {
             "MaximumStep": 0.001,
-            "MaximumNumberOfSteps": 5000,
         },
     })
 
@@ -2993,7 +2983,7 @@ def test_offline_pre_time_3compartment_outputs_match(
 
     if rank == 0:
         with open(base_obs_path, "r") as f:
-            data_items = json.load(f)
+            data_items = json.load(f)["data_items"]
 
         obs_no_offline = {
             "protocol_info": {
@@ -3070,9 +3060,10 @@ def test_offline_pre_time_lotka_volterra_casadi_outputs_match(
         generation_cfg = base_user_inputs.copy()
         generation_cfg.update({
             "file_prefix": "Lotka_Volterra",
-            "input_param_file": "Lotka_Volterra_parameters.csv",
+            "input_param_file": "Lotka_Volterra_parameters.json",
             "model_type": "casadi_python",
             "solver": "casadi_integrator",
+            "solver_info": {"method": "cvodes"},
             "resources_dir": resources_dir,
         })
         assert generate_with_new_architecture(False, generation_cfg), "CasADi model generation failed"
@@ -3082,8 +3073,8 @@ def test_offline_pre_time_lotka_volterra_casadi_outputs_match(
     config = base_user_inputs.copy()
     config.update({
         "file_prefix": "Lotka_Volterra",
-        "input_param_file": "Lotka_Volterra_parameters.csv",
-        "params_for_id_file": "Lotka_Volterra_params_for_id.csv",
+        "input_param_file": "Lotka_Volterra_parameters.json",
+        "params_for_id_file": "Lotka_Volterra_params_for_id.json",
         "model_type": "casadi_python",
         "solver": "casadi_integrator",
         "param_id_method": "genetic_algorithm",
@@ -3139,12 +3130,12 @@ def test_offline_pre_time_3compartment_python_outputs_match(
     import json
 
     rank = mpi_comm.Get_rank()
-    base_obs_path = os.path.join(resources_dir, "3compartment_obs_data.json")
+    base_obs_path = retimed_obs_data(os.path.join(resources_dir, '3compartment_obs_data.json'), 2.0, 2.0, temp_output_dir)
     config = base_user_inputs.copy()
     config.update({
         "file_prefix": "3compartment",
-        "input_param_file": "3compartment_parameters.csv",
-        "params_for_id_file": "3compartment_q_lv_only_params_for_id.csv",
+        "input_param_file": "3compartment_parameters.json",
+        "params_for_id_file": "3compartment_q_lv_only_params_for_id.json",
         "model_type": "python",
         "solver": "solve_ivp",
         "param_id_method": "genetic_algorithm",
@@ -3174,7 +3165,7 @@ def test_offline_pre_time_3compartment_python_outputs_match(
 
     if rank == 0:
         with open(base_obs_path, "r") as f:
-            data_items = json.load(f)
+            data_items = json.load(f)["data_items"]
         obs_no = {
             "protocol_info": {
                 "pre_times": [0.5],
@@ -3246,7 +3237,7 @@ def test_parse_obs_data_json_rejects_value_and_npy_paths(tmp_path):
 
     parser = ObsAndParamDataParser()
     with pytest.raises(ValueError, match=r"(?s)not allowed.*not both"):
-        parser.parse_obs_data_json(obs_data_dict=obs_data_dict, pre_time=0.0, sim_time=1.0)
+        parser.parse_obs_data_json(obs_data_dict=obs_data_dict)
 
 
 def test_parse_obs_data_json_series_std_scalar_from_npy_paths(tmp_path):
@@ -3282,7 +3273,7 @@ def test_parse_obs_data_json_series_std_scalar_from_npy_paths(tmp_path):
 
     parser = ObsAndParamDataParser()
     parsed = parser.parse_obs_data_json(
-        obs_data_dict=obs_data_dict, pre_time=0.0, sim_time=1.0,
+        obs_data_dict=obs_data_dict,
     )
     assert list(parsed["gt_df"].iloc[0]["std"]) == [0.5, 0.5, 0.5]
 
@@ -3318,7 +3309,7 @@ def test_parse_obs_data_json_series_std_required_for_npy_paths(tmp_path):
 
     parser = ObsAndParamDataParser()
     with pytest.raises(ValueError, match=r"'std' is a required property"):
-        parser.parse_obs_data_json(obs_data_dict=obs_data_dict, pre_time=0.0, sim_time=1.0)
+        parser.parse_obs_data_json(obs_data_dict=obs_data_dict)
 
 
 
@@ -3333,8 +3324,8 @@ def test_param_id_archives_input_files(resources_dir, temp_output_dir,
     import re
 
     rank = mpi_comm.Get_rank()
-    model_path = generated_cellml_model_factory('3compartment', '3compartment_parameters.csv')
-    params_for_id_path = os.path.join(resources_dir, '3compartment_params_for_id.csv')
+    model_path = generated_cellml_model_factory('3compartment', '3compartment_parameters.json')
+    params_for_id_path = os.path.join(resources_dir, '3compartment_params_for_id.json')
     obs_path = os.path.join(resources_dir, '3compartment_obs_data.json')
 
     runner = CVS0DParamID.init_from_dict({
@@ -3346,7 +3337,7 @@ def test_param_id_archives_input_files(resources_dir, temp_output_dir,
         'param_id_obs_path': obs_path,
         'resources_dir': resources_dir,
         'param_id_output_dir': temp_output_dir,
-        'solver_info': {'solver': 'CVODE_myokit', 'MaximumStep': 0.001, 'MaximumNumberOfSteps': 5000},
+        'solver_info': {'solver': 'CVODE_myokit', 'MaximumStep': 0.001},
         'dt': 0.01, 'sim_time': 2.0, 'pre_time': 20.0, 'DEBUG': False,
     })
 
@@ -3354,7 +3345,7 @@ def test_param_id_archives_input_files(resources_dir, temp_output_dir,
         out = runner.output_dir
         files = os.listdir(out)
         params_copies = [f for f in files
-                         if re.fullmatch(r'3compartment_params_for_id_\d{6}_\d{6}\.csv', f)]
+                         if re.fullmatch(r'3compartment_params_for_id_\d{6}_\d{6}\.json', f)]
         obs_copies = [f for f in files
                       if re.fullmatch(r'3compartment_obs_data_\d{6}_\d{6}\.json', f)]
         assert params_copies, f"no timestamped params_for_id copy in {out}: {files}"
@@ -3912,8 +3903,8 @@ def test_multi_start_reports_both_minima_of_a_two_minimum_model(
     config = base_user_inputs.copy()
     config.update({
         'file_prefix': 'TwoMinima',
-        'input_param_file': 'TwoMinima_parameters.csv',
-        'params_for_id_file': 'TwoMinima_params_for_id.csv',
+        'input_param_file': 'TwoMinima_parameters.json',
+        'params_for_id_file': 'TwoMinima_params_for_id.json',
         'model_type': 'cellml',
         'solver': 'CVODE_myokit',
         'param_id_method': 'multi_start_sp_minimize',
@@ -3925,7 +3916,7 @@ def test_multi_start_reports_both_minima_of_a_two_minimum_model(
         'do_uq': False,
         'plot_predictions': False,
         'do_ia': False,
-        'solver_info': {'MaximumStep': 0.01, 'MaximumNumberOfSteps': 5000},
+        'solver_info': {'MaximumStep': 0.01},
         'param_id_obs_path': os.path.join(resources_dir, 'TwoMinima_obs_data.json'),
         'param_id_output_dir': temp_output_dir,
         'generated_models_dir': temp_generated_models_dir,
@@ -4327,7 +4318,7 @@ def test_multi_start_streams_per_start_gradient_history_live(temp_output_dir):
 # benchmark: its least-squares surface has many local minima, because a wrong recovery rate
 # c puts the simulated spike train out of phase with the data (Ramsay et al. 2007, JRSS-B,
 # "Parameter estimation for differential equations: a generalized smoothing approach").
-# resources/FitzHugh_Nagumo_parameters.csv deliberately starts at (a, b, c) = (0.8, 0.9, 2.0),
+# resources/FitzHugh_Nagumo_parameters.json deliberately starts at (a, b, c) = (0.8, 0.9, 2.0),
 # which is inside a local basin: a single L-BFGS-B descent converges to (1, 1, 2.07) and
 # stops, nowhere near the true (0.2, 0.2, 3.0).
 # The FitzHugh-Nagumo benchmark run logic lives in benchmarks/ so it can be driven both by the
@@ -4647,8 +4638,8 @@ def _aadc_lotka_volterra_config(base_user_inputs, resources_dir, temp_output_dir
     config = base_user_inputs.copy()
     config.update({
         'file_prefix': 'Lotka_Volterra',
-        'input_param_file': 'Lotka_Volterra_parameters.csv',
-        'params_for_id_file': 'Lotka_Volterra_params_for_id.csv',
+        'input_param_file': 'Lotka_Volterra_parameters.json',
+        'params_for_id_file': 'Lotka_Volterra_params_for_id.json',
         'model_type': 'aadc_python',
         'solver': 'aadc_semi_implicit',
         'param_id_method': param_id_method,
@@ -4761,8 +4752,8 @@ def _aadc_3compartment_config(base_user_inputs, resources_dir, temp_output_dir,
     config = base_user_inputs.copy()
     config.update({
         'file_prefix': '3compartment',
-        'input_param_file': '3compartment_parameters.csv',
-        'params_for_id_file': '3compartment_params_for_id.csv',
+        'input_param_file': '3compartment_parameters.json',
+        'params_for_id_file': '3compartment_params_for_id.json',
         'model_type': 'aadc_python',
         'solver': 'aadc_semi_implicit',
         'param_id_method': 'sp_minimize',
@@ -4775,7 +4766,7 @@ def _aadc_3compartment_config(base_user_inputs, resources_dir, temp_output_dir,
         'plot_predictions': False,
         'do_ia': False,
         'solver_info': {'method': 'semi_implicit'},  # fixed-step, tape-consistent
-        'param_id_obs_path': os.path.join(resources_dir, '3compartment_obs_data.json'),
+        'param_id_obs_path': retimed_obs_data(os.path.join(resources_dir, '3compartment_obs_data.json'), 0.0, 0.3, temp_output_dir),
         'param_id_output_dir': temp_output_dir,
         'generated_models_dir': temp_generated_models_dir,
         'resources_dir': resources_dir,
@@ -4831,8 +4822,8 @@ def _aadc_fitzhugh_nagumo_config(base_user_inputs, resources_dir, temp_output_di
     config = base_user_inputs.copy()
     config.update({
         'file_prefix': 'FitzHugh_Nagumo',
-        'input_param_file': 'FitzHugh_Nagumo_parameters.csv',
-        'params_for_id_file': 'FitzHugh_Nagumo_params_for_id.csv',
+        'input_param_file': 'FitzHugh_Nagumo_parameters.json',
+        'params_for_id_file': 'FitzHugh_Nagumo_params_for_id.json',
         'model_type': 'aadc_python',
         'solver': 'aadc_semi_implicit',
         'param_id_method': param_id_method,
@@ -5023,8 +5014,8 @@ def _build_lotka_offline_gradient_runner(
     config = base_user_inputs.copy()
     config.update({
         'file_prefix': 'Lotka_Volterra',
-        'input_param_file': 'Lotka_Volterra_parameters.csv',
-        'params_for_id_file': 'Lotka_Volterra_params_for_id.csv',
+        'input_param_file': 'Lotka_Volterra_parameters.json',
+        'params_for_id_file': 'Lotka_Volterra_params_for_id.json',
         'model_type': model_type,
         'solver': solver,
         'param_id_method': 'sp_minimize',
@@ -5125,7 +5116,7 @@ def test_offline_pre_time_multisub_fsa_gradient(
     runner, baseline = _build_lotka_offline_gradient_runner(
         base_user_inputs, resources_dir, temp_output_dir, temp_generated_models_dir,
         model_type='cellml', solver='CVODE_myokit',
-        solver_info={'MaximumStep': 0.005, 'MaximumNumberOfSteps': 50000,
+        solver_info={'MaximumStep': 0.005,
                      'rtol': 1e-10, 'atol': 1e-10},
         offline_calls=offline_calls)
     inner = runner.param_id
@@ -5225,7 +5216,7 @@ def test_param_id_3compartment_modifier_calibration_fsa(
     config = base_user_inputs.copy()
     config.update({
         'file_prefix': '3compartment',
-        'input_param_file': '3compartment_parameters.csv',
+        'input_param_file': '3compartment_parameters.json',
         'model_type': 'cellml',
         'solver': 'CVODE_myokit',
         'param_id_method': 'sp_minimize',
@@ -5237,8 +5228,8 @@ def test_param_id_3compartment_modifier_calibration_fsa(
         'do_uq': False,
         'plot_predictions': False,
         'do_ia': False,
-        'solver_info': {'MaximumStep': 0.001, 'MaximumNumberOfSteps': 5000},
-        'param_id_obs_path': os.path.join(resources_dir, '3compartment_obs_data.json'),
+        'solver_info': {'MaximumStep': 0.001},
+        'param_id_obs_path': retimed_obs_data(os.path.join(resources_dir, '3compartment_obs_data.json'), 2, 1, temp_output_dir),
         # os.path.join(resources_dir, <absolute path>) resolves to the absolute path, the same
         # way every test's absolute param_id_obs_path passes through its own join.
         'params_for_id_file': params_path,
@@ -5278,7 +5269,7 @@ def test_param_id_3compartment_modifier_calibration_fsa(
         assert mod['name'] == 'C_scale'
         assert mod['modifier'] == 'scale'
         assert mod['targets'] == ['aortic_root/C', 'par/C']
-        # Model defaults from 3compartment_parameters.csv (C_aortic_root, C_par).
+        # Model defaults from 3compartment_parameters.json (C_aortic_root, C_par).
         assert mod['baselines'] == pytest.approx([1.2028e-8, 3.09077e-10], rel=1e-6), \
             f'baselines should be the model defaults, got {mod["baselines"]}'
     mpi_comm.Barrier()
@@ -5358,7 +5349,7 @@ def test_param_id_3compartment_remainder_calibration_fsa(
     config = base_user_inputs.copy()
     config.update({
         'file_prefix': '3compartment',
-        'input_param_file': '3compartment_parameters.csv',
+        'input_param_file': '3compartment_parameters.json',
         'model_type': 'cellml',
         'solver': 'CVODE_myokit',
         'param_id_method': 'sp_minimize',
@@ -5370,8 +5361,8 @@ def test_param_id_3compartment_remainder_calibration_fsa(
         'do_uq': False,
         'plot_predictions': False,
         'do_ia': False,
-        'solver_info': {'MaximumStep': 0.001, 'MaximumNumberOfSteps': 5000},
-        'param_id_obs_path': os.path.join(resources_dir, '3compartment_obs_data.json'),
+        'solver_info': {'MaximumStep': 0.001},
+        'param_id_obs_path': retimed_obs_data(os.path.join(resources_dir, '3compartment_obs_data.json'), 2, 1, temp_output_dir),
         'params_for_id_file': params_path,
         'param_id_output_dir': temp_output_dir,
         'generated_models_dir': temp_generated_models_dir,

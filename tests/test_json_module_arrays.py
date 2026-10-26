@@ -1,14 +1,14 @@
 """JSON module arrays, CSV read through the same records, and supermodules.
 
-A module array may be ``<prefix>_module_array.json`` -- a list of records in the current keys
-(``name, module_type, module_subtype, inp_instances, out_instances``) or the older libcuflynx keys
-(``name, vessel_type, BC_type, inp_vessels, out_vessels``) -- and a CSV array is read by
-converting each row to the same record (utilities/config_schemas.py).
+A module array may be ``<prefix>_module_array.json`` -- a list of records (``name, module_type,
+module_subtype, inp_instances, out_instances``) -- and a CSV array is read by converting each row
+to the same record (utilities/config_schemas.py).
 
-A supermodule is a module config entry with ``"module_format": "supermodule"`` and a list of
-``submodules``; an instance of it in a module array expands into ``<instance>_<sub>`` records
-before anything else sees the array (utilities/supermodules.py). Its hosts are linked to
-submodules by ``per_submodule_inputs`` / ``per_submodule_outputs``.
+A supermodule is a module config entry with ``"module_format": "supermodule"`` and the
+``submodule_versions`` it is built from; its instances are its own module array beside the config
+(tests/_supermodules.py writes both from one dict). An instance of it in a module array expands
+into ``<instance>__<sub>`` records before anything else sees the array (utilities/supermodules.py).
+Its hosts are linked to submodules by ``per_submodule_inputs`` / ``per_submodule_outputs``.
 
 The fixture modules are those of test_config_schemas.py.
 """
@@ -16,7 +16,6 @@ import copy
 import csv
 import glob
 import json
-import warnings
 import os
 import shutil
 import subprocess
@@ -26,6 +25,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from _supermodules import split_supermodule, write_supermodule, write_supermodules
 from test_config_schemas import (FULL_PARAMS, FULL_ROWS, _assert_same_generated_models,
                                  _prescribed_params, _simulate, _write_library, modules_config)
 
@@ -35,7 +35,11 @@ from libcuflynx.utilities.config_schemas import (load_supermodule_registry, load
                                                  normalise_module_config_entry,
                                                  read_module_array_records, module_array_path,
                                                  module_array_to_json, vessel_records_to_frame)
-from libcuflynx.utilities.supermodules import expand_supermodules
+from libcuflynx.utilities.module_library import ModuleSources
+from libcuflynx.utilities.supermodules import (expand_supermodules, instance_values_from_version,
+                                               write_instance_parameters)
+from libcuflynx.utilities import parameters_file
+from _parameters import MODULE, read_parameters, write_parameters
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RESOURCES_DIR = os.path.join(REPO_ROOT, 'resources')
@@ -53,23 +57,22 @@ def _rec(name, module_type, inp=(), out=(), subtype='nn', **extra):
     return record
 
 
-def _to_libcuflynx(record):
-    """The record in the older libcuflynx keys."""
-    keys = {'module_type': 'vessel_type', 'module_subtype': 'BC_type',
-            'inp_instances': 'inp_vessels', 'out_instances': 'out_vessels'}
-    return {keys.get(k, k): v for k, v in record.items()}
-
+# supermodules are written with their instance records inline, as "submodules"; on disk they
+# are a config entry with submodule_versions and a module array (tests/_supermodules.py)
 
 # "flowpair": a collector fed by the host, and a Multiply gain feeding a host reader
 FLOWPAIR = {
     'module_type': 'flowpair', 'module_subtype': 'supermodule', 'module_format': 'supermodule',
     'description': 'a flow collector and a gain, for tests',
     'submodules': [_rec('coll', 'collector'), _rec('g', 'gain')],
-    'default_parameters': 'flowpair_parameters.csv',
+    'default_parameterisation': 'default',
+    # its template, in its default parameterisation: the values a new instance starts from
+    'instance_parameters': {'g': {'mean': ('1.5e-05', 'm3_per_s', 'flowpair_default'),
+                                  'amp': ('0.25', 'dimensionless', 'flowpair_default'),
+                                  'omega': ('3.0', 'per_s', 'flowpair_default')}},
 }
-FLOWPAIR_DEFAULTS = [  # (variable_name, units, value)
-    ('mean_g', 'm3_per_s', '1.5e-05'), ('amp_g', 'dimensionless', '0.25'),
-    ('omega_g', 'per_s', '3.0'), ('some_global', 'dimensionless', '7.0'),
+FLOWPAIR_DEFAULTS = [  # (variable_name, units, value) of its parameterisation "default": a global
+    ('global/some_global', 'dimensionless', '7.0'),
 ]
 # "inner": a gain feeding a reader, internally; "outer" nests an "inner" next to a collector
 INNER = {
@@ -91,18 +94,21 @@ LOOP_B = {'module_type': 'loop_b', 'module_subtype': 'supermodule', 'module_form
           'submodules': [_rec('a', 'loop_a', subtype='supermodule')]}
 
 SUPERMODULES = [FLOWPAIR, INNER, OUTER, LOOP_A, LOOP_B]
+FLOWPAIR_ENTRY, FLOWPAIR_RECORDS, _ = split_supermodule(FLOWPAIR)
 
 
 @pytest.fixture(scope='module')
 def super_library_dir(tmp_path_factory):
     directory = _write_library(tmp_path_factory.mktemp('super_modules'), {
         'schema_test_modules_config.json': modules_config(),
-        'super_modules_config.json': SUPERMODULES,
     })
-    with open(os.path.join(directory, 'flowpair_parameters.csv'), 'w') as f:
-        f.write('variable_name,units,value,data_reference\n')
-        for name, units, value in FLOWPAIR_DEFAULTS:
-            f.write(f'{name},{units},{value},flowpair_default\n')
+    # its global first; write_supermodules adds the template to the same parameterisation
+    write_parameters(os.path.join(directory, 'parameterisations', 'default',
+                                  'default_parameters.json'),
+                     [{'variable_name': name, 'units': units, 'value': value,
+                       'data_reference': 'flowpair_default'}
+                      for name, units, value in FLOWPAIR_DEFAULTS], MODULE)
+    write_supermodules(directory, SUPERMODULES, 'super_modules_config.json')
     return directory
 
 
@@ -124,35 +130,50 @@ def _write_csv(path, records):
 
 
 def _write_array(resources_dir, prefix, records, fmt):
-    """Write ``records`` (PhLynx keys) as csv, json (PhLynx keys) or json_libcuflynx."""
+    """Write ``records`` as csv or json."""
     if fmt == 'csv':
         path = os.path.join(resources_dir, f'{prefix}_module_array.csv')
         _write_csv(path, records)
         return path
-    if fmt == 'json_libcuflynx':
-        records = [_to_libcuflynx(r) for r in records]
     path = os.path.join(resources_dir, f'{prefix}_module_array.json')
     with open(path, 'w') as f:
         json.dump(records, f, indent=1)
     return path
 
 
+def _write_instances(array, modules_dir):
+    """Each supermodule instance of the module array ``array`` gets its values in the model's
+    parameters file, new from its version (the supermodules in ``modules_dir``, an
+    external_modules_dir)."""
+    write_instance_parameters(array, ModuleSources({'external_modules_dir': modules_dir})
+                              .supermodule_registry())
+
+
+def _write_host_parameters(path, params, data_reference='test'):
+    """Set ``params`` in the model's parameters file ``path``, over what it holds (its
+    supermodule instances' values, made from their versions)."""
+    doc = (parameters_file.read_parameters_file(path) if os.path.isfile(path)
+           else parameters_file.new_document())
+    for row in params:
+        parameters_file.set_leaf(doc, parameters_file.name_path(row[0]), {
+            'value': row[2], 'units': row[1],
+            'data_reference': row[3] if len(row) > 3 else data_reference})
+    parameters_file.write_parameters_file(path, doc)
+
+
 def _generate(work_dir, modules_dir, prefix, records, params, fmt='json', data_reference='test'):
-    """Write the module array and parameters and generate the model; returns the CellML path."""
+    """Write the module array, its parameters, and its supermodule instances' values (new,
+    from their versions), and generate the model; returns the CellML path."""
     work_dir = str(work_dir)
     resources_dir = os.path.join(work_dir, 'resources')
     os.makedirs(resources_dir, exist_ok=True)
-    _write_array(resources_dir, prefix, records, fmt)
-    with open(os.path.join(resources_dir, f'{prefix}_parameters.csv'), 'w') as f:
-        f.write('variable_name,units,value,data_reference\n')
-        for row in params:
-            name, units, value = row[:3]
-            reference = row[3] if len(row) > 3 else data_reference
-            f.write(f'{name},{units},{value},{reference}\n')
+    _write_instances(_write_array(resources_dir, prefix, records, fmt), modules_dir)
+    _write_host_parameters(os.path.join(resources_dir, f'{prefix}_parameters.json'), params,
+                           data_reference)
     generated_dir = os.path.join(work_dir, 'generated_models')
     config = {
         'file_prefix': prefix,
-        'input_param_file': f'{prefix}_parameters.csv',
+        'input_param_file': f'{prefix}_parameters.json',
         'model_type': 'cellml',
         'solver': 'CVODE_myokit',
         'resources_dir': resources_dir,
@@ -170,13 +191,16 @@ def _full_records():
 
 def _generated_parameters(cellml_path):
     prefix = os.path.splitext(os.path.basename(cellml_path))[0]
+    # the generated model's parameters, named as the model names them
     with open(os.path.join(os.path.dirname(cellml_path), f'{prefix}_parameters.csv')) as f:
         return {row['variable_name']: row for row in csv.DictReader(f)}
 
 
 def _expand(records, registry):
+    """Expand ``records``: ``(records, the supermodules' globals)``."""
     from libcuflynx.utilities.config_schemas import normalise_vessel_records
-    return expand_supermodules(normalise_vessel_records(records, 'test'), registry, 'test')
+    records = normalise_vessel_records(records, 'test')
+    return expand_supermodules(records, registry, 'test')
 
 
 def read_records(records):
@@ -230,35 +254,36 @@ HOST_PARAMS = (_prescribed_params('src_a', 1.0e-5, 0.5, 6.0) +
 
 
 def _flowpair_defaults(instance, join='_'):
-    return [(name.replace('_g', f'_{instance}{join}g') if name.endswith('_g') else name, units,
-             value, 'flowpair_default') for name, units, value in FLOWPAIR_DEFAULTS]
+    '''The values of a new flowpair instance (its template) as host rows of the vessels
+    ``<instance><join><submodule>``. Its parameterisation's global ``some_global`` is left out: no
+    module of the flattened model declares it, so a host file may not set it.'''
+    return [(f'{instance}{join}{sub}/{var}', units, value, reference)
+            for sub, values in FLOWPAIR['instance_parameters'].items()
+            for var, (value, units, reference) in values.items()]
 
 
 # --------------------------------------------------------------------------------------------
-# 1. JSON (both key styles) and CSV
+# 1. JSON and CSV
 # --------------------------------------------------------------------------------------------
 
 @pytest.mark.integration
-def test_json_in_both_key_styles_generates_the_same_model_as_csv(tmp_path, super_library_dir):
+def test_json_generates_the_same_model_as_csv(tmp_path, super_library_dir):
     records = _full_records()
     reference = _generate(tmp_path / 'csv', super_library_dir, 'jv_full', records, FULL_PARAMS,
                           fmt='csv')
-    for fmt in ('json', 'json_libcuflynx'):
-        path = _generate(tmp_path / fmt, super_library_dir, 'jv_full', records, FULL_PARAMS,
-                         fmt=fmt)
-        _assert_same_generated_models(reference, path)
+    path = _generate(tmp_path / 'json', super_library_dir, 'jv_full', records, FULL_PARAMS)
+    _assert_same_generated_models(reference, path)
 
 
 @pytest.mark.unit
 def test_json_and_csv_give_the_same_frame(tmp_path):
     records = _full_records()
     frames = {}
-    for fmt in ('csv', 'json', 'json_libcuflynx'):
+    for fmt in ('csv', 'json'):
         directory = tmp_path / fmt
         directory.mkdir()
         frames[fmt] = load_module_array(_write_array(str(directory), 'm', records, fmt))[0]
-    for fmt in ('json', 'json_libcuflynx'):
-        assert frames[fmt].equals(frames['csv'])
+    assert frames['json'].equals(frames['csv'])
     assert list(frames['csv'].columns) == ['name', 'module_type', 'module_subtype', 'inp_instances',
                                            'out_instances']
     assert frames['csv'].iloc[2].tolist() == ['coll', 'collector', 'nn', ['src_a', 'src_b'], []]
@@ -278,9 +303,8 @@ def test_space_separated_lists_are_accepted_in_json(tmp_path):
 @pytest.mark.unit
 @pytest.mark.parametrize('record, message', [
     ({'name': 'a', 'module_type': 'x', 'module_subtype': 'nn', 'out_vessels': []},
-     r'record 1 \("a"\) mixes the older keys \[\'out_vessels\'\] and the current keys'),
-    ({'name': 'a', 'vessel_type': 'x', 'BC_type': 'nn', 'module_subtype': 'nn'},
-     'mixes the older keys'),
+     r'record 1 \("a"\) has \[\'out_vessels\'\], keys libcuflynx no longer reads.*'
+     r'cuflynx-upgrade module-array'),
     ({'name': 'a', 'module_type': 'x'}, r'record 1 \("a"\): "module_subtype" is required'),
     ({'module_type': 'x', 'module_subtype': 'nn'}, r'record 1: "name" is required'),
     ({'name': 'a', 'module_type': 'x', 'module_subtype': 'nn', 'inp_instances': [1]},
@@ -298,33 +322,15 @@ def test_bad_json_records_are_reported_with_file_index_and_key(tmp_path, record,
 
 
 @pytest.mark.unit
-def test_split_0d_1d_vessel_array_is_the_old_name_of_split_0d_1d_module_array(monkeypatch):
-    from libcuflynx.parsers.ModelParsers import CSV0DModelParser
-    monkeypatch.setattr(CSV0DModelParser, 'split_0d_1d_module_array', lambda self, registry=None, components=None: ('split', registry, components))
-    parser = CSV0DModelParser.__new__(CSV0DModelParser)
-    with pytest.warns(FutureWarning, match='now split_0d_1d_module_array'):
-        assert parser.split_0d_1d_vessel_array('reg', 'comp') == ('split', 'reg', 'comp')
-
-
-@pytest.mark.unit
 def test_module_array_file_is_looked_for_json_first(tmp_path):
-    # lowest priority first: the old vessel_array names, then the module_array names
-    names = ['m_vessel_array.csv', 'm_vessel_array.json', 'm_module_array.csv',
-             'm_module_array.json']
     assert module_array_path(str(tmp_path), 'm').endswith('m_module_array.csv')
-    for i, name in enumerate(names):
-        (tmp_path / name).write_text('')
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter('always')
-            assert module_array_path(str(tmp_path), 'm').endswith(name)
-        messages = [(w.category, str(w.message)) for w in caught]
-        # more than one: the first is used, and the others are named in a warning (a CSV
-        # edited after `to-json` wrote the JSON beside it would otherwise be ignored silently)
-        assert any(c is UserWarning and f'Using {name}; the others are ignored' in m
-                   for c, m in messages) == (i > 0)
-        # an old name asks to be renamed
-        assert any(c is FutureWarning and 'uses the old name' in m
-                   for c, m in messages) == name.startswith('m_vessel_array')
+    (tmp_path / 'm_module_array.csv').write_text('')
+    assert module_array_path(str(tmp_path), 'm').endswith('m_module_array.csv')
+    (tmp_path / 'm_module_array.json').write_text('')
+    # both: the JSON is used, and the CSV named in a warning (a CSV edited after `to-json`
+    # wrote the JSON beside it would otherwise be ignored silently)
+    with pytest.warns(UserWarning, match='Using m_module_array.json; the others are ignored'):
+        assert module_array_path(str(tmp_path), 'm').endswith('m_module_array.json')
 
 
 # --------------------------------------------------------------------------------------------
@@ -332,33 +338,29 @@ def test_module_array_file_is_looked_for_json_first(tmp_path):
 # --------------------------------------------------------------------------------------------
 
 @pytest.mark.unit
-@pytest.mark.parametrize('style', ['phlynx', 'libcuflynx'])
-def test_csv_to_json_round_trip(tmp_path, style):
+def test_csv_to_json_round_trip(tmp_path):
     csv_path = _write_array(str(tmp_path), 'm', _full_records(), 'csv')
-    json_path = module_array_to_json(csv_path, str(tmp_path / f'{style}.json'), style=style)
+    json_path = module_array_to_json(csv_path, str(tmp_path / 'm.json'))
     assert read_module_array_records(json_path) == read_module_array_records(csv_path)
     with open(json_path) as f:
         text = f.read()
     raw = json.loads(text)
     assert len(text.splitlines()) == len(raw) + 2  # one record per line
-    expected_keys = (['name', 'module_type', 'module_subtype', 'inp_instances', 'out_instances']
-                     if style == 'phlynx' else
-                     ['name', 'BC_type', 'vessel_type', 'inp_vessels', 'out_vessels'])
-    assert list(raw[0]) == expected_keys
+    assert list(raw[0]) == ['name', 'module_type', 'module_subtype', 'inp_instances',
+                            'out_instances']
 
 
 @pytest.mark.unit
 def test_to_json_command_line(tmp_path):
     csv_a = _write_array(str(tmp_path), 'a', _full_records(), 'csv')
     csv_b = _write_array(str(tmp_path), 'b', _full_records()[:3], 'csv')
-    assert config_schemas_main(['to-json', csv_a, csv_b, '--style', 'libcuflynx']) == 0
-    assert 'vessel_type' in json.loads((tmp_path / 'b_module_array.json').read_text())[0]
+    assert config_schemas_main(['to-json', csv_a, csv_b]) == 0
+    assert 'module_type' in json.loads((tmp_path / 'b_module_array.json').read_text())[0]
     result = subprocess.run([sys.executable, '-m', 'libcuflynx.utilities.config_schemas',
                              'to-json', csv_a], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             universal_newlines=True)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == str(tmp_path / 'a_module_array.json')
-    assert 'module_type' in json.loads((tmp_path / 'a_module_array.json').read_text())[0]
 
 
 # --------------------------------------------------------------------------------------------
@@ -369,10 +371,16 @@ def test_to_json_command_line(tmp_path):
 def test_supermodule_entries_are_normalised_and_kept_out_of_the_module_dataframe(
         super_library_dir, registry):
     from libcuflynx.parsers.PrimitiveParsers import JSONFileParser
-    entry = normalise_module_config_entry(FLOWPAIR)
+    entry = normalise_module_config_entry(FLOWPAIR_ENTRY)
     assert (entry['module_type'], entry['module_subtype']) == ('flowpair', 'supermodule')
-    assert entry['submodules'][0]['module_type'] == 'collector'
-    assert normalise_module_config_entry(INNER)['module_type'] == 'inner'
+    assert entry['submodule_versions'] == [{'module_type': 'collector', 'module_subtype': 'nn'},
+                                           {'module_type': 'gain', 'module_subtype': 'nn'}]
+    assert 'submodules' not in entry
+    assert normalise_module_config_entry(split_supermodule(INNER)[0])['module_type'] == 'inner'
+    # the registry reads each version's instances from its module array
+    flowpair = registry[('flowpair', 'supermodule')]
+    assert [s['name'] for s in flowpair['submodules']] == ['coll', 'g']
+    assert flowpair['submodules'][0]['module_type'] == 'collector'
     assert set(registry) == {('flowpair', 'supermodule'), ('inner', 'supermodule'),
                              ('outer', 'supermodule'), ('loop_a', 'supermodule'),
                              ('loop_b', 'supermodule')}
@@ -385,15 +393,92 @@ def test_supermodule_entries_are_normalised_and_kept_out_of_the_module_dataframe
 
 @pytest.mark.unit
 @pytest.mark.parametrize('entry, message', [
-    (dict(FLOWPAIR, component_file='x.cellml'), 'has "component_file"'),
-    (dict(FLOWPAIR, BC_type='supermodule'), 'mixes the older keys'),
-    (dict(FLOWPAIR, submodules=[]), 'needs "submodules"'),
-    (dict(FLOWPAIR, submodules=[_rec('a', 'gain', out=['nowhere'])]), 'not submodules of this'),
-    (dict(FLOWPAIR, submodules=[_rec('a', 'gain'), _rec('a', 'reader')]), 'repeated'),
+    (dict(FLOWPAIR_ENTRY, component_file='x.cellml'), 'has "component_file"'),
+    (dict(FLOWPAIR_ENTRY, BC_type='supermodule'), 'no longer reads'),
+    # inline instance records: the converter is named
+    (FLOWPAIR, r"has \['submodules'\], keys libcuflynx no longer reads.*"
+               r"cuflynx-upgrade module-config lib\.json"),
+    (dict(FLOWPAIR_ENTRY, submodule_versions=[]), 'needs "submodule_versions"'),
+    (dict(FLOWPAIR_ENTRY, submodule_versions='gain'), 'needs "submodule_versions"'),
+    ({k: v for k, v in FLOWPAIR_ENTRY.items() if k != 'submodule_versions'},
+     'needs "submodule_versions"'),
+    (dict(FLOWPAIR_ENTRY, submodule_versions=['gain']), 'a submodule version is'),
+    (dict(FLOWPAIR_ENTRY, submodule_versions=[{'module_type': 'gain'}]), 'a submodule version is'),
+    (dict(FLOWPAIR_ENTRY, submodule_versions=[{'module_type': 'gain', 'module_subtype': 'nn',
+                                               'name': 'g'}]), 'a submodule version is'),
+    (dict(FLOWPAIR_ENTRY, submodule_versions=[{'module_type': 'gain', 'module_subtype': ' '}]),
+     'a submodule version is'),
+    (dict(FLOWPAIR_ENTRY, submodule_versions=[{'module_type': 'gain', 'module_subtype': 'nn'}] * 2),
+     r"lists \[\('gain', 'nn'\)\] more than once"),
 ])
 def test_bad_supermodule_entries(entry, message):
     with pytest.raises(ValueError, match=message):
-        normalise_module_config_entry(entry)
+        normalise_module_config_entry(entry, source='lib.json')
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('records, versions, message', [
+    ([dict(_rec('coll', 'collector'), parameterisation='p'), _rec('g', 'gain')], None,
+     r"\['coll'\] name a parameterisation\. A submodule's values are in the supermodule's "
+     r"default parameterisation"),
+    ([_rec('coll', 'collector'), _rec('g', 'gain'), _rec('rd', 'reader')], None,
+     r"instances of \[\('reader', 'nn'\)\].*does not list"),
+    ([_rec('coll', 'collector')], None,
+     r"lists submodule_versions \[\('gain', 'nn'\)\], which no instance"),
+    ([_rec('coll', 'collector'), _rec('coll', 'gain')], None, r"names \['coll'\] are repeated"),
+    ([_rec('coll', 'collector', inp=['nowhere']), _rec('g', 'gain')], None,
+     r'record 0 \("coll"\): "inp_instances" names \[\'nowhere\'\], which are not submodules'),
+    ([_rec('coll', 'collector'), _rec('g', 'gain', out=['host'])], None,
+     r'"out_instances" names \[\'host\'\], which are not submodules'),
+    ([_rec('coll', 'collector'), _rec('in', 'inner', subtype='supermodule',
+                                      per_submodule_inputs={'rd': ['outside']})],
+     [('collector', 'nn'), ('inner', 'supermodule')],
+     r'"per_submodule_inputs" names \[\'outside\'\] for "rd", which are not submodules'),
+])
+def test_bad_supermodule_arrays(tmp_path, records, versions, message):
+    """A supermodule version's module array is checked when the registry reads it, against
+    the versions its config lists."""
+    entry, _, _ = split_supermodule(dict(FLOWPAIR, submodules=records))
+    if versions is None:
+        versions = [('collector', 'nn'), ('gain', 'nn')]
+    entry['submodule_versions'] = [{'module_type': t, 'module_subtype': s} for t, s in versions]
+    config = tmp_path / 'flowpair_supermodule_modules_config.json'
+    config.write_text(json.dumps([entry]))
+    (tmp_path / 'flowpair_supermodule_module_array.json').write_text(json.dumps(records))
+    with pytest.raises(ValueError, match=message) as error:
+        load_supermodule_registry([str(config)])
+    assert 'flowpair_supermodule_' in str(error.value)
+
+
+@pytest.mark.unit
+def test_a_supermodule_without_its_module_array_is_an_error(tmp_path):
+    config = tmp_path / 'flowpair_supermodule_modules_config.json'
+    config.write_text(json.dumps([FLOWPAIR_ENTRY]))
+    with pytest.raises(ValueError, match=r'its module array .*flowpair_supermodule_module_array'
+                                         r'\.json, which lists its submodule instances.*does not '
+                                         r'exist'):
+        load_supermodule_registry([str(config)])
+
+
+@pytest.mark.unit
+def test_a_supermodule_s_module_array_is_not_read_as_a_module_config(super_library_dir):
+    """external_modules_dir reads every JSON file in it as a config, but the module arrays
+    beside a supermodule's config."""
+    from libcuflynx.utilities.module_library import ModuleSources
+    files = ModuleSources({'external_modules_dir': super_library_dir,
+                           'use_builtin_modules': False}).config_files
+    assert sorted(os.path.basename(f) for f in files) == ['schema_test_modules_config.json',
+                                                          'super_modules_config.json']
+
+
+@pytest.mark.unit
+def test_the_module_array_is_found_beside_the_config_by_type_and_subtype(tmp_path):
+    from libcuflynx.utilities.config_schemas import supermodule_array_path
+    config = write_supermodule(tmp_path / 'lib', FLOWPAIR, 'anything_modules_config.json')
+    assert supermodule_array_path(config, FLOWPAIR_ENTRY) == \
+        str(tmp_path / 'lib' / 'flowpair_supermodule_module_array.json')
+    entry = load_supermodule_registry([config])[('flowpair', 'supermodule')]
+    assert entry['submodules'] == read_records(FLOWPAIR_RECORDS)
 
 
 @pytest.mark.unit
@@ -443,17 +528,20 @@ def test_supermodule_generates_the_same_model_as_the_flattened_array_and_runs(
     params = HOST_PARAMS + _flowpair_defaults('pair')
     flattened = _generate(tmp_path / 'flat', super_library_dir, 'jv_pair',
                           _flowpair_flattened(join='_'), params)
-    # the supermodule's default parameters stand in for the flattened model's gain parameters
+    # the instance's parameters file stands in for the flattened model's gain parameters
     expanded = _generate(tmp_path / 'super', super_library_dir, 'jv_pair', _flowpair_host(),
                          HOST_PARAMS)
     _assert_same_up_to_level_joins(flattened, expanded)
-    results = _simulate(expanded, ['pair__coll/v_seen', 'rd/v_seen'])
+    results = _simulate(expanded, ['pair__coll/v_seen', 'rd/v_seen', 'pair/coll/v_seen'])
     assert results['pair__coll/v_seen'].size > 0 and results['rd/v_seen'].size > 0
+    # the submodule's output by its path, the form to write
+    assert np.array_equal(results['pair/coll/v_seen'], results['pair__coll/v_seen'])
 
 
 @pytest.mark.integration
-def test_default_parameters_apply_and_host_values_override_them(tmp_path, super_library_dir):
-    host = HOST_PARAMS + [('mean_pair__g', 'm3_per_s', '9e-06', 'host_value')]
+def test_a_supermodule_parameterisation_applies_and_host_values_override_it(tmp_path,
+                                                                            super_library_dir):
+    host = HOST_PARAMS + [('pair/g/mean', 'm3_per_s', '9e-06', 'host_value')]
     params = _generated_parameters(_generate(tmp_path, super_library_dir, 'jv_defaults',
                                              _flowpair_host(), host))
     assert (params['mean_pair__g']['value'], params['mean_pair__g']['data_reference']) == \
@@ -464,27 +552,16 @@ def test_default_parameters_apply_and_host_values_override_them(tmp_path, super_
 
 
 @pytest.mark.unit
-def test_default_parameters_are_renamed_and_globals_added_once(registry):
+def test_supermodule_parameters_are_renamed_and_globals_added_once(registry):
     host = _flowpair_host('p1') + [
         _rec('src_c', 'flow_src', out=['p2']),
         _rec('p2', 'flowpair', subtype='supermodule', per_submodule_inputs={'coll': ['src_c']}),
     ]
     _, rows = _expand(host, registry)
-    names = [row['variable_name'] for row in rows]
-    assert names == ['mean_p1__g', 'amp_p1__g', 'omega_p1__g', 'some_global',
-                     'mean_p2__g', 'amp_p2__g', 'omega_p2__g']
-    assert rows[0] == {'variable_name': 'mean_p1__g', 'units': 'm3_per_s', 'value': '1.5e-05',
+    # the parameterisation's global, once; the instances' values are the model's file's
+    assert [row['variable_name'] for row in rows] == ['some_global']
+    assert rows[0] == {'variable_name': 'some_global', 'units': 'dimensionless', 'value': '7.0',
                        'data_reference': 'flowpair_default'}
-
-
-@pytest.mark.unit
-def test_default_parameter_suffixes_match_the_longest_submodule_name():
-    from libcuflynx.utilities.supermodules import rename_default_parameter
-    subs = ['v', 'lv', 'a_lv']
-    assert rename_default_parameter('E_lv', 'heart', subs) == 'E_heart__lv'
-    assert rename_default_parameter('E_a_lv', 'heart', subs) == 'E_heart__a_lv'
-    assert rename_default_parameter('T', 'heart', subs) == 'T'
-    assert rename_default_parameter('lv', 'heart', subs) == 'lv'
 
 
 @pytest.mark.unit
@@ -567,7 +644,9 @@ def test_nested_supermodule_generates_the_same_model_as_the_flattened_array(
         _rec('o_in_rd', 'reader', inp=['o_in_g']),
     ], gain + src)
     nested = _generate(tmp_path / 'nested', super_library_dir, 'jv_nested',
-                       [_rec('o', 'outer', subtype='supermodule')], gain + src)
+                       [_rec('o', 'outer', subtype='supermodule')],
+                       _prescribed_params('o/in/g', 1.0e-5, 0.5, 3.0)
+                       + _prescribed_params('o/src', 2.0e-5, 0.4, 5.0))
     _assert_same_up_to_level_joins(flattened, nested)
 
 
@@ -581,9 +660,9 @@ def test_nesting_cycles_are_detected(registry):
 @pytest.mark.integration
 def test_an_instance_named_heart_does_not_trigger_the_heart_special_cases(
         tmp_path, super_library_dir):
-    """The parser adds pulmonary vessels to a vessel named 'heart' with fewer than two
-    outputs, and the CellML generator checks a 'heart' vessel's venous inputs. Neither may
-    fire for a supermodule instance named 'heart', which is gone after expansion."""
+    """The CellML generator checks a heart's venous inputs, finding the heart by its
+    module_type. It may not fire for a supermodule instance named 'heart', which is gone after
+    expansion, and no pulmonary vessels appear."""
     params = HOST_PARAMS + _flowpair_defaults('heart')
     flattened = _generate(tmp_path / 'flat', super_library_dir, 'jv_heart',
                           _flowpair_flattened('heart', join='_'), params)
@@ -600,13 +679,12 @@ def test_load_model_expands_before_the_heart_block(tmp_path, super_library_dir):
     from libcuflynx.parsers.ModelParsers import CSV0DModelParser
     resources = tmp_path / 'resources'
     resources.mkdir()
-    _write_array(str(resources), 'm', _flowpair_host('heart'), 'json')
-    (resources / 'm_parameters.csv').write_text(
-        'variable_name,units,value,data_reference\n' +
-        ''.join(f'{n},{u},{v},t\n' for n, u, v in HOST_PARAMS))
+    _write_instances(_write_array(str(resources), 'm', _flowpair_host('heart'), 'json'),
+                     super_library_dir)
+    _write_host_parameters(str(resources / 'm_parameters.json'), HOST_PARAMS)
     parser = CSV0DModelParser({
         'vessels_csv_abs_path': str(resources / 'm_module_array.json'),
-        'parameters_csv_abs_path': str(resources / 'm_parameters.csv'),
+        'parameters_csv_abs_path': str(resources / 'm_parameters.json'),
         'model_type': 'cellml', 'external_modules_dir': super_library_dir})
     model = parser.load_model()
     assert list(model.vessels_df['name']) == ['src_a', 'src_b', 'heart__coll', 'heart__g', 'rd']
@@ -626,13 +704,13 @@ RESOURCE_PREFIXES = [p for p in RESOURCE_PREFIXES if not p.endswith(('_0d', '_1d
 def _generate_resource(work_dir, prefix, fmt):
     resources = os.path.join(str(work_dir), 'resources')
     os.makedirs(resources, exist_ok=True)
-    shutil.copy(os.path.join(RESOURCES_DIR, f'{prefix}_parameters.csv'), resources)
+    shutil.copy(os.path.join(RESOURCES_DIR, f'{prefix}_parameters.json'), resources)
     csv_path = os.path.join(RESOURCES_DIR, f'{prefix}_module_array.csv')
     if fmt == 'csv':
         shutil.copy(csv_path, resources)
     else:
         module_array_to_json(csv_path, os.path.join(resources, f'{prefix}_module_array.json'))
-    config = {'file_prefix': prefix, 'input_param_file': f'{prefix}_parameters.csv',
+    config = {'file_prefix': prefix, 'input_param_file': f'{prefix}_parameters.json',
               'model_type': 'cellml', 'solver': 'CVODE_myokit', 'resources_dir': resources,
               'generated_models_dir': os.path.join(str(work_dir), 'generated_models'),
               'DEBUG': False}
@@ -648,7 +726,7 @@ def _generate_resource(work_dir, prefix, fmt):
 @pytest.mark.usefixtures('skip_generated_model_checks')
 @pytest.mark.parametrize('prefix', RESOURCE_PREFIXES)
 def test_every_resources_module_array_generates_identically_as_json(tmp_path, prefix):
-    if not os.path.exists(os.path.join(RESOURCES_DIR, f'{prefix}_parameters.csv')):
+    if not os.path.exists(os.path.join(RESOURCES_DIR, f'{prefix}_parameters.json')):
         pytest.skip(f'{prefix} has no parameters file')
     ok, reference = _generate_resource(tmp_path / 'csv', prefix, 'csv')
     if not ok:
@@ -665,17 +743,14 @@ def test_a_heart_inside_a_supermodule_is_still_the_heart(tmp_path):
     component "heart_module" that did not exist, and generation still reported success. It is
     now found by its module_type, and simulates exactly as the plain model."""
     library = tmp_path / 'lib'
-    library.mkdir()
-    with open(library / 'cardio_modules_config.json', 'w') as f:
-        json.dump([{'module_type': 'cardio', 'module_subtype': 'supermodule',
-                    'module_format': 'supermodule',
-                    'submodules': [{'name': 'heart', 'module_type': 'heart', 'module_subtype': 'vp_Ca',
-                                    'inp_instances': [], 'out_instances': []}]}], f)
+    write_supermodule(library, {
+        'module_type': 'cardio', 'module_subtype': 'supermodule', 'module_format': 'supermodule',
+        'submodules': [{'name': 'heart', 'module_type': 'heart', 'module_subtype': 'vp_Ca',
+                        'inp_instances': [], 'out_instances': []}]}, 'cardio_modules_config.json')
     from libcuflynx.utilities.config_schemas import module_array_csv_to_records
     plain = module_array_csv_to_records(os.path.join(RESOURCES_DIR, '3compartment_module_array.csv'))
-    params = [tuple(r) for r in pd.read_csv(os.path.join(RESOURCES_DIR, '3compartment_parameters.csv'),
-                                            dtype=str).fillna('')[['variable_name', 'units', 'value']]
-              .itertuples(index=False)]
+    params = [(r['variable_name'], r['units'], r['value'])
+              for r in read_parameters(os.path.join(RESOURCES_DIR, '3compartment_parameters.json'))]
     reference = _generate(tmp_path / 'plain', None, '3compartment', plain, params)
 
     wrapped = []
@@ -689,7 +764,7 @@ def test_a_heart_inside_a_supermodule_is_still_the_heart(tmp_path):
             record['inp_instances'] = ['H' if n == 'heart' else n for n in record['inp_instances']]
             record['out_instances'] = ['H' if n == 'heart' else n for n in record['out_instances']]
         wrapped.append(record)
-    renamed = [(n[:-len('_heart')] + '_H__heart' if n.endswith('_heart') else n, u, v) for n, u, v in params]
+    renamed = [('H/' + n if n.startswith('heart/') else n, u, v) for n, u, v in params]
     model = _generate(tmp_path / 'wrapped', str(library), '3compartment', wrapped, renamed)
     with open(model) as f:
         text = f.read()
@@ -702,26 +777,44 @@ def test_a_heart_inside_a_supermodule_is_still_the_heart(tmp_path):
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize('style', ['phlynx', 'libcuflynx'])
-def test_convert_0d_to_1d_keeps_a_json_arrays_supermodule_links(tmp_path, registry, style):
+def test_convert_0d_to_1d_keeps_a_json_arrays_supermodule_links(tmp_path, registry):
     """A CSV cannot hold per_submodule_* links, so a JSON 0D array is converted to a JSON
-    hybrid array, in the same key style, with every key of every record kept."""
+    hybrid array, with every key of every record kept."""
     from libcuflynx.scripts.convert_0d_to_1d import convert_0d_to_1d
     from libcuflynx.utilities.config_schemas import dump_vessel_records
     records = read_records(_flowpair_host() + [_rec('A', 'flow_src', out=[])])
-    (tmp_path / 'm_0d_module_array.json').write_text(dump_vessel_records(records, style))
-    (tmp_path / 'm_0d_parameters.csv').write_text('variable_name,units,value,data_reference\n')
-    convert_0d_to_1d('m', str(tmp_path), 'm_0d_parameters.csv', vess_1d_list=['A'])
+    (tmp_path / 'm_0d_module_array.json').write_text(dump_vessel_records(records))
+    write_instance_parameters(str(tmp_path / 'm_0d_module_array.json'), registry)
+    convert_0d_to_1d('m', str(tmp_path), 'm_0d_parameters.json', vess_1d_list=['A'])
     hybrid = tmp_path / 'm_hybrid_module_array.json'
     assert hybrid.exists() and not (tmp_path / 'm_hybrid_module_array.csv').exists()
-    raw = json.loads(hybrid.read_text())
-    assert ('module_type' in raw[0]) == (style == 'phlynx')
     converted = {r['name']: r for r in read_module_array_records(str(hybrid))}
     assert (converted['A']['module_type'], converted['A']['module_subtype']) == ('FV1D_vessel', 'nn')
     assert converted['pair']['per_submodule_inputs'] == {'coll': ['src_a', 'src_b']}
     assert converted['pair']['per_submodule_outputs'] == {'g': ['rd']}
+    # the instance's values go with the parameters
+    hybrid_parameters = parameters_file.read_parameters_file(str(tmp_path / 'm_hybrid_parameters.json'))
+    assert hybrid_parameters['pair'] == \
+        parameters_file.read_parameters_file(str(tmp_path / 'm_0d_parameters.json'))['pair']
     expanded, _ = expand_supermodules(list(converted.values()), registry, 'test')
     assert 'pair__coll' in {r['name'] for r in expanded}
+
+
+@pytest.mark.unit
+def test_convert_0d_to_1d_writes_its_coupling_rows_as_vessel_slash_variable(tmp_path):
+    """The rows for the 0D neighbours' coupling variables are host rows, so they are
+    written <vessel>/<variable>, the only form libcuflynx reads."""
+    import pandas as pd
+    from libcuflynx.scripts.convert_0d_to_1d import convert_0d_to_1d
+    from libcuflynx.utilities.config_schemas import dump_vessel_records
+    records = read_records([_rec('up', 'arterial', out=['A'], subtype='vp'),
+                            _rec('A', 'arterial', inp=['up'], out=['down'], subtype='vp'),
+                            _rec('down', 'venous', inp=['A'], subtype='pv')])
+    (tmp_path / 'm_0d_module_array.json').write_text(dump_vessel_records(records))
+    write_parameters(tmp_path / 'm_0d_parameters.json', [])
+    convert_0d_to_1d('m', str(tmp_path), 'm_0d_parameters.json', vess_1d_list=['A'])
+    rows = [r['variable_name'] for r in read_parameters(tmp_path / 'm_hybrid_parameters.json')]
+    assert rows == ['up/u_out', 'down/u_in']
 
 
 @pytest.mark.unit
@@ -733,12 +826,15 @@ def test_the_1d_generator_reads_the_merged_parameters(tmp_path):
     from libcuflynx.generators.CVSCppGenerator import CVS1DPythonGenerator
     from libcuflynx.parsers.ModelParsers import merge_default_parameters
     from libcuflynx.parsers.PrimitiveParsers import CSVFileParser
-    params = tmp_path / 'm_parameters.csv'
-    params.write_text('variable_name,units,value,data_reference\nr_FV1D_0,metre,0.01,file\n')
+    params = tmp_path / 'm_parameters.json'
+    write_parameters(params, 'variable_name,units,value,data_reference\nFV1D_0/r,metre,0.01,file\n')
     vessels = tmp_path / 'm_1d_module_array.csv'
     vessels.write_text('name,module_subtype,module_type,inp_instances,out_instances\nFV1D_0,nn,FV1D_vessel,,\n')
+    from libcuflynx.utilities.parameters_file import parameters_array
+    from libcuflynx.utilities.parameter_names import model_name
     merged = merge_default_parameters(
-        CSVFileParser().get_data_as_nparray(str(params), True),
+        parameters_array([dict(r, variable_name=model_name(r['variable_name']))
+                          for r in read_parameters(params)]),
         [{'variable_name': 'l_FV1D_0', 'units': 'metre', 'value': '0.2', 'data_reference': 'default'}])
     model = SimpleNamespace(all_parameters_array=merged)
     generator = CVS1DPythonGenerator(model, 'm_1d', str(vessels), str(params),
@@ -748,20 +844,23 @@ def test_the_1d_generator_reads_the_merged_parameters(tmp_path):
 
 
 @pytest.mark.unit
-def test_default_parameters_reach_a_nested_supermodules_submodules(tmp_path, registry):
-    """A supermodule's default_parameters row naming a submodule of a nested supermodule
-    (mean_in_g: submodule g of the inner supermodule in) was treated as a global and never
-    reached it."""
-    defaults = tmp_path / 'outer_parameters.csv'
-    defaults.write_text('variable_name,units,value,data_reference\n'
-                        'mean_in_g,m3_per_s,2e-05,outer\nmean_coll,m3_per_s,1e-05,outer\n'
-                        'some_global,dimensionless,3,outer\n')
-    outer = dict(registry[('outer', 'supermodule')], default_parameters=str(defaults))
-    _, rows = _expand([_rec('o', 'outer', subtype='supermodule')],
-                      {**registry, ('outer', 'supermodule'): outer})
-    names = {r['variable_name'] for r in rows}
-    assert {'mean_o__in__g', 'mean_o__coll', 'some_global'} <= names
-    assert 'mean_in_g' not in names
+def test_a_supermodule_parameter_reaches_a_nested_supermodules_submodules(tmp_path, registry):
+    """A model's value of a submodule of a nested supermodule (o/in/g/mean: submodule g of the
+    inner supermodule in) reaches it."""
+    from libcuflynx.utilities.config_schemas import load_expanded_vessel_records
+    values = instance_values_from_version(registry[('outer', 'supermodule')], registry)
+    assert values == {'src': {}, 'coll': {}, 'in': {'g': {}, 'rd': {}}}
+    array = _write_array(str(tmp_path), 'm', [_rec('o', 'outer', subtype='supermodule')], 'json')
+    write_parameters(tmp_path / 'm_parameters.json',
+                     'variable_name,units,value,data_reference\n'
+                     'o/in/g/mean,m3_per_s,2e-05,outer\no/coll/mean,m3_per_s,1e-05,outer\n')
+    # an instance with an entry in the model's file, here made by hand, is generated
+    records, _ = load_expanded_vessel_records(array, registry)
+    assert {'o__in__g', 'o__coll'} <= {r['name'] for r in records}
+    from libcuflynx.utilities.parameter_names import model_name
+    assert {model_name(r['variable_name']): r['value']
+            for r in read_parameters(tmp_path / 'm_parameters.json')} == \
+        {'mean_o__in__g': '2e-05', 'mean_o__coll': '1e-05'}
 
 
 @pytest.mark.unit
@@ -778,16 +877,18 @@ def test_a_host_linked_twice_is_an_error(registry):
 
 
 @pytest.mark.unit
-def test_a_bad_submodule_record_is_reported_in_its_module_config():
+def test_a_bad_submodule_record_is_reported_in_its_module_array(tmp_path):
+    config = tmp_path / 'x_s_modules_config.json'
+    config.write_text(json.dumps([{'module_type': 'x', 'module_subtype': 's',
+                                   'module_format': 'supermodule',
+                                   'submodule_versions': [{'module_type': 'inertance',
+                                                           'module_subtype': 'nn'}]}]))
+    array = tmp_path / 'x_s_module_array.json'
+    array.write_text(json.dumps([{'name': 'I_p', 'module_type': 'inertance'}]))
     with pytest.raises(ValueError) as error:
-        normalise_module_config_entry({
-            'module_type': 'x', 'module_subtype': 's', 'module_format': 'supermodule',
-            'submodules': [{'name': 'I_p', 'module_type': 'inertance'}]},
-            source='lib/x_modules_config.json')
+        load_supermodule_registry([str(config)])
     message = str(error.value)
-    assert message.startswith('supermodule entry (x, s) in lib/x_modules_config.json, submodules, '
-                              'record 0 ("I_p")')
-    assert 'module array' not in message
+    assert f'{array}, record 0 ("I_p")' in message and 'module_subtype' in message
 
 
 def _component_entry(**port):
@@ -809,7 +910,7 @@ def test_an_unknown_multi_port_is_an_error_in_the_code_and_the_schema(value):
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize('value, expected', [(None, None), (False, None), ('false', None),
+@pytest.mark.parametrize('value, expected', [(None, None), (False, None),
                                              (True, 'True'), ('true', 'True'), ('True', 'True')])
 def test_multi_port_true_and_false_in_any_form(value, expected):
     jsonschema = pytest.importorskip('jsonschema')
@@ -871,7 +972,7 @@ def test_two_supermodule_instances_link_to_each_other_in_either_order(registry, 
 @pytest.mark.unit
 def test_two_sibling_supermodule_instances_inside_a_supermodule_link(registry):
     """The same, one level down: two flowpairs as submodules of another supermodule."""
-    chain = normalise_module_config_entry({
+    entry, records, _ = split_supermodule({
         'module_type': 'chain', 'module_subtype': 'supermodule', 'module_format': 'supermodule',
         'submodules': [
             _rec('src', 'flow_src', out=['p']),
@@ -881,6 +982,7 @@ def test_two_sibling_supermodule_instances_inside_a_supermodule_link(registry):
                  per_submodule_inputs={'coll': ['p']}, per_submodule_outputs={'g': ['rd']}),
             _rec('rd', 'reader', inp=['q']),
         ]})
+    chain = dict(normalise_module_config_entry(entry), submodules=read_records(records))
     expanded, _ = _expand([_rec('c', 'chain', subtype='supermodule')],
                           {**registry, ('chain', 'supermodule'): chain})
     links = _links(expanded)
@@ -924,15 +1026,14 @@ def test_the_schema_rejects_a_name_with_whitespace():
 
 @pytest.mark.integration
 def test_extra_keys_in_a_json_array_do_not_change_the_model(tmp_path):
-    """Extra keys become extra columns of the generator's frame. The rows libcuflynx appends
-    itself (here the heart's pulmonary circuit, for a heart with one output) were fixed
-    5-element lists, so any extra key failed with "cannot set a row with mismatched columns"."""
+    """Extra keys become extra columns of the generator's frame, and the model generated from
+    a JSON array with an extra key is the one generated from the CSV."""
     prefix = 'simple_physiological'
     ok, reference = _generate_resource(tmp_path / 'csv', prefix, 'csv')
     assert ok
     resources = tmp_path / 'json' / 'resources'
     resources.mkdir(parents=True)
-    shutil.copy(os.path.join(RESOURCES_DIR, f'{prefix}_parameters.csv'), resources)
+    shutil.copy(os.path.join(RESOURCES_DIR, f'{prefix}_parameters.json'), resources)
     json_path = module_array_to_json(os.path.join(RESOURCES_DIR, f'{prefix}_module_array.csv'),
                                      str(resources / f'{prefix}_module_array.json'))
     with open(json_path) as f:
@@ -941,7 +1042,7 @@ def test_extra_keys_in_a_json_array_do_not_change_the_model(tmp_path):
         record['label'] = f'vessel {i}'
     with open(json_path, 'w') as f:
         json.dump(records, f)
-    config = {'file_prefix': prefix, 'input_param_file': f'{prefix}_parameters.csv',
+    config = {'file_prefix': prefix, 'input_param_file': f'{prefix}_parameters.json',
               'model_type': 'cellml', 'solver': 'CVODE_myokit', 'resources_dir': str(resources),
               'generated_models_dir': str(tmp_path / 'json' / 'generated_models'), 'DEBUG': False}
     assert generate_with_new_architecture(False, config)
@@ -964,22 +1065,25 @@ def test_resources_module_arrays_and_module_configs_validate_against_the_json_sc
 
     for prefix in RESOURCE_PREFIXES:
         csv_path = os.path.join(RESOURCES_DIR, f'{prefix}_module_array.csv')
-        for style in ('phlynx', 'libcuflynx'):
-            json_path = module_array_to_json(csv_path, str(tmp_path / f'{prefix}_{style}.json'),
-                                             style=style)
-            with open(json_path) as f:
-                vessel_validator.validate(json.load(f))
+        json_path = module_array_to_json(csv_path, str(tmp_path / f'{prefix}.json'))
+        with open(json_path) as f:
+            vessel_validator.validate(json.load(f))
     vessel_validator.validate(_flowpair_host())
-    vessel_validator.validate([_to_libcuflynx(r) for r in _flowpair_host()])
     vessel_validator.validate(_flowpair_host(per_inputs=[{'coll': ['src_a', 'src_b']}]))
 
     config_files = (glob.glob(os.path.join(builtin_modules_dir(), '*.json')) +
                     glob.glob(os.path.join(REPO_ROOT, 'module_config_user', '*.json')) +
-                    glob.glob(os.path.join(super_library_dir, '*.json')))
+                    glob.glob(os.path.join(super_library_dir, '*_modules_config.json')))
     assert len(config_files) > 20
     for path in config_files:
         with open(path, encoding='utf-8-sig') as f:
             module_validator.validate(json.load(f))
+    # a supermodule version's instances are a module array
+    supermodule_arrays = glob.glob(os.path.join(super_library_dir, '*_module_array.json'))
+    assert len(supermodule_arrays) == len(SUPERMODULES)
+    for path in supermodule_arrays:
+        with open(path) as f:
+            vessel_validator.validate(json.load(f))
     phlynx_component = {'module_type': 'a', 'module_subtype': 'nn', 'component_file': 'f.cellml',
                         'component_type': 'a_type', 'entrance_ports': [], 'exit_ports': [],
                         'variables_and_units': []}
@@ -992,6 +1096,12 @@ def test_resources_module_arrays_and_module_configs_validate_against_the_json_sc
     assert not vessel_validator.is_valid([{'name': 'a', 'vessel_type': 'x', 'BC_type': 'nn',
                                            'out_instances': []}])
     assert not vessel_validator.is_valid([{'name': 'a', 'module_type': 'x'}])
-    assert not module_validator.is_valid([dict(FLOWPAIR, component_file='x.cellml')])
+    assert not module_validator.is_valid([dict(FLOWPAIR_ENTRY, component_file='x.cellml')])
     assert not module_validator.is_valid([dict(phlynx_component, BC_type='nn')])
-    assert not module_validator.is_valid([dict(FLOWPAIR, submodules=[])])
+    module_validator.validate([FLOWPAIR_ENTRY])
+    assert not module_validator.is_valid([dict(FLOWPAIR_ENTRY, submodules=FLOWPAIR_RECORDS)])
+    assert not module_validator.is_valid([dict(FLOWPAIR_ENTRY, submodule_versions=[])])
+    assert not module_validator.is_valid([{k: v for k, v in FLOWPAIR_ENTRY.items()
+                                           if k != 'submodule_versions'}])
+    assert not module_validator.is_valid([dict(FLOWPAIR_ENTRY, submodule_versions=[
+        {'module_type': 'gain', 'module_subtype': 'nn', 'name': 'g'}])])

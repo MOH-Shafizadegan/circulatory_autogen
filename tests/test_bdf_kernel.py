@@ -34,7 +34,7 @@ def aadc_3compartment(tmp_path_factory, aadc_licensed):
 
     resources = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "resources"))
     d = str(tmp_path_factory.mktemp("bdf_kernel"))
-    inp = get_default_inp_data_dict("3compartment", "3compartment_parameters.csv", resources)
+    inp = get_default_inp_data_dict("3compartment", "3compartment_parameters.json", resources)
     inp.update({"model_type": "aadc_python", "generated_models_dir": d,
                 "solver": "aadc_semi_implicit", "solver_info": {"method": "semi_implicit_signed"}})
     assert generate_with_new_architecture(False, inp), "3compartment aadc model generation failed"

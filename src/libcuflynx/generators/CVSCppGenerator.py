@@ -16,7 +16,8 @@ from libcuflynx.utilities.paths import default_resources_dir
 from libcuflynx.generators.CVSCellMLGenerator import CVS0DCellMLGenerator
 from libcuflynx.generators.multi_port import module_has_list_multi_port
 from libcuflynx.parsers.PrimitiveParsers import CSVFileParser
-from libcuflynx.utilities.config_schemas import is_heart_module_type, load_module_array
+from libcuflynx.utilities.config_schemas import load_module_array
+from libcuflynx.generators.port_order import neighbour_port_index
 from libcuflynx.generators.Python1DModelFilesGenerator import generate1DPythonModelFiles, generate1DPythonSimInitFile
 from libcuflynx.utilities.package_resources import generator_template
 
@@ -304,101 +305,49 @@ class CVS0DCppGenerator(object):
 
                         self.connection_vessel_indices.append(fv1d_vessel_index)
                         self.connection_module_types.append("FV_1d") # TODO only option for now, can be extended to other kinds of coupling.
-                        if is_heart_module_type(vessel_tup.module_type):
-                            FV_resistance_port = -1
-                            for exit_port in vessel_tup.exit_ports:
-                                if exit_port["port_type"] == "vessel_port":
-
-                                    if (('aorta' in out_vessel or 'aortic_root' in out_vessel) and exit_port["variables"][1] == 'u_root'):
-                                        self.connection_vessel_inlet_or_outlet.append("outlet") 
-                                        # self.connection_vessel_indices.append(fv1d_vessel_index) #XXX Bea: I think this was copied by mistake from above
-                                        if vessel_tup.module_subtype[1] == 'v':
-                                            self.connection_vessel_flow_or_pressure_bc.append("flow") 
-                                            self.port_input_variables.append(self.cellml_model.component(vessel_tup.name \
-                                                                            ).variable(exit_port["variables"][0]).id())
-                                            self.port_output_variables.append(self.cellml_model.component(vessel_tup.name \
-                                                                            ).variable(exit_port["variables"][1]).id())
-                                        elif vessel_tup.module_subtype[1] == 'p':
-                                            self.connection_vessel_flow_or_pressure_bc.append("pressure") 
-                                            self.port_input_variables.append(self.cellml_model.component(vessel_tup.name \
-                                                                            ).variable(exit_port["variables"][1]).id())
-                                            self.port_output_variables.append(self.cellml_model.component(vessel_tup.name \
-                                                                            ).variable(exit_port["variables"][0]).id())
-                                        else:
-                                            print(f"unknown BC type of {vessel_tup.module_subtype} connecting to a "
-                                                "1D FV model")
-                                            
-                                    elif ('par' in out_vessel and exit_port["variables"][1] == 'u_par'):
-                                        self.connection_vessel_inlet_or_outlet.append("outlet") 
-                                        # self.connection_vessel_indices.append(fv1d_vessel_index) #XXX Bea: I think this was copied by mistake from above
-                                        if vessel_tup.module_subtype[1] == 'v':
-                                            self.connection_vessel_flow_or_pressure_bc.append("flow") 
-                                            self.port_input_variables.append(self.cellml_model.component(vessel_tup.name \
-                                                                            ).variable(exit_port["variables"][0]).id())
-                                            self.port_output_variables.append(self.cellml_model.component(vessel_tup.name \
-                                                                            ).variable(exit_port["variables"][1]).id())
-                                        elif vessel_tup.module_subtype[1] == 'p':
-                                            self.connection_vessel_flow_or_pressure_bc.append("pressure") 
-                                            self.port_input_variables.append(self.cellml_model.component(vessel_tup.name \
-                                                                            ).variable(exit_port["variables"][1]).id())
-                                            self.port_output_variables.append(self.cellml_model.component(vessel_tup.name \
-                                                                            ).variable(exit_port["variables"][0]).id())
-                                        else:
-                                            print(f"unknown BC type of {vessel_tup.module_subtype} connecting to a "
-                                                "1D FV model")
-                                
-                                elif exit_port["port_type"] == "FV_resistance_port":
-                                    FV_resistance_port = 1
-                                    self.control_variables.append(self.cellml_model.component(vessel_tup.name \
-                                                                        ).variable(exit_port["variables"][0]).id())
-                                # TODO other port types will be added here! 
+                        FV_resistance_port = -1
+                        # the exit port out_vessel connects to: the only vessel_port, or the one its
+                        # position among this module's out_instances gives (generators/port_order.py)
+                        coupled_port_idx = neighbour_port_index(vessel_tup.exit_ports, vessel_tup.out_instances,
+                                                                out_vessel, "vessel_port",
+                                                                lambda n: self._port_types(n, ("entrance_ports", "general_ports")))
+                        for port_idx, exit_port in enumerate(vessel_tup.exit_ports):
+                            if exit_port["port_type"] == "vessel_port":
+                                if coupled_port_idx is not None and port_idx != coupled_port_idx:
+                                    continue
+                                self.connection_vessel_inlet_or_outlet.append("outlet") 
+                                # self.connection_vessel_indices.append(fv1d_vessel_index) #XXX Bea: I think this was copied by mistake from above
+                                if vessel_tup.module_subtype[1] == 'v':
+                                    self.connection_vessel_flow_or_pressure_bc.append("flow") 
+                                    self.port_input_variables.append(self.cellml_model.component(vessel_tup.name \
+                                                                    ).variable(exit_port["variables"][0]).id())
+                                    self.port_output_variables.append(self.cellml_model.component(vessel_tup.name \
+                                                                    ).variable(exit_port["variables"][1]).id())
+                                elif vessel_tup.module_subtype[1] == 'p':
+                                    self.connection_vessel_flow_or_pressure_bc.append("pressure") 
+                                    self.port_input_variables.append(self.cellml_model.component(vessel_tup.name \
+                                                                    ).variable(exit_port["variables"][1]).id())
+                                    self.port_output_variables.append(self.cellml_model.component(vessel_tup.name \
+                                                                    ).variable(exit_port["variables"][0]).id())
                                 else:
-                                    # if this port_type isn't one of the above, it wont be connected to the FV1D model
-                                    pass
-                                    # print(f"unknown port type of {exit_port["port_type"]} connecting to a "
-                                    #       "1D FV model")
-                                    # exit()
+                                    print(f"unknown BC type of {vessel_tup.module_subtype} connecting to a "
+                                        "1D FV model")
+                            
+                            elif exit_port["port_type"] == "FV_resistance_port":
+                                FV_resistance_port = 1
+                                self.control_variables.append(self.cellml_model.component(vessel_tup.name \
+                                                                    ).variable(exit_port["variables"][0]).id())
+                            # TODO other port types will be added here! 
+                            else:
+                                # if this port_type isn't one of the above, it wont be connected to the FV1D model
+                                pass
+                                # print(f"unknown port type of {exit_port["port_type"]} connecting to a "
+                                #       "1D FV model")
+                                # exit()
 
-                            if FV_resistance_port == -1:
-                                self.control_variables.append( None )
-
-                        else:
-                            FV_resistance_port = -1
-                            for exit_port in vessel_tup.exit_ports:
-                                if exit_port["port_type"] == "vessel_port":
-                                    self.connection_vessel_inlet_or_outlet.append("outlet") 
-                                    # self.connection_vessel_indices.append(fv1d_vessel_index) #XXX Bea: I think this was copied by mistake from above
-                                    if vessel_tup.module_subtype[1] == 'v':
-                                        self.connection_vessel_flow_or_pressure_bc.append("flow") 
-                                        self.port_input_variables.append(self.cellml_model.component(vessel_tup.name \
-                                                                        ).variable(exit_port["variables"][0]).id())
-                                        self.port_output_variables.append(self.cellml_model.component(vessel_tup.name \
-                                                                        ).variable(exit_port["variables"][1]).id())
-                                    elif vessel_tup.module_subtype[1] == 'p':
-                                        self.connection_vessel_flow_or_pressure_bc.append("pressure") 
-                                        self.port_input_variables.append(self.cellml_model.component(vessel_tup.name \
-                                                                        ).variable(exit_port["variables"][1]).id())
-                                        self.port_output_variables.append(self.cellml_model.component(vessel_tup.name \
-                                                                        ).variable(exit_port["variables"][0]).id())
-                                    else:
-                                        print(f"unknown BC type of {vessel_tup.module_subtype} connecting to a "
-                                            "1D FV model")
-                                
-                                elif exit_port["port_type"] == "FV_resistance_port":
-                                    FV_resistance_port = 1
-                                    self.control_variables.append(self.cellml_model.component(vessel_tup.name \
-                                                                        ).variable(exit_port["variables"][0]).id())
-                                # TODO other port types will be added here! 
-                                else:
-                                    # if this port_type isn't one of the above, it wont be connected to the FV1D model
-                                    pass
-                                    # print(f"unknown port type of {exit_port["port_type"]} connecting to a "
-                                    #       "1D FV model")
-                                    # exit()
-
-                            if FV_resistance_port == -1:
-                                self.control_variables.append( None )
-                
+                        if FV_resistance_port == -1:
+                            self.control_variables.append( None )
+            
                 for inp_vessel in vessel_tup.inp_instances:
                     inp_vessel_row = self.model.vessels_df.loc[self.model.vessels_df["name"] == inp_vessel].squeeze()
                     if inp_vessel_row["module_type"] == "FV1D_vessel":
@@ -450,123 +399,49 @@ class CVS0DCppGenerator(object):
                         
                         self.connection_vessel_indices.append(fv1d_vessel_index)
                         self.connection_module_types.append("FV_1d") # TODO only option for now, can be extended to other kinds of coupling.
-                        if is_heart_module_type(vessel_tup.module_type):
-                            FV_resistance_port = -1
-                            for entrance_port in vessel_tup.entrance_ports:
-                                if entrance_port["port_type"] == "vessel_port":
-                                    
-                                    if ('ivc' in inp_vessel and entrance_port["variables"][0] == 'v_ivc'):
-                                        self.connection_vessel_inlet_or_outlet.append("inlet") 
-                                        if vessel_tup.module_subtype[0] == 'v':
-                                            self.connection_vessel_flow_or_pressure_bc.append("flow") 
-                                            self.port_input_variables.append(self.cellml_model.component(vessel_tup.name \
-                                                                            ).variable(entrance_port["variables"][0]).id())
-                                            self.port_output_variables.append(self.cellml_model.component(vessel_tup.name \
-                                                                            ).variable(entrance_port["variables"][1]).id())
-                                            # TODO include a variable for the pressure or flow input
-                                        elif vessel_tup.module_subtype[0] == 'p':  
-                                            self.connection_vessel_flow_or_pressure_bc.append("pressure") 
-                                            self.port_input_variables.append(self.cellml_model.component(vessel_tup.name \
-                                                                            ).variable(entrance_port["variables"][1]).id())
-                                            self.port_output_variables.append(self.cellml_model.component(vessel_tup.name \
-                                                                            ).variable(entrance_port["variables"][0]).id())
-                                        else:
-                                            print(f"unknown BC type of {vessel_tup.module_subtype} connecting to a "
-                                                "1D FV model")
-                                            exit()
-
-                                    elif ('svc' in inp_vessel and entrance_port["variables"][0] == 'v_svc'):
-                                        self.connection_vessel_inlet_or_outlet.append("inlet") 
-                                        if vessel_tup.module_subtype[0] == 'v':
-                                            self.connection_vessel_flow_or_pressure_bc.append("flow") 
-                                            self.port_input_variables.append(self.cellml_model.component(vessel_tup.name \
-                                                                            ).variable(entrance_port["variables"][0]).id())
-                                            self.port_output_variables.append(self.cellml_model.component(vessel_tup.name \
-                                                                            ).variable(entrance_port["variables"][1]).id())
-                                            # TODO include a variable for the pressure or flow input
-                                        elif vessel_tup.module_subtype[0] == 'p':  
-                                            self.connection_vessel_flow_or_pressure_bc.append("pressure") 
-                                            self.port_input_variables.append(self.cellml_model.component(vessel_tup.name \
-                                                                            ).variable(entrance_port["variables"][1]).id())
-                                            self.port_output_variables.append(self.cellml_model.component(vessel_tup.name \
-                                                                            ).variable(entrance_port["variables"][0]).id())
-                                        else:
-                                            print(f"unknown BC type of {vessel_tup.module_subtype} connecting to a "
-                                                "1D FV model")
-                                            exit()
-
-                                    elif ('pvn' in inp_vessel and entrance_port["variables"][0] == 'v_pvn'):
-                                        self.connection_vessel_inlet_or_outlet.append("inlet") 
-                                        if vessel_tup.module_subtype[0] == 'v':
-                                            self.connection_vessel_flow_or_pressure_bc.append("flow") 
-                                            self.port_input_variables.append(self.cellml_model.component(vessel_tup.name \
-                                                                            ).variable(entrance_port["variables"][0]).id())
-                                            self.port_output_variables.append(self.cellml_model.component(vessel_tup.name \
-                                                                            ).variable(entrance_port["variables"][1]).id())
-                                            # TODO include a variable for the pressure or flow input
-                                        elif vessel_tup.module_subtype[0] == 'p':  
-                                            self.connection_vessel_flow_or_pressure_bc.append("pressure") 
-                                            self.port_input_variables.append(self.cellml_model.component(vessel_tup.name \
-                                                                            ).variable(entrance_port["variables"][1]).id())
-                                            self.port_output_variables.append(self.cellml_model.component(vessel_tup.name \
-                                                                            ).variable(entrance_port["variables"][0]).id())
-                                        else:
-                                            print(f"unknown BC type of {vessel_tup.module_subtype} connecting to a "
-                                                "1D FV model")
-                                            exit()
-                                
-                                elif entrance_port["port_type"] == "FV_resistance_port":
-                                    FV_resistance_port = 1
-                                    self.control_variables.append(self.cellml_model.component(vessel_tup.name \
-                                                                        ).variable(entrance_port["variables"][0]).id())
-                                # TODO other port types will be added here! 
+                        FV_resistance_port = -1
+                        # the entrance port inp_vessel connects to: the only vessel_port, or the one its
+                        # position among this module's inp_instances gives (generators/port_order.py)
+                        coupled_port_idx = neighbour_port_index(vessel_tup.entrance_ports, vessel_tup.inp_instances,
+                                                                inp_vessel, "vessel_port",
+                                                                lambda n: self._port_types(n, ("exit_ports", "general_ports")))
+                        for port_idx, entrance_port in enumerate(vessel_tup.entrance_ports):
+                            if entrance_port["port_type"] == "vessel_port":
+                                if coupled_port_idx is not None and port_idx != coupled_port_idx:
+                                    continue
+                                self.connection_vessel_inlet_or_outlet.append("inlet") 
+                                if vessel_tup.module_subtype[0] == 'v':
+                                    self.connection_vessel_flow_or_pressure_bc.append("flow") 
+                                    self.port_input_variables.append(self.cellml_model.component(vessel_tup.name \
+                                                                    ).variable(entrance_port["variables"][0]).id())
+                                    self.port_output_variables.append(self.cellml_model.component(vessel_tup.name \
+                                                                    ).variable(entrance_port["variables"][1]).id())
+                                    # TODO include a variable for the pressure or flow input
+                                elif vessel_tup.module_subtype[0] == 'p':  
+                                    self.connection_vessel_flow_or_pressure_bc.append("pressure") 
+                                    self.port_input_variables.append(self.cellml_model.component(vessel_tup.name \
+                                                                    ).variable(entrance_port["variables"][1]).id())
+                                    self.port_output_variables.append(self.cellml_model.component(vessel_tup.name \
+                                                                    ).variable(entrance_port["variables"][0]).id())
                                 else:
-                                    # if this port_type isn't one of the above, it wont be connected to the FV1D model
-                                    pass
-                                    # print(f"unknown port type of {entrance_port["port_type"]} connecting to a "
-                                    #       "1D FV model")
-                                    # exit()
+                                    print(f"unknown BC type of {vessel_tup.module_subtype} connecting to a "
+                                        "1D FV model")
+                                    exit()
 
-                            if FV_resistance_port == -1:
-                                self.control_variables.append( None )
+                            elif entrance_port["port_type"] == "FV_resistance_port":
+                                FV_resistance_port = 1
+                                self.control_variables.append(self.cellml_model.component(vessel_tup.name \
+                                                                    ).variable(entrance_port["variables"][0]).id())
+                            # TODO other port types will be added here! 
+                            else:
+                                # if this port_type isn't one of the above, it wont be connected to the FV1D model
+                                pass
+                                # print(f"unknown port type of {entrance_port["port_type"]} connecting to a "
+                                #       "1D FV model")
+                                # exit()
 
-                        else:
-                            FV_resistance_port = -1
-                            for entrance_port in vessel_tup.entrance_ports:
-                                if entrance_port["port_type"] == "vessel_port":
-                                    self.connection_vessel_inlet_or_outlet.append("inlet") 
-                                    if vessel_tup.module_subtype[0] == 'v':
-                                        self.connection_vessel_flow_or_pressure_bc.append("flow") 
-                                        self.port_input_variables.append(self.cellml_model.component(vessel_tup.name \
-                                                                        ).variable(entrance_port["variables"][0]).id())
-                                        self.port_output_variables.append(self.cellml_model.component(vessel_tup.name \
-                                                                        ).variable(entrance_port["variables"][1]).id())
-                                        # TODO include a variable for the pressure or flow input
-                                    elif vessel_tup.module_subtype[0] == 'p':  
-                                        self.connection_vessel_flow_or_pressure_bc.append("pressure") 
-                                        self.port_input_variables.append(self.cellml_model.component(vessel_tup.name \
-                                                                        ).variable(entrance_port["variables"][1]).id())
-                                        self.port_output_variables.append(self.cellml_model.component(vessel_tup.name \
-                                                                        ).variable(entrance_port["variables"][0]).id())
-                                    else:
-                                        print(f"unknown BC type of {vessel_tup.module_subtype} connecting to a "
-                                            "1D FV model")
-                                        exit()
-
-                                elif entrance_port["port_type"] == "FV_resistance_port":
-                                    FV_resistance_port = 1
-                                    self.control_variables.append(self.cellml_model.component(vessel_tup.name \
-                                                                        ).variable(entrance_port["variables"][0]).id())
-                                # TODO other port types will be added here! 
-                                else:
-                                    # if this port_type isn't one of the above, it wont be connected to the FV1D model
-                                    pass
-                                    # print(f"unknown port type of {entrance_port["port_type"]} connecting to a "
-                                    #       "1D FV model")
-                                    # exit()
-
-                            if FV_resistance_port == -1:
-                                self.control_variables.append( None )
+                        if FV_resistance_port == -1:
+                            self.control_variables.append( None )
 
         # print(fv1d_vessel_index_list)
         print('1d-0d coupled variables :: DONE')
@@ -689,6 +564,14 @@ class CVS0DCppGenerator(object):
         with open(self.annotated_model_file_path, 'w') as f:
             f.write(self.g.serialize(format='ttl'))
 
+
+    def _port_types(self, name, port_keys):
+        """The port types of the ``port_keys`` ports of module ``name``."""
+        rows = self.model.vessels_df.loc[self.model.vessels_df["name"] == name]
+        if rows.empty:
+            return []
+        row = rows.iloc[0]
+        return [port["port_type"] for key in port_keys for port in list(row[key])]
 
     def generate_cellml(self, inp_data_dict):
         print("generating CellML files, before Cpp generation")
@@ -3776,13 +3659,15 @@ class CVS1DPythonGenerator(object):
         if all_parameters is not None:
             self.params_df = pd.DataFrame(all_parameters).astype(object)
         else:
-            self.params_df = self.csv_parser.get_data_as_dataframe_multistrings(parameters_csv_abs_path, True)
-            # <vessel>/<variable> names (utilities/parameter_names.py) as the model's names
+            # the model's parameters file, with <vessel>/<variable> names
+            # (utilities/parameter_names.py) as the model's names
             from libcuflynx.utilities.parameter_names import model_name
-            if 'variable_name' in self.params_df.columns:
-                self.params_df['variable_name'] = [
-                    model_name(str(n), where=f'{parameters_csv_abs_path}: ')
-                    for n in self.params_df['variable_name']]
+            from libcuflynx.utilities.parameters_file import read_parameter_rows
+            rows = read_parameter_rows(parameters_csv_abs_path)
+            for row in rows:
+                row['variable_name'] = model_name(row['variable_name'],
+                                                  where=f'{parameters_csv_abs_path}: ')
+            self.params_df = pd.DataFrame(rows).astype(object)
 
         self.vessFileName = self.initFiles1dFold+f'/vess_{self.file_prefix[:-3]}.txt'
         self.nodeFileName = self.initFiles1dFold+f'/nodes_{self.file_prefix[:-3]}.txt'

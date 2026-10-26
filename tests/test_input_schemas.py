@@ -1,4 +1,4 @@
-"""The shipped JSON Schemas of the four input files (libcuflynx/schemas) agree with the readers.
+"""The shipped JSON Schemas of the five input files (libcuflynx/schemas) agree with the readers.
 
 * every schema is a valid draft 2020-12 schema, and every property it declares is described;
 * the repository's obs_data and params_for_id files, the converted params_for_id CSVs and the
@@ -22,9 +22,9 @@ from libcuflynx.parsers.PrimitiveParsers import (PARAM_PRIOR_TYPES, PARAMS_FOR_I
                                                  PARAMS_FOR_ID_JSON_VERSION, ObsAndParamDataParser)
 from libcuflynx.generators.multi_port import normalise_port_multi_port, validate_list_multi_port
 from libcuflynx.schemas import (MODULE_ARRAY_SCHEMA, MODULE_CONFIG_SCHEMA, OBS_DATA_SCHEMA,
-                                PARAMS_FOR_ID_SCHEMA, load_schema)
-from libcuflynx.utilities.config_schemas import (COMPONENT_KEYS, LEGACY_COMPONENT_TYPE_KEY,
-                                                 LEGACY_MODULE_ARRAY_COLUMNS, LEGACY_MODULE_KEYS,
+                                PARAMS_FOR_ID_SCHEMA, PARAMETERS_SCHEMA, load_schema)
+from libcuflynx.utilities.config_schemas import (COMPONENT_KEYS, MODULE_ARRAY_COLUMN_ORDER,
+                                                 OLD_MODULE_ARRAY_KEYS, OLD_MODULE_CONFIG_KEYS,
                                                  normalise_module_config_entry)
 from libcuflynx.utilities.obs_data_helpers import VALID_DATA_TYPES
 from libcuflynx.utilities.protocol_shapes import EVENT_KEYS, SHAPE_KEYS, SHAPE_TYPES
@@ -35,7 +35,8 @@ pytestmark = pytest.mark.unit
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXAMPLES = os.path.join(ROOT, 'tests', 'test_inputs', 'schema_examples')
-ALL_SCHEMAS = (MODULE_ARRAY_SCHEMA, MODULE_CONFIG_SCHEMA, OBS_DATA_SCHEMA, PARAMS_FOR_ID_SCHEMA)
+ALL_SCHEMAS = (MODULE_ARRAY_SCHEMA, MODULE_CONFIG_SCHEMA, OBS_DATA_SCHEMA, PARAMS_FOR_ID_SCHEMA,
+               PARAMETERS_SCHEMA)
 
 
 def _validator(name):
@@ -87,7 +88,8 @@ def test_the_examples_validate():
     kinds = {'_module_array.json': MODULE_ARRAY_SCHEMA,
              '_modules_config.json': MODULE_CONFIG_SCHEMA,
              '_obs_data.json': OBS_DATA_SCHEMA,
-             '_params_for_id.json': PARAMS_FOR_ID_SCHEMA}
+             '_params_for_id.json': PARAMS_FOR_ID_SCHEMA,
+             '_parameters.json': PARAMETERS_SCHEMA}
     seen = set()
     for path in sorted(glob.glob(os.path.join(EXAMPLES, '*.json'))):
         name = next(n for suffix, n in kinds.items() if path.endswith(suffix))
@@ -95,13 +97,6 @@ def test_the_examples_validate():
             _validator(name).validate(json.load(f))
         seen.add(name)
     assert seen == set(ALL_SCHEMAS)
-
-
-def test_the_example_params_for_id_csv_converts_to_its_json():
-    converted = ObsAndParamDataParser.params_for_id_csv_to_json(
-        os.path.join(EXAMPLES, 'SN_simple_params_for_id.csv'))
-    with open(os.path.join(EXAMPLES, 'SN_simple_params_for_id.json')) as f:
-        assert converted == json.load(f)
 
 
 def test_the_repository_obs_data_files_validate():
@@ -114,12 +109,24 @@ def test_the_repository_obs_data_files_validate():
         assert not errors, (path, jsonschema.exceptions.best_match(errors).message)
 
 
-def test_the_repository_params_for_id_files_validate_as_json():
-    files = _repo_files('*params_for_id*.csv')
+def test_the_repository_parameters_files_validate():
+    files = _repo_files('*_parameters*.json')
+    assert len(files) > 10
+    validator = _validator(PARAMETERS_SCHEMA)
+    for path in files:
+        with open(path) as f:
+            errors = list(validator.iter_errors(json.load(f)))
+        assert not errors, (path, jsonschema.exceptions.best_match(errors).message)
+
+
+def test_the_repository_params_for_id_files_are_json_and_validate():
+    assert not _repo_files('*params_for_id*.csv')
+    files = _repo_files('*params_for_id*.json')
     assert len(files) > 10
     validator = _validator(PARAMS_FOR_ID_SCHEMA)
     for path in files:
-        doc = ObsAndParamDataParser.params_for_id_csv_to_json(path)
+        with open(path) as f:
+            doc = json.load(f)
         errors = list(validator.iter_errors(doc))
         assert not errors, (path, jsonschema.exceptions.best_match(errors).message)
 
@@ -143,7 +150,9 @@ def test_obs_data_keys_match_the_parser():
     assert set(defs['dataItem']['properties']) == _parse_obs_data_rules('item_defaults')
     assert set(defs['predictionItem']['properties']) == \
         _parse_obs_data_rules('prediction_entry_defaults')
-    assert set(defs['protocolInfo']['properties']) == _parse_obs_data_rules('protocol_defaults')
+    # the required keys have no default
+    assert set(defs['protocolInfo']['properties']) == \
+        _parse_obs_data_rules('protocol_defaults') | set(defs['protocolInfo']['required'])
     assert set(defs['dataItem']['properties']['data_type']['enum']) == set(VALID_DATA_TYPES)
 
     shape = defs['shape']['oneOf'][1]
@@ -171,12 +180,12 @@ def test_params_for_id_keys_match_the_parser():
 def test_module_config_and_array_keys_match_the_reader():
     defs = load_schema(MODULE_CONFIG_SCHEMA)['$defs']
     assert set(defs['phlynxComponent']['required']) == set(COMPONENT_KEYS)
-    assert set(defs['libcuflynxComponent']['required']) == \
-        set(LEGACY_MODULE_KEYS) | {LEGACY_COMPONENT_TYPE_KEY}
+    refused = {r['required'][0] for r in defs['phlynxComponent']['not']['anyOf']}
+    assert set(OLD_MODULE_CONFIG_KEYS) - {'default_parameters'} <= refused
     array_defs = load_schema(MODULE_ARRAY_SCHEMA)['$defs']
-    for legacy_key, key in LEGACY_MODULE_ARRAY_COLUMNS.items():
-        assert key in array_defs['phlynxRecord']['properties']
-        assert legacy_key in array_defs['libcuflynxRecord']['properties']
+    assert set(MODULE_ARRAY_COLUMN_ORDER) <= set(array_defs['phlynxRecord']['properties'])
+    refused = {r['required'][0] for r in array_defs['phlynxRecord']['not']['anyOf']}
+    assert set(OLD_MODULE_ARRAY_KEYS) <= refused
 
 
 # --------------------------------------------------------------------------------------------
@@ -277,7 +286,7 @@ def test_a_valid_params_for_id_document_is_accepted_by_both():
     (_params({'modifies': ['b/R'], 'modifier': 'scale', 'operation': 'scale', 'min': 0.5,
               'max': 2}), r"'operation' was unexpected"),
     (_params(dict(GOOD_ENTRY, targets=['C'])), r"(?s)targets\[0\]: 'C' is not in the form.*"
-                                               r"component/param"),
+                                               r"<vessel>/<variable>"),
     (_params(dict(GOOD_ENTRY, prior='beta')), r"prior: 'beta' is not one of"),
     (_params(dict(GOOD_ENTRY, prior='normal', prior_params={'prior_std': -1})),
      r'prior_std: -1 is less than or equal to the minimum of 0'),
@@ -293,7 +302,7 @@ def test_params_for_id_the_parser_refuses_the_schema_refuses(doc, message):
 
 
 def _component(**port):
-    return {'vessel_type': 'v', 'BC_type': 'nn', 'module_file': 'm.cellml', 'module_type': 'v_type',
+    return {'module_type': 'v', 'module_subtype': 'nn', 'component_file': 'm.cellml', 'component_type': 'v_type',
             'module_format': 'cellml',
             'entrance_ports': [dict({'port_type': 'flow_port', 'variables': ['q']}, **port)],
             'exit_ports': [], 'variables_and_units': [['q', 'm3_per_s', 'access', 'variable']]}
@@ -336,7 +345,7 @@ def test_module_config_variables_and_units_rows_have_four_fields(variable):
 def test_module_array_names_may_have_surrounding_whitespace_only():
     from libcuflynx.utilities.config_schemas import normalise_vessel_record
     validator = _validator(MODULE_ARRAY_SCHEMA)
-    record = {'name': ' a ', 'vessel_type': 'v', 'BC_type': 'nn'}
+    record = {'name': ' a ', 'module_type': 'v', 'module_subtype': 'nn'}
     assert normalise_vessel_record(record)['name'] == 'a'
     assert validator.is_valid([record])
     record = dict(record, name='a b')

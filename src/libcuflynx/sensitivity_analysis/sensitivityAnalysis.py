@@ -93,7 +93,7 @@ class SensitivityAnalysis():
         dt: Output sampling step (s).
         optimiser_options: Options dict (used if a nominal calibration is run).
         param_id_obs_path: Optional path to an ``obs_data.json``.
-        params_for_id_path: Optional path to a ``{prefix}_params_for_id.csv``.
+        params_for_id_path: Optional path to a ``{prefix}_params_for_id.json``.
     """
     def __init__(self, model_path, model_type, file_name_prefix, sa_options, DEBUG=False,
                  param_id_output_dir=None, resources_dir=None, model_out_names=[],
@@ -375,7 +375,7 @@ class SensitivityAnalysis():
         # identity (scale -> 1.0), where every target sits at its resolved baseline.
         apply_modifier_identity_nominals(engine.param_id_info, nominal)
 
-        # 'analytic' (the default) keeps the backend's own sensitivity; 'FD' opts into
+        # 'auto' (the default) keeps the backend's own sensitivity; 'FD' opts into
         # central finite differences, the only local SA available on a backend with no
         # analytic arm (issue #338).
         sens = engine.get_observable_sensitivities(  # {obs_label: {param: d(feat)/dp}}

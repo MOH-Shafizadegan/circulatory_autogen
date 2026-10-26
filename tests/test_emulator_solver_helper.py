@@ -35,13 +35,13 @@ def _config(base_user_inputs, resources_dir, tmp_path, **overrides):
     config = base_user_inputs.copy()
     config.update({
         'file_prefix': 'Simple_ODE_Benchmark',
-        'input_param_file': 'Simple_ODE_Benchmark_parameters.csv',
+        'input_param_file': 'Simple_ODE_Benchmark_parameters.json',
         'model_type': 'cellml',
         'resources_dir': resources_dir,
         'param_id_obs_path': os.path.join(resources_dir,
                                           'Simple_ODE_Benchmark_obs_data.json'),
         'params_for_id_path': os.path.join(resources_dir,
-                                           'Simple_ODE_Benchmark_params_for_id.csv'),
+                                           'Simple_ODE_Benchmark_params_for_id.json'),
         'param_id_output_dir': str(tmp_path / 'param_id_output'),
         'param_id_method': 'genetic_algorithm',
         'DEBUG': True,
@@ -61,7 +61,6 @@ def _parse_infos(config):
     parser = ObsAndParamDataParser()
     parsed = parser.parse_obs_data_json(
         param_id_obs_path=config['param_id_obs_path'],
-        pre_time=config['pre_time'], sim_time=config['sim_time'],
         model_type=config['model_type'], method=config['solver_info'].get('method'))
     obs_info = parser.process_obs_info(gt_df=parsed['gt_df'], output_dir=scratch,
                                        dt=config['dt'])
@@ -589,22 +588,6 @@ def test_the_speedup_is_close_to_the_ensemble_size(base_user_inputs, resources_d
         f'batching {len(ensemble)} walkers was only {speedup:.1f}x faster than evaluating '
         f'them one at a time; the surrogate is evidently still being called per walker')
 
-
-def test_the_old_class_names_still_import():
-    """OpencorParamID and OpencorMCMC are aliases now, and have to keep working.
-
-    Neither ever had anything to do with OpenCOR -- they are the parameter-identification
-    and MCMC engines, used with myokit/CVODE, casadi and emulators -- but they are
-    imported by name from outside this repository, CUFLynx among them. A rename that
-    breaks a downstream import on upgrade is a rename that gets reverted.
-
-    Aliases rather than subclasses, so isinstance and pickling are unaffected: asserted
-    by identity, which a subclass would fail.
-    """
-    from libcuflynx.param_id import paramID
-
-    assert paramID.OpencorParamID is paramID.ParamID
-    assert paramID.OpencorMCMC is paramID.MCMC
 
 # ------------------------------------------------- the prediction survives a protocol reset
 
