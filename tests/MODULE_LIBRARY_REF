@@ -1,4 +1,4 @@
 # The commit of physiomelinks/circulatory-autogen-modules the tests run against (see
-# tests/_module_library.py): its feat/supermodule-versions branch until that merges into main.
+# tests/_module_library.py): its main branch.
 # CI checks this commit out; move it deliberately.
-78569f11bf73d2b4bc7f79a33b6e646d8e1d4a56
+ad7d5613253d5b9a9593ab135f5868304baaa83d
