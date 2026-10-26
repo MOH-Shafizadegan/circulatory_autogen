@@ -6,7 +6,7 @@ These tests verify that sensitivity analysis works correctly for various models.
 import os
 from _obs_data import retimed_obs_data
 import pytest
-from mpi4py import MPI
+MPI = pytest.importorskip("mpi4py.MPI", reason='needs mpi4py: pip install "libcuflynx[mpi]"')
 
 from libcuflynx.scripts.script_generate_with_new_architecture import generate_with_new_architecture
 from libcuflynx.scripts.sensitivity_analysis_run_script import run_SA

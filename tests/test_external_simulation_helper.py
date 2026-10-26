@@ -17,7 +17,7 @@ import textwrap
 
 import numpy as np
 import pytest
-from mpi4py import MPI
+MPI = pytest.importorskip("mpi4py.MPI", reason='needs mpi4py: pip install "libcuflynx[mpi]"')
 
 from libcuflynx.parsers.PrimitiveParsers import ObsAndParamDataParser, YamlFileParser
 from libcuflynx.solver_wrappers import get_simulation_helper, get_simulation_helper_from_inp_data_dict

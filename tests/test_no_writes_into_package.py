@@ -21,7 +21,7 @@ from datetime import date
 
 import pytest
 import yaml
-from mpi4py import MPI
+MPI = pytest.importorskip("mpi4py.MPI", reason='needs mpi4py: pip install "libcuflynx[mpi]"')
 
 from libcuflynx.parsers.PrimitiveParsers import save_dated_user_inputs
 from libcuflynx.utilities import paths

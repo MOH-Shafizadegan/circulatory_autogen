@@ -8,7 +8,7 @@ import os
 from _obs_data import retimed_obs_data
 import pytest
 import numpy as np
-from mpi4py import MPI
+MPI = pytest.importorskip("mpi4py.MPI", reason='needs mpi4py: pip install "libcuflynx[mpi]"')
 from libcuflynx.param_id.paramID import CVS0DParamID
 from libcuflynx.parsers.PrimitiveParsers import YamlFileParser
 
