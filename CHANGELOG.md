@@ -20,6 +20,16 @@ only `path`) as a copy of the target's parameters file with them set, a value in
 instance under its path; the target's own files and the supermodule version's template are not
 changed.
 
+### Fixed — `CVODE_myokit` on modules in other time units (#604)
+
+- A module whose time variable is in other units than the model's (e.g. `t` in ms in CA's
+  seconds-based model) has its derivatives taken w.r.t. its own time, as CellML defines them.
+  Myokit converted the module's `t` but not `dx/dt`, so such a module ran 1000x too slowly
+  under `CVODE_myokit` (libCellML's analyser, behind the python and C++ models, already
+  applies the factor). Results of
+  models with such modules change: `module_config_user/tutorial_modules.cellml`'s
+  `i_piezo_Na_tutorial` and `smc_hernandez_with_piezo` are the shipped ones.
+
 ### Changed — a supermodule names its submodule versions; its instances are its own module array
 
 A supermodule version's config lists the module versions it is built from, `submodule_versions:
