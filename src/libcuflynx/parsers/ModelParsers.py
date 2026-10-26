@@ -10,7 +10,8 @@ from libcuflynx.utilities.config_schemas import (load_expanded_vessel_records, l
                                                  vessel_records_to_string_frame)
 from libcuflynx.models.LumpedModels import CVS0DModel
 from libcuflynx.utilities.parameter_names import host_model_names
-from libcuflynx.utilities.parameters_file import parameters_array as rows_to_parameters_array, read_parameter_rows
+from libcuflynx.utilities.parameters_file import (SOURCE_KEY, parameters_array as rows_to_parameters_array,
+                                                  read_parameter_rows)
 from libcuflynx.checks.LumpedModelChecks import LumpedCompositeCheck, LumpedBCVesselCheck, LumpedIDParamsCheck, LumpedPortVariableCheck
 import pandas as pd
 import numpy as np
@@ -61,12 +62,13 @@ def _with_model_names(parameters_array, vessels_df, source):
     return out
 
 
-def merge_default_parameters(parameters_array, extra_param_rows):
+def merge_default_parameters(parameters_array, extra_param_rows, sources=None):
     '''
     ``parameters_array`` (the structured array of a parameters CSV) with the rows of
     ``extra_param_rows`` (dicts keyed by column name) whose variable_name it does not already
     have appended -- so the host file's values win; of several extra rows with one name, the
-    first is used. Columns a row lacks are left empty.
+    first is used. Columns a row lacks are left empty. ``sources``, when a dict is given, gets
+    ``{variable_name: row[SOURCE_KEY]}`` for each appended row that names its parameterisation.
     '''
     if not extra_param_rows:
         return parameters_array
@@ -77,11 +79,16 @@ def merge_default_parameters(parameters_array, extra_param_rows):
         if row['variable_name'] not in existing:
             existing.add(row['variable_name'])
             new_rows.append(row)
+            if sources is not None and row.get(SOURCE_KEY):
+                sources[row['variable_name']] = row[SOURCE_KEY]
     if not new_rows:
         return parameters_array
-    added = np.array([tuple(str(row.get(field, '')) for field in fields) for row in new_rows],
-                     dtype=parameters_array.dtype)
-    return np.concatenate([parameters_array, added])
+    cells = [tuple(str(row.get(field, '')) for field in fields) for row in new_rows]
+    # each field wide enough for the longest text, so no default's text is cut
+    dtype = [(field, f'<U{max([parameters_array.dtype[field].itemsize // 4] + [len(c[i]) for c in cells])}')
+             for i, field in enumerate(fields)]
+    added = np.array(cells, dtype=dtype)
+    return np.concatenate([parameters_array.astype(dtype), added])
 
 
 
@@ -549,9 +556,17 @@ class CSV0DModelParser(object):
                                                   self.parameter_filename)
         # a host value settles a conflict between parameterisations (written global/T or T)
         reissue_warnings(held, settled=set(parameters_array_orig['variable_name'].tolist()))
+        # {model name: the parameterisation its value came from}: a host row's own SOURCE_KEY (a
+        # used parameters file read back), then each default merged in below
+        parameter_sources = {}
+        if SOURCE_KEY in (parameters_array_orig.dtype.names or ()):
+            parameter_sources = {n: s for n, s in zip(parameters_array_orig['variable_name'].tolist(),
+                                                      parameters_array_orig[SOURCE_KEY].tolist())
+                                 if s}
         # Supermodule and parameterisation parameters fill in whatever the parameters file does not set,
         # before the reduction, so everything downstream (generation, parameter id) sees them.
-        parameters_array_orig = merge_default_parameters(parameters_array_orig, extra_param_rows)
+        parameters_array_orig = merge_default_parameters(parameters_array_orig, extra_param_rows,
+                                                         parameter_sources)
         # Reduce parameters_array so that it only includes the required parameters for
         # this module_array.
         # This will output True if all the required parameters have been defined and
@@ -574,6 +589,7 @@ class CSV0DModelParser(object):
         model_0D.all_parameters_array = parameters_array_orig
         # {model name: the name the model's parameters file gives it}
         model_0D.parameter_file_names = self.parameter_file_names
+        model_0D.parameter_sources = parameter_sources
 
         # get the allowable types from the modules_config.json file
         model_0D.possible_module_type_subtypes = list(set(list(zip(module_df["module_type"].to_list(), module_df["module_subtype"].to_list()))))
@@ -687,16 +703,17 @@ class CSV0DModelParser(object):
             # const_type comes from the module config (local or global), not from the CSV.
             parameters_list.append([row['variable_name'], row['units'], param_tuple[2],
                                     row['value'], row['data_reference']])
+        # each field at least 80 wide (a value identified by parameter id is written into it),
+        # and wide enough for its longest text
+        width = max([80] + [len(str(cell)) for row in parameters_list for cell in row])
+        dtype = [(field, f'U{width}') for field in
+                 ('variable_name', 'units', 'const_type', 'value', 'data_reference')]
         if len(parameters_list) == 0:
-            return np.empty((len(parameters_list)),
-                                    dtype=[('variable_name', 'U80'), ('units', 'U80'),('const_type', 'U80'),
-                                           ('value', 'U80'), ('data_reference', 'U80')])
+            return np.empty((len(parameters_list)), dtype=dtype)
         elif len(set([len(a) for a in parameters_list])) != 1:
             print('parameters rows are of non consistent length, exiting')
             exit()
-        parameters_array = np.empty((len(parameters_list)),
-                                    dtype=[('variable_name', 'U80'), ('units', 'U80'),('const_type', 'U80'),
-                                           ('value', 'U80'), ('data_reference', 'U80')])
+        parameters_array = np.empty((len(parameters_list)), dtype=dtype)
         parameters_array['variable_name'] = np.array(parameters_list)[:,0]
         parameters_array['units'] = np.array(parameters_list)[:,1]
         parameters_array['const_type'] = np.array(parameters_list)[:,2]

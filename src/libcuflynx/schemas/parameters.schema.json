@@ -82,6 +82,10 @@
         "data_reference": {
           "type": "string",
           "description": "Where the value comes from. Default: empty."
+        },
+        "from": {
+          "type": "string",
+          "description": "In a used parameters file (<prefix>_parameters_used.json, beside a generated model) and a calibrated result built on one: the parameterisation a value the model's parameters file does not set came from, \"<module_type>/<module_subtype> parameterisation <name>\". Kept and not read."
         }
       },
       "additionalProperties": {

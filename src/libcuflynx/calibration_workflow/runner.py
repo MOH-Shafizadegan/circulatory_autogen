@@ -34,6 +34,7 @@ import hashlib
 import json
 import os
 import shutil
+import tempfile
 import time
 import warnings
 
@@ -61,6 +62,8 @@ POINT_BEST_FIT = 'best_fit'
 POINT_POSTERIOR_MEDIAN = 'posterior_median'
 WORKFLOW_RESULT = 'workflow_result.json'
 TARGET_DIR = '_target'
+# the file prefix the target's model is generated with
+TARGET_PREFIX = 'target'
 SENSITIVITY_DIR = 'sensitivity'
 EMULATOR_DIR = 'emulator'
 SOBOL_INDICES_GLOB = 'all_outputs_n*_Sobol_indices.csv'
@@ -687,7 +690,7 @@ class _Run:
             if os.path.isdir(target_dir):
                 shutil.rmtree(target_dir)
             generated = generate_model(
-                self.workflow.target, os.path.join(target_dir, 'model'), 'target', overrides,
+                self.workflow.target, os.path.join(target_dir, 'model'), TARGET_PREFIX, overrides,
                 library_inputs=self.resolved.library_inputs,
                 model_type=self.workflow.settings.get('model_type', 'cellml'),
                 solver=self.workflow.settings.get('solver'))
@@ -702,13 +705,16 @@ class _Run:
                     f'module array.')
             workflow_result['target_model'] = {
                 'model_path': generated['model_path'],
-                'parameters_path': generated['parameters_path']}
+                'parameters_path': generated['parameters_path'],
+                'used_parameters_path': generated['used_parameters_path']}
         if write_calibrated and merged:
             if not complete:
                 raise WorkflowError('the calibrated parameters file is written only for a '
                                     'complete workflow run; some steps have no result.')
+            used = (workflow_result['target_model'] or {}).get('used_parameters_path')
             workflow_result['calibrated_parameters_file'] = write_calibrated_parameters(
-                target, workflow_result['merged_parameters'], self.workflow.name)
+                target, workflow_result['merged_parameters'], self.workflow.name,
+                library_inputs=self.resolved.library_inputs, used_path=used)
         _write_json(os.path.join(self.output_dir, WORKFLOW_RESULT), workflow_result)
         return workflow_result
 
@@ -782,21 +788,56 @@ def write_calibrated_parameters_to(source, output_dir, path, module_library_dirs
                             f'in {output_dir} (not run, or their inputs changed since); run '
                             f'them before writing the calibrated parameters.')
     merged = _read_json(result_path)['merged_parameters']
-    return write_calibrated_parameters(resolve_workflow(workflow).target, merged, workflow.name,
-                                       path=path)
+    resolved = resolve_workflow(workflow)
+    return write_calibrated_parameters(resolved.target, merged, workflow.name, path=path,
+                                       library_inputs=resolved.library_inputs)
 
 
-def write_calibrated_parameters(target, merged_parameters, workflow_name, path=None):
+def target_used_parameters(target, library_inputs=None, used_path=None):
+    '''Every value the target's model uses, as a parameters document: the used parameters file
+    (``<prefix>_parameters_used.json``) at ``used_path``, or, without one, of the target
+    generated as it stands in a temporary directory. A module array's is a model's document; a
+    library module's is rooted at the module, as its parameterisations are (its instance's
+    values and the model's globals). WorkflowError when the target alone leaves a parameter
+    without a value.'''
+    from libcuflynx.utilities import parameters_file as pf
+    if used_path is None:
+        with tempfile.TemporaryDirectory() as work_dir:
+            try:
+                generated = generate_model(target.model, os.path.join(work_dir, 'model'),
+                                           TARGET_PREFIX, library_inputs=library_inputs)
+            except UnsetModelParameters as exc:
+                raise WorkflowError(f'the target leaves {exc.model_names} without a value, so '
+                                    f'its calibrated parameters cannot hold every value its '
+                                    f'model uses; set them in its parameters file.') from exc
+            doc = pf.read_parameters_file(generated['used_parameters_path'])
+    else:
+        doc = pf.read_parameters_file(used_path)
+    if target.kind == 'array':
+        return doc
+    module = pf.new_document()
+    if pf.GLOBAL in doc:
+        module[pf.GLOBAL] = doc[pf.GLOBAL]
+    module.update(doc.get(naming.STEP_VESSEL) or {})
+    return module
+
+
+def write_calibrated_parameters(target, merged_parameters, workflow_name, path=None,
+                                library_inputs=None, used_path=None):
     '''``path`` (default ``<name>_calibrated_parameters.json`` beside the target's parameters
     file, ``<name>`` its parameterisation, or its module array's prefix): the target's parameters
-    file (nested JSON, utilities/parameters_file.py) with each merged value set at the path the
-    target names it by -- ``<vessel>/<variable>`` in a module array's file (a vessel inside a
-    super instance, ``sys__C/q``, at ``sys/C/q``), the module's own path in a parameterisation --
-    and added where the file lacks it. Only ``path`` is written; the target's files are not
-    changed.'''
+    file (nested JSON, utilities/parameters_file.py), completed with every other value its model
+    uses (:func:`target_used_parameters`; each names the parameterisation it came from), with
+    each merged value set at the path the target names it by -- ``<vessel>/<variable>`` in a
+    module array's file (a vessel inside a super instance, ``sys__C/q``, at ``sys/C/q``), the
+    module's own path in a parameterisation. So the result reproduces the run without the
+    module library. Only ``path`` is written; the target's files are not changed.'''
     from libcuflynx.utilities import parameters_file as pf
     kind = pf.MODEL if target.kind == 'array' else pf.MODULE
-    doc = pf.read_parameters_file(target.parameters_path, kind=kind)
+    doc = target_used_parameters(target, library_inputs, used_path)
+    # the target's own leaves as it writes them (a library's "sourced" kept)
+    for place, leaf in pf.leaves(pf.read_parameters_file(target.parameters_path, kind=kind)):
+        pf.set_leaf(doc, place, leaf)
     today = datetime.date.today().isoformat()
     for record in merged_parameters:
         name = record['host_name'] if target.kind == 'array' else record['parameterisation_name']
@@ -805,6 +846,7 @@ def write_calibrated_parameters(target, merged_parameters, workflow_name, path=N
         leaf.update(value='%.10g' % record['value'],
                     data_reference=f'calibrated by workflow {workflow_name}, step '
                                    f'{record["from_step"]} ({today})')
+        leaf.pop(pf.SOURCE_KEY, None)
         if 'sourced' in leaf:
             leaf['sourced'] = 'no'
         pf.set_leaf(doc, place, leaf)

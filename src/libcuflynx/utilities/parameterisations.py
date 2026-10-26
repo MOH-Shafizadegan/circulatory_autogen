@@ -53,7 +53,8 @@ import os
 import warnings
 
 from libcuflynx.utilities.parameters_file import (CONVERT_COMMAND, GLOBAL, MODULE,
-                                                    SEPARATOR, read_parameter_rows as _read_rows)
+                                                    SEPARATOR, SOURCE_KEY,
+                                                    read_parameter_rows as _read_rows)
 
 PARAMETERISATIONS_DIR = 'parameterisations'
 # the name PARAMETERISATIONS_DIR had before; a version directory with only it is refused
@@ -158,13 +159,25 @@ def _entry_label(entry):
     return f'({entry.get("module_type")}, {entry.get("module_subtype")})'
 
 
+def parameterisation_source(entry, name):
+    '''Where a value from parameterisation ``name`` of the config ``entry`` came from, as a
+    model's used parameters file records it (``SOURCE_KEY``):
+    ``<module_type>/<module_subtype> parameterisation <name>``.'''
+    return f'{entry.get("module_type")}/{entry.get("module_subtype")} parameterisation {name}'
+
+
+def _sourced(entry, name, rows):
+    return [dict(row, **{SOURCE_KEY: parameterisation_source(entry, name)}) for row in rows]
+
+
 def parameterisation_rows(entry, parameterisation, where):
     '''
     ``(name, rows)`` for the config ``entry`` (a normalised module config entry, component or
     supermodule, carrying the ``config_path`` it was loaded from) and the record's
     ``parameterisation`` (None when the record names none). The rows are the raw
-    ones of the parameterisation's parameters file, not yet renamed; ``(None, [])`` when
-    nothing applies.
+    ones of the parameterisation's parameters file, not yet renamed, each with ``SOURCE_KEY``
+    naming the parameterisation (``parameterisation_source``); ``(None, [])`` when nothing
+    applies.
 
     * an explicit parameterisation must exist: ValueError naming the version directory and
       the parameterisations it has, or saying that the config has no parameterisations
@@ -181,8 +194,8 @@ def parameterisation_rows(entry, parameterisation, where):
         _refuse_csv_parameterisation(path, where)
         if not os.path.isfile(path):
             return None, []
-        return default, read_parameter_rows(path, where,
-                                            f'default parameterisation "{default}" file')
+        return default, _sourced(entry, default, read_parameter_rows(
+            path, where, f'default parameterisation "{default}" file'))
 
     label = _entry_label(entry)
     if not config_path:
@@ -206,7 +219,8 @@ def parameterisation_rows(entry, parameterisation, where):
             f'{where}: unknown parameterisation "{parameterisation}" of {label}: {path} does not '
             f'exist. The parameterisations in {parameterisations_dir(config_path)} are '
             f'{existing or "none"}.')
-    return parameterisation, read_parameter_rows(path, where, f'parameterisation "{parameterisation}" file')
+    return parameterisation, _sourced(entry, parameterisation, read_parameter_rows(
+        path, where, f'parameterisation "{parameterisation}" file'))
 
 
 class ConflictingGlobalWarning(UserWarning):

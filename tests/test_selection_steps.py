@@ -272,7 +272,8 @@ def test_calibrated_values_are_written_where_asked_and_nowhere_else(library, tmp
                'host_name': f'sys__C/{v}', 'value': x, 'units': 'dimensionless',
                'from_step': 'sys-c'} for v, x in (('q', 3.0), ('k', 4.0))]
     template, target = open(_template_file(library)).read(), open(_sys_file(library)).read()
-    out = write_calibrated_parameters(resolved.target, merged, 'w', path=str(tmp_path / 'out.json'))
+    out = write_calibrated_parameters(resolved.target, merged, 'w', path=str(tmp_path / 'out.json'),
+                                      library_inputs=resolved.library_inputs)
     assert out == str(tmp_path / 'out.json')
     assert open(_template_file(library)).read() == template
     assert open(_sys_file(library)).read() == target

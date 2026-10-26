@@ -13,7 +13,8 @@ A module's parameterisation (``parameterisations/<name>/<name>_parameters.json``
 form rooted at the module: a component module's variables at the top (``{"C": {...}}``), a
 supermodule's sub-instances (``{"lv": {"E_A": {...}}}``), and the globals the module sets under
 ``global``. Calibrated results (``<name>_calibrated_parameters.json``) are written in the same
-form.
+form, and so is ``<prefix>_parameters_used.json`` beside a generated model: every value the model
+uses, a value its parameters file does not set naming its parameterisation in ``SOURCE_KEY``.
 
 The rules (``schemas/parameters.schema.json``):
 
@@ -46,6 +47,10 @@ SCHEMA_VERSION_KEY = 'schema_version'
 RESERVED_NAMES = (GLOBAL, VALUE, SCHEMA_VERSION_KEY)
 #: a leaf's keys, in the order they are written; any other key follows them
 LEAF_KEYS = ('value', 'units', 'data_reference')
+#: the leaf key of a used parameters file naming the parameterisation a value came from, when
+#: the model's parameters file did not set it (``<module_type>/<module_subtype> parameterisation
+#: <name>``)
+SOURCE_KEY = 'from'
 #: the row keys every reader gives (a leaf's other keys are added after them)
 ROW_KEYS = ('variable_name',) + LEAF_KEYS
 SEPARATOR = '/'
@@ -63,6 +68,12 @@ _JSON_NUMBER = re.compile(r'-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$')
 def parameters_file_name(prefix):
     '''``<prefix>_parameters.json``'''
     return f'{prefix}_parameters{EXTENSION}'
+
+
+def used_parameters_file_name(prefix):
+    '''``<prefix>_parameters_used.json``: every value a generated model uses, written beside it,
+    in the form of a model's parameters file.'''
+    return f'{prefix}_parameters_used{EXTENSION}'
 
 
 def is_leaf(node):
@@ -171,6 +182,21 @@ def parameter_rows(doc, kind=MODEL):
                 walk(child, path + [key])
     walk({k: v for k, v in doc.items() if k not in (SCHEMA_VERSION_KEY, GLOBAL)}, [])
     return rows
+
+
+def leaves(doc):
+    '''``[(path, leaf)]`` of every parameter of ``doc``, in file order: a global at
+    ``['global', name]``, any other at its path of instance, sub-instances and variable.'''
+    out = []
+
+    def walk(node, path):
+        for key, child in node.items():
+            if is_leaf(child):
+                out.append((path + [key], child))
+            elif isinstance(child, dict):
+                walk(child, path + [key])
+    walk({k: v for k, v in doc.items() if k != SCHEMA_VERSION_KEY}, [])
+    return out
 
 
 def read_parameter_rows(path, where='', kind=MODEL):
@@ -339,10 +365,13 @@ def write_parameter_rows(path, rows, kind=MODEL):
 def parameters_array(rows, width=80):
     '''``rows`` as the structured array of strings a parameters table was read into: the fields
     ``variable_name``, ``units``, ``value``, ``data_reference`` and the other keys rows have, in
-    that order, each ``<U{width}``.'''
+    that order, each ``<U{n}``, ``n`` the longest text of any field and at least ``width``, so no
+    text is cut.'''
     import numpy as np
     fields = ['variable_name', 'units', 'value', 'data_reference']
     for row in rows:
         fields += [k for k in row if k not in fields]
+    cells = [tuple(str(row.get(f, '')) for f in fields) for row in rows]
+    width = max([width] + [len(c) for cells_ in cells for c in cells_])
     dtype = [(f, f'<U{width}') for f in fields]
-    return np.array([tuple(str(row.get(f, '')) for f in fields) for row in rows], dtype=dtype)
+    return np.array(cells, dtype=dtype)

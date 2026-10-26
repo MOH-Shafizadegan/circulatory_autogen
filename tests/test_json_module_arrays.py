@@ -240,11 +240,15 @@ def _flowpair_flattened(instance='pair', join='__'):
 
 def _assert_same_up_to_level_joins(flattened, expanded):
     """The expanded model's files, with its '__' level joins written '_', are the files of
-    the model generated from the same array flattened by hand with '_' joins."""
+    the model generated from the same array flattened by hand with '_' joins. The used
+    parameters files are left out: each is nested as its own model's parameters file is, and the
+    generated parameters CSV compared here holds the same values."""
     dir_a, dir_b = os.path.dirname(flattened), os.path.dirname(expanded)
     names = sorted(f for f in os.listdir(dir_a) if os.path.isfile(os.path.join(dir_a, f)))
     assert names == sorted(f for f in os.listdir(dir_b) if os.path.isfile(os.path.join(dir_b, f)))
     for name in names:
+        if name.endswith('_parameters_used.json'):
+            continue
         with open(os.path.join(dir_a, name), 'rb') as fa, open(os.path.join(dir_b, name), 'rb') as fb:
             assert fa.read() == fb.read().replace(b'__', b'_'), name
 
@@ -561,7 +565,8 @@ def test_supermodule_parameters_are_renamed_and_globals_added_once(registry):
     # the parameterisation's global, once; the instances' values are the model's file's
     assert [row['variable_name'] for row in rows] == ['some_global']
     assert rows[0] == {'variable_name': 'some_global', 'units': 'dimensionless', 'value': '7.0',
-                       'data_reference': 'flowpair_default'}
+                       'data_reference': 'flowpair_default',
+                       'from': 'flowpair/supermodule parameterisation default'}
 
 
 @pytest.mark.unit

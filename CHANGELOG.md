@@ -5,6 +5,21 @@ next release; add to that section as you land a change.
 
 ## Unreleased
 
+### Added — every generated model has a complete parameters file; calibrated results build on it
+
+Generation writes `<prefix>_parameters_used.json` beside the generated model: every value the
+model uses, in the form of a model's parameters file (`aortic_root/C`, `heart/lv/E_A`, globals
+under `global`), with its units and data_reference. A value the model's parameters file does not
+set (a supermodule instance written `"heart": {}`, a module's default parameterisation, a
+supermodule parameterisation's global) names its source in `"from"`:
+`"<module_type>/<module_subtype> parameterisation <name>"`. Generating again from it alone, with
+the same module array, gives the same model. A calibration workflow's calibrated parameters
+(`write_calibrated`, `write_calibrated_parameters_to`) are the target's parameters file completed
+with every other value its model uses, with the calibrated values set, so a result reproduces the
+run without the module library; `write_calibrated_parameters_to` still writes only its `path`. A
+parameter's data_reference is no longer cut at 80 characters in the generated
+`<prefix>_parameters.csv`.
+
 ### Added — calibration workflow steps that select instances of the target
 
 A step's model may be `{"select": ["C"]}` (or `["heart/lv"]`, or several records) against a
