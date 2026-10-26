@@ -566,7 +566,7 @@ def test_supermodule_parameters_are_renamed_and_globals_added_once(registry):
     assert [row['variable_name'] for row in rows] == ['some_global']
     assert rows[0] == {'variable_name': 'some_global', 'units': 'dimensionless', 'value': '7.0',
                        'data_reference': 'flowpair_default',
-                       'from': 'flowpair/supermodule parameterisation default'}
+                       'source': 'flowpair/supermodule parameterisation default'}
 
 
 @pytest.mark.unit

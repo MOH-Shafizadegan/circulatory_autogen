@@ -827,7 +827,8 @@ def write_calibrated_parameters(target, merged_parameters, workflow_name, path=N
     '''``path`` (default ``<name>_calibrated_parameters.json`` beside the target's parameters
     file, ``<name>`` its parameterisation, or its module array's prefix): the target's parameters
     file (nested JSON, utilities/parameters_file.py), completed with every other value its model
-    uses (:func:`target_used_parameters`; each names the parameterisation it came from), with
+    uses (:func:`target_used_parameters`; each one's data_reference names the parameterisation it
+    came from, ``from <parameterisation>: <reference>``), with
     each merged value set at the path the target names it by -- ``<vessel>/<variable>`` in a
     module array's file (a vessel inside a super instance, ``sys__C/q``, at ``sys/C/q``), the
     module's own path in a parameterisation. So the result reproduces the run without the
@@ -846,7 +847,6 @@ def write_calibrated_parameters(target, merged_parameters, workflow_name, path=N
         leaf.update(value='%.10g' % record['value'],
                     data_reference=f'calibrated by workflow {workflow_name}, step '
                                    f'{record["from_step"]} ({today})')
-        leaf.pop(pf.SOURCE_KEY, None)
         if 'sourced' in leaf:
             leaf['sourced'] = 'no'
         pf.set_leaf(doc, place, leaf)

@@ -14,7 +14,8 @@ form rooted at the module: a component module's variables at the top (``{"C": {.
 supermodule's sub-instances (``{"lv": {"E_A": {...}}}``), and the globals the module sets under
 ``global``. Calibrated results (``<name>_calibrated_parameters.json``) are written in the same
 form, and so is ``<prefix>_parameters_used.json`` beside a generated model: every value the model
-uses, a value its parameters file does not set naming its parameterisation in ``SOURCE_KEY``.
+uses, a value its parameters file does not set naming its parameterisation at the start of its
+``data_reference`` (``sourced_reference``).
 
 The rules (``schemas/parameters.schema.json``):
 
@@ -47,10 +48,9 @@ SCHEMA_VERSION_KEY = 'schema_version'
 RESERVED_NAMES = (GLOBAL, VALUE, SCHEMA_VERSION_KEY)
 #: a leaf's keys, in the order they are written; any other key follows them
 LEAF_KEYS = ('value', 'units', 'data_reference')
-#: the leaf key of a used parameters file naming the parameterisation a value came from, when
-#: the model's parameters file did not set it (``<module_type>/<module_subtype> parameterisation
-#: <name>``)
-SOURCE_KEY = 'from'
+#: how a data_reference starts when it names the parameterisation its value came from
+SOURCE_PREFIX = 'from '
+SOURCE_SEPARATOR = ': '
 #: the row keys every reader gives (a leaf's other keys are added after them)
 ROW_KEYS = ('variable_name',) + LEAF_KEYS
 SEPARATOR = '/'
@@ -68,6 +68,18 @@ _JSON_NUMBER = re.compile(r'-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$')
 def parameters_file_name(prefix):
     '''``<prefix>_parameters.json``'''
     return f'{prefix}_parameters{EXTENSION}'
+
+
+def sourced_reference(source, reference):
+    '''The data_reference of a value taken from ``source`` (``<module_type>/<module_subtype>
+    parameterisation <name>``) whose own data_reference there is ``reference``:
+    ``from <source>: <reference>``, or ``from <source>`` without one. A reference that already
+    starts ``from `` is returned as it is, so a used parameters file read back is not prefixed
+    again.'''
+    reference = str(reference or '').strip()
+    if reference.startswith(SOURCE_PREFIX):
+        return reference
+    return f'{SOURCE_PREFIX}{source}' + (f'{SOURCE_SEPARATOR}{reference}' if reference else '')
 
 
 def used_parameters_file_name(prefix):

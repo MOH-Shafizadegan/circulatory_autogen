@@ -10,8 +10,8 @@ from libcuflynx.utilities.config_schemas import (load_expanded_vessel_records, l
                                                  vessel_records_to_string_frame)
 from libcuflynx.models.LumpedModels import CVS0DModel
 from libcuflynx.utilities.parameter_names import host_model_names
-from libcuflynx.utilities.parameters_file import (SOURCE_KEY, parameters_array as rows_to_parameters_array,
-                                                  read_parameter_rows)
+from libcuflynx.utilities.parameters_file import (parameters_array as rows_to_parameters_array,
+                                                  read_parameter_rows, sourced_reference)
 from libcuflynx.checks.LumpedModelChecks import LumpedCompositeCheck, LumpedBCVesselCheck, LumpedIDParamsCheck, LumpedPortVariableCheck
 import pandas as pd
 import numpy as np
@@ -21,7 +21,7 @@ import re
 import os
 
 from libcuflynx.utilities.module_library import ModuleSources
-from libcuflynx.utilities.parameterisations import reissue_warnings
+from libcuflynx.utilities.parameterisations import SOURCE_ROW_KEY, reissue_warnings
 from libcuflynx.utilities.vessel_bc import is_vessel_bc
 
 # The keys every parameter row has. They are looked up by name, so a parameter may carry other
@@ -62,13 +62,14 @@ def _with_model_names(parameters_array, vessels_df, source):
     return out
 
 
-def merge_default_parameters(parameters_array, extra_param_rows, sources=None):
+def merge_default_parameters(parameters_array, extra_param_rows):
     '''
     ``parameters_array`` (the structured array of a parameters CSV) with the rows of
     ``extra_param_rows`` (dicts keyed by column name) whose variable_name it does not already
     have appended -- so the host file's values win; of several extra rows with one name, the
-    first is used. Columns a row lacks are left empty. ``sources``, when a dict is given, gets
-    ``{variable_name: row[SOURCE_KEY]}`` for each appended row that names its parameterisation.
+    first is used. Columns a row lacks are left empty. An appended row that names its
+    parameterisation (``SOURCE_ROW_KEY``) has its data_reference start with it
+    (``parameters_file.sourced_reference``: ``from <source>: <its data_reference>``).
     '''
     if not extra_param_rows:
         return parameters_array
@@ -78,9 +79,10 @@ def merge_default_parameters(parameters_array, extra_param_rows, sources=None):
     for row in extra_param_rows:
         if row['variable_name'] not in existing:
             existing.add(row['variable_name'])
+            if row.get(SOURCE_ROW_KEY):
+                row = dict(row, data_reference=sourced_reference(row[SOURCE_ROW_KEY],
+                                                                 row.get('data_reference')))
             new_rows.append(row)
-            if sources is not None and row.get(SOURCE_KEY):
-                sources[row['variable_name']] = row[SOURCE_KEY]
     if not new_rows:
         return parameters_array
     cells = [tuple(str(row.get(field, '')) for field in fields) for row in new_rows]
@@ -556,17 +558,9 @@ class CSV0DModelParser(object):
                                                   self.parameter_filename)
         # a host value settles a conflict between parameterisations (written global/T or T)
         reissue_warnings(held, settled=set(parameters_array_orig['variable_name'].tolist()))
-        # {model name: the parameterisation its value came from}: a host row's own SOURCE_KEY (a
-        # used parameters file read back), then each default merged in below
-        parameter_sources = {}
-        if SOURCE_KEY in (parameters_array_orig.dtype.names or ()):
-            parameter_sources = {n: s for n, s in zip(parameters_array_orig['variable_name'].tolist(),
-                                                      parameters_array_orig[SOURCE_KEY].tolist())
-                                 if s}
         # Supermodule and parameterisation parameters fill in whatever the parameters file does not set,
         # before the reduction, so everything downstream (generation, parameter id) sees them.
-        parameters_array_orig = merge_default_parameters(parameters_array_orig, extra_param_rows,
-                                                         parameter_sources)
+        parameters_array_orig = merge_default_parameters(parameters_array_orig, extra_param_rows)
         # Reduce parameters_array so that it only includes the required parameters for
         # this module_array.
         # This will output True if all the required parameters have been defined and
@@ -589,7 +583,6 @@ class CSV0DModelParser(object):
         model_0D.all_parameters_array = parameters_array_orig
         # {model name: the name the model's parameters file gives it}
         model_0D.parameter_file_names = self.parameter_file_names
-        model_0D.parameter_sources = parameter_sources
 
         # get the allowable types from the modules_config.json file
         model_0D.possible_module_type_subtypes = list(set(list(zip(module_df["module_type"].to_list(), module_df["module_subtype"].to_list()))))

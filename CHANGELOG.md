@@ -11,8 +11,10 @@ Generation writes `<prefix>_parameters_used.json` beside the generated model: ev
 model uses, in the form of a model's parameters file (`aortic_root/C`, `heart/lv/E_A`, globals
 under `global`), with its units and data_reference. A value the model's parameters file does not
 set (a supermodule instance written `"heart": {}`, a module's default parameterisation, a
-supermodule parameterisation's global) names its source in `"from"`:
-`"<module_type>/<module_subtype> parameterisation <name>"`. Generating again from it alone, with
+supermodule parameterisation's global) names its source at the start of its data_reference:
+`"from <module_type>/<module_subtype> parameterisation <name>: <its own data_reference>"`, in
+the generated `<prefix>_parameters.csv` too; a data_reference already starting `from ` is not
+prefixed again. Generating again from it alone, with
 the same module array, gives the same model. A calibration workflow's calibrated parameters
 (`write_calibrated`, `write_calibrated_parameters_to`) are the target's parameters file completed
 with every other value its model uses, with the calibrated values set, so a result reproduces the

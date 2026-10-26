@@ -53,8 +53,7 @@ import os
 import warnings
 
 from libcuflynx.utilities.parameters_file import (CONVERT_COMMAND, GLOBAL, MODULE,
-                                                    SEPARATOR, SOURCE_KEY,
-                                                    read_parameter_rows as _read_rows)
+                                                    SEPARATOR, read_parameter_rows as _read_rows)
 
 PARAMETERISATIONS_DIR = 'parameterisations'
 # the name PARAMETERISATIONS_DIR had before; a version directory with only it is refused
@@ -64,6 +63,9 @@ PARAMETERISATION_KEY, INSTANCE_KEY = 'parameterisation', 'instance'
 DEFAULT_PARAMETERISATION_KEY = 'default_parameterisation'
 GLOBAL_CONSTANT = 'global_constant'
 
+#: the row key (not a parameters-file key) naming the parameterisation a row came from;
+#: ``ModelParsers.merge_default_parameters`` folds it into the data_reference of a default it uses
+SOURCE_ROW_KEY = 'source'
 # the keys every parameter row has; config_schemas.PARAMETER_COLUMNS re-exports this
 PARAMETER_COLUMNS = ('variable_name', 'units', 'value', 'data_reference')
 #: a parameterisation's global constants are rows named global/<variable>
@@ -160,14 +162,13 @@ def _entry_label(entry):
 
 
 def parameterisation_source(entry, name):
-    '''Where a value from parameterisation ``name`` of the config ``entry`` came from, as a
-    model's used parameters file records it (``SOURCE_KEY``):
-    ``<module_type>/<module_subtype> parameterisation <name>``.'''
+    '''Where a value from parameterisation ``name`` of the config ``entry`` came from (a row's
+    ``SOURCE_ROW_KEY``): ``<module_type>/<module_subtype> parameterisation <name>``.'''
     return f'{entry.get("module_type")}/{entry.get("module_subtype")} parameterisation {name}'
 
 
 def _sourced(entry, name, rows):
-    return [dict(row, **{SOURCE_KEY: parameterisation_source(entry, name)}) for row in rows]
+    return [dict(row, **{SOURCE_ROW_KEY: parameterisation_source(entry, name)}) for row in rows]
 
 
 def parameterisation_rows(entry, parameterisation, where):
@@ -175,7 +176,7 @@ def parameterisation_rows(entry, parameterisation, where):
     ``(name, rows)`` for the config ``entry`` (a normalised module config entry, component or
     supermodule, carrying the ``config_path`` it was loaded from) and the record's
     ``parameterisation`` (None when the record names none). The rows are the raw
-    ones of the parameterisation's parameters file, not yet renamed, each with ``SOURCE_KEY``
+    ones of the parameterisation's parameters file, not yet renamed, each with ``SOURCE_ROW_KEY``
     naming the parameterisation (``parameterisation_source``); ``(None, [])`` when nothing
     applies.
 

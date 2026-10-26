@@ -79,17 +79,17 @@ The following are the steps for model autogeneration.
     !!! info
         The generated `[file_prefix]_parameters.csv` lists every parameter the model uses, named as the generated model names them (`C_aortic_root`), with the values from `[file_prefix]_parameters.json` and the parameterisations. A model generated with identified parameters has the identified values there.
 
-        Beside it, `[file_prefix]_parameters_used.json` holds the same values in the form of a model's parameters file (`aortic_root/C`, `heart/lv/E_A`, globals under `global`), each with its units and data_reference. A value your `[file_prefix]_parameters.json` does not set (a supermodule instance written `"heart": {}`, or a module's default parameterisation) names where it came from:
+        Beside it, `[file_prefix]_parameters_used.json` holds the same values in the form of a model's parameters file (`aortic_root/C`, `heart/lv/E_A`, globals under `global`), each with its units and data_reference. A value your `[file_prefix]_parameters.json` does not set (a supermodule instance written `"heart": {}`, or a module's default parameterisation) names where it came from at the start of its data_reference, `from <module_type>/<module_subtype> parameterisation <name>: <its own data_reference>` (as the parameters CSV does):
 
         ```json
         "heart": {
          "lv": {
-          "E_A": {"value": 366636512, "units": "J_per_m6", "data_reference": "liang2009multi; ...", "from": "chamber/Liang2009NoVisco_v02 parameterisation lv"}
+          "E_A": {"value": 366636512, "units": "J_per_m6", "data_reference": "from chamber/Liang2009NoVisco_v02 parameterisation lv: liang2009multi; Table 2 (p. 748), ..."}
          }
         }
         ```
 
-        It is the run's complete record: generating again with it as the model's parameters file, and the same module array, gives the same model, without needing the module library's parameterisations to say the same.
+        It is the run's complete record: generating again with it as the model's parameters file, and the same module array, gives the same model (a data_reference already starting `from ` is not prefixed again), without needing the module library's parameterisations to say the same.
 
 !!! Note
     There is a test for the autogeneration running. To run the test, navigate to `user_run_files` and run the below command.

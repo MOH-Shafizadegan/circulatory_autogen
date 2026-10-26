@@ -1359,7 +1359,7 @@ their obs_data, params_for_id or parameters changed since); `--only X` reruns on
 `<name>_calibrated_parameters.json` (`<name>` is the module array's prefix or the
 parameterisation), in the target's nested form: the target's parameters file, completed with
 every other value the target's model uses (as its generated `<prefix>_parameters_used.json` holds
-them, each naming the parameterisation it came from in `"from"`), with each calibrated value set
+them, each one's data_reference starting `from <parameterisation>: `), with each calibrated value set
 at its path (`<vessel>/<variable>` in a module array's file, the module's own path in a
 parameterisation's). So the result reproduces the run without the module library. The target's
 files are not changed. Each step's generated model, and the target's (`_target/`), has its own

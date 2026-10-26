@@ -1,6 +1,7 @@
 """Every generated model has ``<prefix>_parameters_used.json`` beside it: every value it uses, in
 the form of a model's parameters file (utilities/parameters_file.py), a value the model's own
-file does not set naming the parameterisation it came from (``"from"``). Generating again from
+file does not set naming the parameterisation it came from at the start of its data_reference
+(``from <parameterisation>: <its own data_reference>``). Generating again from
 that file alone gives the same model, and a calibration workflow's calibrated parameters are
 built on it, so a result reproduces the run without the module library.
 
@@ -115,11 +116,17 @@ def test_an_empty_supermodule_instance_generates_and_its_used_file_has_every_val
     # a data_reference is kept whole, however long
     assert max(len(r['data_reference']) for r in heart.values()) > 80
     for name, row in heart.items():
-        assert row.get('from', '').split(' parameterisation ')[1], name
+        assert row['data_reference'].startswith('from ') and \
+            ' parameterisation ' in row['data_reference'], name
     doc = parameters_file.read_parameters_file(_used(model_dir))
-    assert doc['heart']['lv']['E_A']['from'].endswith(' parameterisation lv')
-    # the host's own values name no source
-    assert all('from' not in r for n, r in used.items() if n not in heart)
+    e_a = doc['heart']['lv']['E_A']
+    assert e_a['data_reference'].startswith('from chamber/')
+    assert ' parameterisation lv: liang2009multi; ' in e_a['data_reference']
+    # no key but a parameter's own, and the host's own values name no source
+    assert all(set(leaf) <= {'value', 'units', 'data_reference'}
+               for _, leaf in parameters_file.leaves(doc))
+    assert not any(r['data_reference'].startswith('from ')
+                   for n, r in used.items() if n not in heart)
 
 
 @pytest.mark.integration
@@ -127,7 +134,8 @@ def test_a_host_only_model_s_used_file_has_every_value(tmp_path):
     model_dir = _generate(tmp_path, os.path.join(RESOURCES_DIR, '3compartment_module_array.csv'),
                           os.path.join(RESOURCES_DIR, '3compartment_parameters.json'))
     used = _assert_every_value_used(model_dir)
-    assert 'T' in used and all('from' not in r for r in used.values())
+    assert 'T' in used and not any(r['data_reference'].startswith('from ')
+                                   for r in used.values())
 
 
 @pytest.mark.integration
@@ -177,10 +185,12 @@ def _assert_complete_result(path):
     # the calibrated values
     assert float(rows['A/p']['value']) == pytest.approx(np.sqrt(Y_A / 2), rel=1e-4)
     assert float(rows['C/q']['value']) == pytest.approx(np.sqrt(Z_C - Y_A), rel=1e-4)
-    assert 'step chain' in rows['C/q']['data_reference'] and 'from' not in rows['C/q']
+    assert rows['C/q']['data_reference'].startswith('calibrated by workflow ')
     # the value the target's file does not set, with its source
-    assert rows['C/k']['value'] == '1.0' and rows['C/k']['data_reference'] == K_SOURCE
-    assert rows['C/k']['from'] == 'lin_c/v1 parameterisation default'
+    assert rows['C/k']['value'] == '1.0'
+    assert rows['C/k']['data_reference'] == f'from lin_c/v1 parameterisation default: {K_SOURCE}'
+    assert all(set(r) == {'variable_name', 'value', 'units', 'data_reference'}
+               for r in rows.values())
     return rows
 
 
@@ -208,3 +218,37 @@ def test_write_calibrated_parameters_to_writes_a_complete_result_to_its_path_onl
     assert _tree(library_root) == before
     assert _tree(out) == run_before
     assert os.listdir(os.path.dirname(path)) == ['chain_parameters.json']
+
+
+@pytest.mark.integration
+def test_a_library_module_s_calibrated_result_has_only_a_library_s_keys(tmp_path):
+    """A library target's result, in its parameterisation directory, holds every value its model
+    uses with no key a module library refuses (value, units, data_reference and sourced only):
+    C/k, which neither the chain's default nor "rest" sets, names lin_c's default in its
+    data_reference."""
+    library = build_workflow_library(str(tmp_path / 'library'))
+    chain_dir = os.path.join(library['modules'], 'chain', 'versions', 'v1', 'parameterisations')
+    for name in ('default', 'rest'):
+        path = os.path.join(chain_dir, name, f'{name}_parameters.json')
+        write_parameters(path, [r for r in read_parameters(path, parameters_file.MODULE)
+                                if r['variable_name'] != 'C/k'], parameters_file.MODULE)
+    result = run_calibration_workflow(library['chain_rest'], output_dir=str(tmp_path / 'run'),
+                                      write_calibrated=True)
+    path = result['calibrated_parameters_file']
+    assert os.path.dirname(path) == os.path.join(chain_dir, 'rest')
+    rows = {r['variable_name']: r for r in read_parameters(path, parameters_file.MODULE)}
+    assert sorted(rows) == ['A/p', 'C/k', 'C/q']
+    assert all(set(r) - {'variable_name'} <= {'value', 'units', 'data_reference', 'sourced'}
+               for r in rows.values())
+    assert rows['C/k']['data_reference'] == f'from lin_c/v1 parameterisation default: {K_SOURCE}'
+    assert rows['C/q']['data_reference'].startswith('calibrated by workflow chain_rest, step rest')
+
+
+@pytest.mark.unit
+def test_a_sourced_reference_is_prefixed_once():
+    source = 'chamber/v1 parameterisation lv'
+    assert parameters_file.sourced_reference(source, 'doe2020; Table 1') == \
+        'from chamber/v1 parameterisation lv: doe2020; Table 1'
+    assert parameters_file.sourced_reference(source, '') == 'from chamber/v1 parameterisation lv'
+    once = parameters_file.sourced_reference(source, 'doe2020')
+    assert parameters_file.sourced_reference('other/v1 parameterisation x', once) == once

@@ -306,11 +306,11 @@ def test_a_named_parameterisation_and_the_default_one_are_applied_with_the_vesse
     names = [r['variable_name'] for r in rows]
     for name in globals_ & set(named):
         assert names.count(name) == 1 and f'{name}_s1' not in names
-    # only the four parameter keys are kept (the library's "sourced" is ignored), and "from"
+    # only the four parameter keys are kept (the library's "sourced" is ignored), and "source"
     # names the parameterisation each came from
-    assert all(set(r) == {'variable_name', 'units', 'value', 'data_reference', 'from'}
+    assert all(set(r) == {'variable_name', 'units', 'value', 'data_reference', 'source'}
                for r in rows)
-    assert {r['from'] for r in rows} == {f'{I_M[0]}/{I_M[1]} parameterisation {I_M_NAMED}',
+    assert {r['source'] for r in rows} == {f'{I_M[0]}/{I_M[1]} parameterisation {I_M_NAMED}',
                                          f'{I_M[0]}/{I_M[1]} parameterisation '
                                          f'{_entry(lib, I_M)["default_parameterisation"]}'}
 

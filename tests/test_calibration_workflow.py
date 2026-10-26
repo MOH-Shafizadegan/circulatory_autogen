@@ -696,10 +696,10 @@ def test_calibrated_values_replace_their_rows_and_new_ones_are_added(tmp_path):
     before = open(_Target.parameters_path).read()
     # what the target's model used: its file's values, and C/s from a submodule's default
     used = str(tmp_path / 'target_parameters_used.json')
-    write_parameters(used, 'variable_name,units,value,data_reference,from\n'
-                     'mod__A/p,dimensionless,1.0,a,\nmod__C/q,dimensionless,1.0,c,\n'
-                     'mod__C/s,dimensionless,5.0,s,c/v1 parameterisation default\n'
-                     'T,kelvin,300,t,\n')
+    write_parameters(used, 'variable_name,units,value,data_reference\n'
+                     'mod__A/p,dimensionless,1.0,a\nmod__C/q,dimensionless,1.0,c\n'
+                     'mod__C/s,dimensionless,5.0,from c/v1 parameterisation default: s\n'
+                     'T,kelvin,300,t\n')
     merged = [{'model_name': 'p_mod__A', 'parameterisation_name': 'A/p', 'value': 2.0,
                'units': 'dimensionless', 'from_step': 'fit_a'},
               {'model_name': 'q_mod__C', 'parameterisation_name': 'C/q', 'value': 3.0,
@@ -713,9 +713,9 @@ def test_calibrated_values_replace_their_rows_and_new_ones_are_added(tmp_path):
     rows = {r['variable_name']: r for r in read_parameters(path, MODULE)}
     assert {n: float(r['value']) for n, r in rows.items()} == \
         {'global/T': 310.0, 'A/p': 2.0, 'C/q': 3.0, 'C/s': 5.0, 'A/r': 4.0}
-    # a value the target's file does not set keeps its source; a calibrated one has none
-    assert rows['C/s']['from'] == 'c/v1 parameterisation default'
-    assert 'from' not in rows['C/q']
+    # a value the target's file does not set keeps its source; a calibrated one has its own
+    assert rows['C/s']['data_reference'] == 'from c/v1 parameterisation default: s'
+    assert rows['C/q']['data_reference'].startswith('calibrated by workflow wf, step rest')
     # a calibrated value is no longer sourced; its data_reference says where it came from
     assert rows['A/p']['sourced'] == 'no' and 'step fit_a' in rows['A/p']['data_reference']
     assert rows['A/r']['units'] == 'dimensionless'
