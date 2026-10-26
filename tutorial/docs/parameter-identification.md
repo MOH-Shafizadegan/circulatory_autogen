@@ -1227,10 +1227,14 @@ Without one, it takes the parameterisation's value or the target's row. A parame
 of these stops the step with an `UnsetParametersError`, whose `names` list them as the target's
 parameters file does (`C/x`), so a front end can ask for their protocols. The results merge
 into the target like any step's: in `<prefix>_calibrated_parameters.json` (`write_calibrated`),
-a copy of the target's parameters file, only the values the step calibrated change, a value
+the target's parameters file completed with every other value its model uses (its
+`<prefix>_parameters_used.json`), only the values the step calibrated change, a value
 inside a super instance under its path (`heart/lv/E`).
 `write_calibrated_parameters_to(source, output_dir, path)` writes the same file to `path`, and
-nothing else: neither the target's files nor the supermodule version's template change.
+nothing else: neither the target's files nor the supermodule version's template change. It builds
+on the run's own `_target/` used parameters file, so a library default changed after the run does
+not reach the result; only a run without a target model has the target generated again, against
+the library as it is then.
 
 ### Step kinds
 
@@ -1356,9 +1360,13 @@ files its settings name under `settings/`. Paths in `settings` (`external_module
 their obs_data, params_for_id or parameters changed since); `--only X` reruns one step.
 `--write-calibrated` writes the merged set beside the target's parameters file, as
 `<name>_calibrated_parameters.json` (`<name>` is the module array's prefix or the
-parameterisation), in the target's nested form: the target's parameters file with each calibrated
-value set at its path (`<vessel>/<variable>` in a module array's file, the module's own path in a
-parameterisation's), added where the file lacks it. The target's files are not changed.
+parameterisation), in the target's nested form: the target's parameters file, completed with
+every other value the target's model uses (as its generated `<prefix>_parameters_used.json` holds
+them, each one's data_reference starting `from <parameterisation>: `), with each calibrated value set
+at its path (`<vessel>/<variable>` in a module array's file, the module's own path in a
+parameterisation's). So the result reproduces the run without the module library. The target's
+files are not changed. Each step's generated model, and the target's (`_target/`), has its own
+`<prefix>_parameters_used.json`: the values that model ran with.
 
 ### Distributions and priors
 
