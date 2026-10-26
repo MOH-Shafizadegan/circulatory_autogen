@@ -1,17 +1,19 @@
-"""Every generated model has ``<prefix>_parameters_used.json`` beside it: every value it uses, in
-the form of a model's parameters file (utilities/parameters_file.py), a value the model's own
-file does not set naming the parameterisation it came from at the start of its data_reference
-(``from <parameterisation>: <its own data_reference>``). Generating again from
-that file alone gives the same model, and a calibration workflow's calibrated parameters are
-built on it, so a result reproduces the run without the module library.
+"""Every generated model has one parameters file beside it, ``<prefix>_parameters.json``, and no
+parameters CSV: every value it uses, in the form of a model's parameters file
+(utilities/parameters_file.py), a value the model's own file does not set naming the
+parameterisation it came from at the start of its data_reference (``from <parameterisation>: <its
+own data_reference>``). Generating again from that file alone gives the same model, the readers
+of a generated model's parameters read it (``parameters_file.model_parameter_rows``), and a
+calibration workflow's calibrated parameters are built on it, so a result reproduces the run
+without the module library.
 
 The supermodule model is the module library's 3compartment system model (its heart a
 supermodule instance), run against the library CI pins (``tests/MODULE_LIBRARY_REF``; skipped
 without it). The host-only model is ``resources/3compartment`` on the built-in modules.
 """
-import csv
 import json
 import os
+import re
 import shutil
 
 import numpy as np
@@ -21,12 +23,12 @@ import _module_library as module_library
 from _parameters import read_parameters, write_parameters
 from test_config_schemas import _assert_same_generated_models
 
-from libcuflynx.calibration_workflow import run_calibration_workflow, write_calibrated_parameters_to
+from libcuflynx.calibration_workflow import (WorkflowError, run_calibration_workflow,
+                                             write_calibrated_parameters_to)
 from libcuflynx.external_testing.workflow_library import (K_SOURCE, Y_A, Z_C,
                                                           build_workflow_library)
 from libcuflynx.scripts.script_generate_with_new_architecture import generate_with_new_architecture
 from libcuflynx.utilities import parameters_file
-from libcuflynx.utilities.parameter_names import model_name
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RESOURCES_DIR = os.path.join(REPO_ROOT, 'resources')
@@ -56,27 +58,34 @@ def _generate(work_dir, module_array, parameters, library_dirs=None):
     return os.path.join(str(work_dir), 'generated_models', PREFIX)
 
 
-def _used(model_dir):
-    """The used parameters file of a generated model."""
-    return os.path.join(model_dir, f'{PREFIX}_parameters_used.json')
+def _generated_file(model_dir):
+    """The parameters file generation writes beside a generated model."""
+    return os.path.join(model_dir, f'{PREFIX}_parameters.json')
 
 
-def _generated_rows(model_dir):
-    """``{model name: row}`` of the generated model's parameters CSV."""
-    with open(os.path.join(model_dir, f'{PREFIX}_parameters.csv'), newline='') as f:
-        return {row['variable_name']: row for row in csv.DictReader(f)}
+_CELLML_VARIABLE = re.compile(r'<variable initial_value="([^"]*)" name="([^"]*)"[^>]* '
+                              r'units="([^"]*)"/>')
 
 
-def _assert_every_value_used(model_dir):
-    """The used file holds exactly the generated model's parameters, each with its value, units
-    and data_reference. Returns its rows by model name."""
-    used = {model_name(r['variable_name']): r
-            for r in parameters_file.read_parameter_rows(_used(model_dir))}
-    generated = _generated_rows(model_dir)
-    assert sorted(used) == sorted(generated)
-    for name, row in generated.items():
-        assert (used[name]['value'], used[name]['units'], used[name]['data_reference']) == \
-            (row['value'], row['units'], row['data_reference']), name
+def _cellml_constants(model_dir):
+    """``{model name: (value, units)}`` of the generated model's parameters CellML."""
+    with open(os.path.join(model_dir, f'{PREFIX}_parameters.cellml')) as f:
+        return {name: (float(value), units)
+                for value, name, units in _CELLML_VARIABLE.findall(f.read())}
+
+
+def _assert_every_value_generated_file(model_dir):
+    """The generated parameters file, the only one beside the model, holds exactly the
+    generated model's constants, each with its value and units. Returns its rows by model
+    name, as ``model_parameter_rows`` reads them."""
+    assert sorted(f for f in os.listdir(model_dir) if '_parameters' in f) == \
+        [f'{PREFIX}_parameters.cellml', f'{PREFIX}_parameters.json']
+    used = {r['variable_name']: r
+            for r in parameters_file.model_parameter_rows(_generated_file(model_dir))}
+    constants = _cellml_constants(model_dir)
+    assert constants and sorted(used) == sorted(constants)
+    for name, (value, units) in constants.items():
+        assert (float(used[name]['value']), used[name]['units']) == (value, units), name
     return used
 
 
@@ -103,13 +112,14 @@ def _empty_heart(three_compartment):
 
 
 @pytest.mark.integration
-def test_an_empty_supermodule_instance_generates_and_its_used_file_has_every_value(
+def test_an_empty_supermodule_instance_generates_and_its_generated_parameters_file_has_every_value(
         tmp_path, three_compartment):
     """``"heart": {}``: every heart value comes from its submodules' version defaults, and the
-    used file has each of them under heart, naming the parameterisation it came from."""
+    generated parameters file has each of them under heart, naming the parameterisation it came
+    from."""
     modules, array, _ = three_compartment
     model_dir = _generate(tmp_path, array, _empty_heart(three_compartment), [modules])
-    used = _assert_every_value_used(model_dir)
+    used = _assert_every_value_generated_file(model_dir)
     heart = {n: r for n, r in used.items() if n.endswith(tuple(
         f'_heart__{s}' for s in ('ra', 'rv', 'la', 'lv', 'trv', 'puv', 'miv', 'aov')))}
     assert len(heart) > 20
@@ -118,7 +128,7 @@ def test_an_empty_supermodule_instance_generates_and_its_used_file_has_every_val
     for name, row in heart.items():
         assert row['data_reference'].startswith('from ') and \
             ' parameterisation ' in row['data_reference'], name
-    doc = parameters_file.read_parameters_file(_used(model_dir))
+    doc = parameters_file.read_parameters_file(_generated_file(model_dir))
     e_a = doc['heart']['lv']['E_A']
     assert e_a['data_reference'].startswith('from chamber/')
     assert ' parameterisation lv: liang2009multi; ' in e_a['data_reference']
@@ -130,17 +140,18 @@ def test_an_empty_supermodule_instance_generates_and_its_used_file_has_every_val
 
 
 @pytest.mark.integration
-def test_a_host_only_model_s_used_file_has_every_value(tmp_path):
+def test_a_host_only_model_s_generated_parameters_file_has_every_value(tmp_path):
     model_dir = _generate(tmp_path, os.path.join(RESOURCES_DIR, '3compartment_module_array.csv'),
                           os.path.join(RESOURCES_DIR, '3compartment_parameters.json'))
-    used = _assert_every_value_used(model_dir)
+    used = _assert_every_value_generated_file(model_dir)
     assert 'T' in used and not any(r['data_reference'].startswith('from ')
                                    for r in used.values())
 
 
 @pytest.mark.integration
 @pytest.mark.parametrize('model', ['supermodule', 'host_only'])
-def test_generating_from_the_used_file_alone_gives_the_same_model(tmp_path, model, request):
+def test_generating_from_the_generated_parameters_file_alone_gives_the_same_model(tmp_path, model,
+                                                                                   request):
     if model == 'supermodule':
         three = request.getfixturevalue('three_compartment')
         args = (three[1], _empty_heart(three), [three[0]])
@@ -148,8 +159,8 @@ def test_generating_from_the_used_file_alone_gives_the_same_model(tmp_path, mode
         args = (os.path.join(RESOURCES_DIR, '3compartment_module_array.csv'),
                 os.path.join(RESOURCES_DIR, '3compartment_parameters.json'), None)
     first = _generate(tmp_path / 'first', args[0], args[1], args[2])
-    again = _generate(tmp_path / 'again', args[0], _used(first), args[2])
-    # every generated file, the used file and the parameters CSV included
+    again = _generate(tmp_path / 'again', args[0], _generated_file(first), args[2])
+    # every generated file, the generated parameters file included
     _assert_same_generated_models(os.path.join(first, f'{PREFIX}.cellml'),
                                   os.path.join(again, f'{PREFIX}.cellml'))
 
@@ -200,9 +211,14 @@ def test_a_calibrated_result_holds_every_value_and_the_calibrated_ones(chain, tm
     result = run_calibration_workflow(chain['chain_array'], output_dir=out,
                                       write_calibrated=True)
     _assert_complete_result(result['calibrated_parameters_file'])
-    # the target's generated model has its used file, with the calibrated values
-    target_used = result['target_model']['used_parameters_path']
-    assert {r['variable_name'] for r in read_parameters(target_used)} == {'A/p', 'C/k', 'C/q'}
+    # the target's generated model has its parameters file, with the calibrated values
+    assert sorted(result['target_model']) == ['model_path', 'parameters_path']
+    target_parameters = result['target_model']['parameters_path']
+    assert os.path.basename(target_parameters) == 'target_parameters.json'
+    assert {r['variable_name'] for r in read_parameters(target_parameters)} == \
+        {'A/p', 'C/k', 'C/q'}
+    with open(os.path.join(str(tmp_path / 'run'), 'workflow_result.json')) as f:
+        assert json.load(f)['target_model']['parameters_path'] == target_parameters
 
 
 @pytest.mark.integration
@@ -222,8 +238,8 @@ def test_write_calibrated_parameters_to_writes_a_complete_result_to_its_path_onl
 
 
 @pytest.mark.integration
-def test_a_result_written_later_holds_the_values_the_run_used(chain, tmp_path):
-    """write_calibrated_parameters_to builds on the run's own target used file: a library
+def test_a_result_written_later_holds_the_values_the_run_generated_file(chain, tmp_path):
+    """write_calibrated_parameters_to builds on the run's own generated target parameters: a library
     default changed after the run does not reach the result. With no target model in the run,
     the target is generated again, against the library as it is then."""
     out, path = str(tmp_path / 'run'), str(tmp_path / 'send' / 'chain_parameters.json')
@@ -272,3 +288,24 @@ def test_a_sourced_reference_is_prefixed_once():
     assert parameters_file.sourced_reference(source, '') == 'from chamber/v1 parameterisation lv'
     once = parameters_file.sourced_reference(source, 'doe2020')
     assert parameters_file.sourced_reference('other/v1 parameterisation x', once) == once
+
+
+@pytest.mark.integration
+def test_a_run_that_records_a_generated_parameters_csv_is_refused(chain, tmp_path):
+    """No reader takes a generated parameters CSV: a run whose workflow_result.json names one
+    for its target model (an older libcuflynx's) is refused when its result is written."""
+    out, path = str(tmp_path / 'run'), str(tmp_path / 'send' / 'chain_parameters.json')
+    run_calibration_workflow(chain['chain_array'], output_dir=out)
+    result_path = os.path.join(out, 'workflow_result.json')
+    with open(result_path) as f:
+        result = json.load(f)
+    csv_path = os.path.join(os.path.dirname(result['target_model']['parameters_path']),
+                            'target_parameters.csv')
+    with open(csv_path, 'w') as f:
+        f.write('variable_name,units,value,data_reference\nk_mod__C,dimensionless,1.0,x\n')
+    result['target_model']['parameters_path'] = csv_path
+    with open(result_path, 'w') as f:
+        json.dump(result, f)
+    with pytest.raises(WorkflowError, match='no longer reads'):
+        write_calibrated_parameters_to(chain['chain_array'], out, path)
+    assert not os.path.exists(path)

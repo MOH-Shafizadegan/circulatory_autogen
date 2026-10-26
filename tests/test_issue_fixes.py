@@ -47,7 +47,7 @@ def test_json_reader_ignores_appledouble_sidecar(tmp_path):
 # ---------------------------------------------------------------------------
 class _StubModel:
     def __init__(self):
-        # minimum shape __generate_parameters_csv needs: a DataFrame-able array with const_type,
+        # minimum shape __write_parameters_json needs: a DataFrame-able array with const_type,
         # and how the model's parameters file names each parameter
         self.parameters_array = [
             {'variable_name': 'a', 'const_type': 'global', 'value': 'EMPTY_MUST_BE_FILLED'},
@@ -66,7 +66,7 @@ def _bare_generator(**attrs):
     return gen
 
 
-def test_unfinished_parameters_csv_written_to_resources_dir(tmp_path):
+def test_unfinished_parameters_file_written_to_resources_dir(tmp_path):
     resources = tmp_path / 'my_resources'
     output = tmp_path / 'generated'
     resources.mkdir()
@@ -74,7 +74,7 @@ def test_unfinished_parameters_csv_written_to_resources_dir(tmp_path):
     gen = _bare_generator(all_parameters_defined=False, resources_dir=str(resources),
                           output_dir=str(output), file_prefix='demo', model=_StubModel())
 
-    gen._CVS0DCellMLGenerator__generate_parameters_csv()
+    gen._CVS0DCellMLGenerator__write_parameters_json()
 
     assert (resources / 'demo_parameters_unfinished.json').is_file(), \
         'the unfinished parameters file must land in the configured resources_dir (#99)'
@@ -86,18 +86,25 @@ def test_unfinished_parameters_csv_written_to_resources_dir(tmp_path):
     assert doc['aortic_root']['C']['value'] == '1.0'
 
 
-def test_finished_parameters_csv_written_to_output_dir(tmp_path):
+def test_finished_parameters_file_written_to_output_dir(tmp_path):
+    """A finished model's parameters go beside it as nested JSON, the only parameters file
+    generation writes there; a parameters CSV an older libcuflynx left there is removed."""
     resources = tmp_path / 'my_resources'
     output = tmp_path / 'generated'
     resources.mkdir()
     output.mkdir()
+    (output / 'demo_parameters.csv').write_text('variable_name,units,value,data_reference\n')
     gen = _bare_generator(all_parameters_defined=True, resources_dir=str(resources),
                           output_dir=str(output), file_prefix='demo', model=_StubModel())
 
-    gen._CVS0DCellMLGenerator__generate_parameters_csv()
+    gen._CVS0DCellMLGenerator__write_parameters_json()
 
-    # the generated model's parameters, named as the model names them
-    assert (output / 'demo_parameters.csv').is_file()
+    assert sorted(p.name for p in output.iterdir()) == ['demo_parameters.json']
+    assert not list(resources.iterdir())
+    from libcuflynx.utilities.parameters_file import model_parameter_rows
+    rows = {r['variable_name']: r['value']
+            for r in model_parameter_rows(str(output / 'demo_parameters.json'))}
+    assert rows == {'a': 'EMPTY_MUST_BE_FILLED', 'C_aortic_root': '1.0'}
 
 
 # ---------------------------------------------------------------------------

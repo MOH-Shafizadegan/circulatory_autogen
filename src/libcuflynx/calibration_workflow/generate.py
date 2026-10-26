@@ -3,7 +3,6 @@ Generating a workflow model -- a library module on its own, or a module array --
 its parameters overridden.
 '''
 
-import csv
 import json
 import os
 import shutil
@@ -28,10 +27,9 @@ _MODEL_EXTENSIONS = {'cellml': '.cellml', 'python': '.py', 'casadi_python': '.py
 
 
 def read_parameter_rows(path):
-    '''The rows of a generated model's parameters CSV (``<prefix>_parameters.csv`` beside the
-    generated model, named as the model names them).'''
-    with open(path, newline='', encoding='utf-8-sig') as f:
-        return [dict(row) for row in csv.DictReader(f)]
+    '''The rows of a generated model's parameters file (``<prefix>_parameters.json`` beside the
+    generated model), named as the model names them (``parameters_file.model_parameter_rows``).'''
+    return parameters_file.model_parameter_rows(path)
 
 
 def with_overrides(doc, overrides, where=''):
@@ -56,10 +54,10 @@ def generate_parameterisation(target, work_dir, file_prefix, overrides=(), libra
     which wins over every parameterisation and supermodule default. ``library_inputs`` are the
     generation keys that locate the modules (``module_library_dirs`` etc.).
 
-    Returns ``{'model_path', 'flat_model_path', 'parameters_path', 'used_parameters_path',
-    'resources_dir', 'generated_models_dir', 'inp_data_dict'}`` (``flat_model_path``: the CellML
-    with its imports resolved, None for other model types; ``used_parameters_path``: every value
-    the model uses, ``<prefix>_parameters_used.json``); raises RuntimeError when generation
+    Returns ``{'model_path', 'flat_model_path', 'parameters_path', 'resources_dir',
+    'generated_models_dir', 'inp_data_dict'}`` (``flat_model_path``: the CellML with its
+    imports resolved, None for other model types; ``parameters_path``: every value the model
+    uses, the generated ``<prefix>_parameters.json``); raises RuntimeError when generation
     fails. Not MPI-aware: call it on one rank.
 
     ``protocol`` (``{qname: value}``, as :func:`select.protocol_values` reads an obs_data)
@@ -202,10 +200,9 @@ def _generate_once(work_dir, resources_dir, file_prefix, model_type, solver, lib
                                    file_prefix + _MODEL_EXTENSIONS.get(model_type, '.cellml')),
         # the CellML model with its imports resolved into one file (cellml only)
         'flat_model_path': flat if os.path.isfile(flat) else None,
-        'parameters_path': os.path.join(model_dir, f'{file_prefix}_parameters.csv'),
         # every value the model uses, in the form of a model's parameters file
-        'used_parameters_path': os.path.join(
-            model_dir, parameters_file.used_parameters_file_name(file_prefix)),
+        'parameters_path': os.path.join(model_dir,
+                                        parameters_file.parameters_file_name(file_prefix)),
         'resources_dir': resources_dir,
         'generated_models_dir': generated_models_dir,
         'inp_data_dict': config,

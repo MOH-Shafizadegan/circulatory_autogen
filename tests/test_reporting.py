@@ -301,6 +301,42 @@ def test_methods_of_one_calibration():
     assert not body.startswith(r'\documentclass') and r'\begin{document}' not in body
 
 
+@pytest.mark.integration
+def test_methods_of_one_calibration_cite_the_generated_parameters_file(tmp_path):
+    """A parameter's source is its data_reference in the <prefix>_parameters.json generation
+    writes beside the model, read by default; a parameters CSV is refused."""
+    from libcuflynx.scripts.script_generate_with_new_architecture import \
+        generate_with_new_architecture
+    from libcuflynx.utilities import parameters_file
+    resources, generated = tmp_path / 'resources', tmp_path / 'generated_models'
+    resources.mkdir()
+    for name in ('3compartment_module_array.csv', '3compartment_parameters.json'):
+        shutil.copy(os.path.join(RESOURCES, name), str(resources / name))
+    assert generate_with_new_architecture(False, {
+        'file_prefix': '3compartment', 'input_param_file': '3compartment_parameters.json',
+        'model_type': 'cellml', 'solver': 'CVODE_myokit', 'resources_dir': str(resources),
+        'generated_models_dir': str(generated), 'DEBUG': False})
+    model_dir = generated / '3compartment'
+    assert not (model_dir / '3compartment_parameters.csv').exists()
+    path = str(model_dir / '3compartment_parameters.json')
+    doc = parameters_file.read_parameters_file(path)
+    doc['pvn']['R']['data_reference'] = 'only_in_the_generated_file'
+    parameters_file.write_parameters_file(path, doc)
+
+    def methods(**kwargs):
+        return calibration_methods_latex(
+            str(model_dir / '3compartment_flat.cellml'),
+            os.path.join(RESOURCES, '3compartment_obs_data.json'),
+            os.path.join(RESOURCES, '3compartment_params_for_id.json'),
+            settings={'param_id_method': 'genetic_algorithm', 'dt': 0.01}, **kwargs)
+
+    assert r'only\_in\_the\_generated\_file' in methods()
+    csv_path = tmp_path / '3compartment_parameters.csv'
+    csv_path.write_text('variable_name,units,value,data_reference\nR_pvn,Js_per_m6,1,x\n')
+    with pytest.raises(ValueError, match='nested JSON'):
+        methods(parameters_path=str(csv_path))
+
+
 @pytest.mark.unit
 @needs_latex
 def test_methods_of_one_calibration_compile(tmp_path):
