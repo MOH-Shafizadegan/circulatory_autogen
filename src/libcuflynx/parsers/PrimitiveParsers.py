@@ -321,7 +321,7 @@ _CPP_SOLVERS = frozenset(SOLVER_SCHEMA['solvers_by_model_type']['cpp'])
 
 # The cpp solvers (CVODE/RK4/PETSC) are not run through a SimulationHelper at all: their
 # solver_info is baked into the emitted C++ by the cpp branch of
-# script_generate_with_new_architecture, which forwards these values to CVSCppGenerator (plus the
+# script_generate_with_new_architecture, which forwards these values to the C++ generator (generators/cpp) (plus the
 # framework key `dt_solver`, which becomes the solver step).
 #
 # 'MaximumStep' is deliberately absent: the generated C++ integrates at the fixed `dt_solver`, so

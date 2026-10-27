@@ -769,7 +769,7 @@ class CVS0DCellMLGenerator(object):
             self.__check_input_output_ports(module_row["exit_ports"], module_row["general_ports"], out_module_row["entrance_ports"],
                                             out_module_row["general_ports"], main_module, out_module)
 
-            if out_module_row["module_format"] != 'cellml' and out_module_row["vessel_type"] != 'FV1D_vessel':
+            if out_module_row["module_format"] != 'cellml' and out_module_row["module_type"] != 'FV1D_vessel':
                 # An external module (e.g. an api that another program provides) has no CellML
                 # component to map to: the C++ generator couples it through these ports. The
                 # CellML side's boundary conditions on them stay constants, so the CellML model is

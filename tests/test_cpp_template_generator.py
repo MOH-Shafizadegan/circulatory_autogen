@@ -32,16 +32,16 @@ def _coupling_entries(resolved=True):
     with open(os.path.join(builtin_modules_dir(), 'coupling_modules_config.json')) as f:
         entries = json.load(f)
     if resolved:
-        resolve_process_apis([((e['vessel_type'], e['BC_type']), e['api']) for e in entries if 'api' in e])
+        resolve_process_apis([((e['module_type'], e['module_subtype']), e['api']) for e in entries if 'api' in e])
     return entries
 
 
 def _fv1d_api(resolved=True):
-    return next(e['api'] for e in _coupling_entries(resolved) if e['vessel_type'] == 'FV1D_vessel')
+    return next(e['api'] for e in _coupling_entries(resolved) if e['module_type'] == 'FV1D_vessel')
 
 
 def _fv1d_solver_api():
-    return next(e['api'] for e in _coupling_entries(False) if e['vessel_type'] == 'FV1D_solver')
+    return next(e['api'] for e in _coupling_entries(False) if e['module_type'] == 'FV1D_solver')
 
 
 def _generation_inputs(user_inputs_dir, resources_src, tmp_path, file_prefix, solver, **extra):
@@ -59,7 +59,7 @@ def _generation_inputs(user_inputs_dir, resources_src, tmp_path, file_prefix, so
             shutil.copy(os.path.join(resources_src, name), resources)
     d.update({
         'file_prefix': file_prefix,
-        'input_param_file': f'{file_prefix}_parameters.csv',
+        'input_param_file': f'{file_prefix}_parameters.json',
         'model_type': 'cpp',
         'couple_to_1d': False,
         'solver_info': {'solver': solver, 'dt_solver': 1e-4, 'MaximumNumberOfSteps': 5000},
@@ -140,17 +140,17 @@ def test_builtin_fv1d_api_blocks_are_valid():
     with open(os.path.join(builtin_modules_dir(), 'coupling_modules_config.json')) as f:
         entries = json.load(f)
     apis = [e for e in entries if 'api' in e]
-    assert {(e['vessel_type'], e['BC_type']) for e in apis} >= {('FV1D_vessel', 'vp'), ('FV1D_volume_sum', 'nn'),
+    assert {(e['module_type'], e['module_subtype']) for e in apis} >= {('FV1D_vessel', 'vp'), ('FV1D_volume_sum', 'nn'),
                                                                 ('FV1D_solver', 'nn')}
     for e in apis:
-        assert e['module_format'] == 'external_api' or e['vessel_type'] == 'FV1D_volume_sum'
-        assert validate_api_block(e['api'], e['vessel_type'])
+        assert e['module_format'] == 'external_api' or e['module_type'] == 'FV1D_volume_sum'
+        assert validate_api_block(e['api'], e['module_type'])
     # the pipes are written down once, in the process; every consumer names it
     for e in apis:
         if e['api']['role'] == 'consumer':
             assert e['api']['process'] == 'FV1D_solver' and 'channels' not in e['api']
-    resolve_process_apis([((e['vessel_type'], e['BC_type']), e['api']) for e in apis])
-    solver = next(e['api'] for e in apis if e['vessel_type'] == 'FV1D_solver')
+    resolve_process_apis([((e['module_type'], e['module_subtype']), e['api']) for e in apis])
+    solver = next(e['api'] for e in apis if e['module_type'] == 'FV1D_solver')
     for e in apis:
         if e['api']['role'] == 'consumer':
             assert e['api']['channels'] == solver['channels']
@@ -244,7 +244,7 @@ def test_api_unit_factors():
 
 @pytest.mark.unit
 def test_cvode_solver_init_supports_sundials_5_to_7():
-    from libcuflynx.generators.CVSCppGenerator import CVS0DCppGenerator
+    from libcuflynx.generators.cpp.generator import CVS0DCppGenerator
     gen = CVS0DCppGenerator.__new__(CVS0DCppGenerator)
     gen.solver, gen.reltol, gen.abstol, gen.dtSolver, gen.nMaxSteps = 'CVODE', 1e-7, 1e-9, 1e-4, 5000
     emitted = gen._build_solver_init_function()
@@ -387,8 +387,8 @@ def test_provider_api_module_couples_through_ports(user_inputs_dir, resources_di
     ext_dir = tmp_path / 'external_modules'
     ext_dir.mkdir()
     probe = [{
-        'vessel_type': 'api_probe', 'BC_type': 'nn', 'module_format': 'external_api', 'module_file': '',
-        'module_type': 'probe_api',
+        'module_type': 'api_probe', 'module_subtype': 'nn', 'module_format': 'external_api', 'component_file': '',
+        'component_type': 'probe_api',
         'entrance_ports': [{'port_type': 'volume_port', 'variables': ['V_heart']}],
         'exit_ports': [], 'general_ports': [],
         'variables_and_units': [['V_heart', 'm3', 'access', 'variable']],
@@ -417,6 +417,23 @@ def test_provider_api_module_couples_through_ports(user_inputs_dir, resources_di
     assert '// aortic_root/u' in source
     assert 'class Probe' in (model_dir / 'circulation_api.h').read_text()
     _cmake_build(model_dir, model_dir / 'build')
+
+
+@pytest.mark.unit
+def test_converted_vessels_values_become_flat_globals_of_the_hybrid_model(resources_dir, tmp_path):
+    """The 1D solver reads a 1D vessel's values by flat name (l_parent, E_K_tube_parent), and the
+    hybrid model has no 0D vessel "parent" for a parent/l row to belong to."""
+    from libcuflynx.scripts.convert_0d_to_1d import convert_0d_to_1d
+    from libcuflynx.utilities.parameters_file import read_parameters_file
+    zero = tmp_path / 'zero'
+    zero.mkdir()
+    for suffix in ('_module_array.csv', '_parameters.json'):
+        shutil.copy(os.path.join(resources_dir, 'aortic_bif_0d' + suffix), zero)
+    convert_0d_to_1d('aortic_bif', zero, 'aortic_bif_0d_parameters.json', tmp_path / 'hyb', ['parent'])
+    doc = read_parameters_file(tmp_path / 'hyb' / 'aortic_bif_hybrid_parameters.json')
+    assert 'parent' not in doc and 'K_tube_parent' not in doc
+    assert {'l_parent', 'r_0_parent', 'E_K_tube_parent', 'K_m_K_tube_parent'} <= set(doc['global'])
+    assert 'daughter_1' in doc and 'l_daughter_1' not in doc['global']
 
 
 # The hybrid model is the 0D one with its three vessels moved to the FV 1D solver, so the two
@@ -448,7 +465,7 @@ def test_coupled_fv1d_model_stays_close_to_the_0d_model(user_inputs_dir, resourc
     # the 0D model, generated and run on its own
     zero = tmp_path / 'zero'
     inp0 = _generation_inputs(user_inputs_dir, resources_dir, zero, 'aortic_bif_0d', 'CVODE', dt=0.01)
-    T = 1.1  # the global period T in aortic_bif_0d_parameters.csv
+    T = 1.1  # the global period T in aortic_bif_0d_parameters.json
     t_end = N_CYCLES * T
     inp0.update(pre_time=0.0, sim_time=t_end)
     assert generate_with_new_architecture(False, inp0)
@@ -460,10 +477,19 @@ def test_coupled_fv1d_model_stays_close_to_the_0d_model(user_inputs_dir, resourc
 
     # the hybrid model: the vessels moved to 1D, plus the FV1D_solver row
     converted = tmp_path / 'converted'
-    convert_0d_to_1d('aortic_bif', zero / 'resources', 'aortic_bif_0d_parameters.csv', converted, CONVERTED_VESSELS)
+    convert_0d_to_1d('aortic_bif', zero / 'resources', 'aortic_bif_0d_parameters.json', converted, CONVERTED_VESSELS)
     array = (converted / 'aortic_bif_hybrid_module_array.csv').read_text()
-    assert 'FV1D_solver,nn,FV1D_solver' in array
+    assert 'FV1D_solver,FV1D_solver,nn' in array
     assert 'K_tube_parent' not in array
+    # the 1D solver's artery/vein flag of each 1D vessel: a parameter of the hybrid model only
+    from libcuflynx.utilities.parameters_file import (read_parameters_file, set_leaf,
+                                                      write_parameters_file)
+    hyb_params = converted / 'aortic_bif_hybrid_parameters.json'
+    doc = read_parameters_file(hyb_params)
+    for vessel in CONVERTED_VESSELS:
+        set_leaf(doc, ['global', f'art_ven_type_{vessel}'],
+                 {'value': '1', 'units': 'dimensionless', 'data_reference': 'user_defined'})
+    write_parameters_file(hyb_params, doc)
 
     hyb = tmp_path / 'hyb'
     cpp_dir = hyb / 'gen' / 'cpp'

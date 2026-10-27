@@ -45,7 +45,7 @@ def _generate(tmp_path, prefix, **extra):
     for name in os.listdir(os.path.join(DATA, 'resources')):
         if name.startswith(prefix + '_'):
             shutil.copy(os.path.join(DATA, 'resources', name), resources)
-    inp = dict(file_prefix=prefix, input_param_file=f'{prefix}_parameters.csv', model_type='cpp',
+    inp = dict(file_prefix=prefix, input_param_file=f'{prefix}_parameters.json', model_type='cpp',
                resources_dir=str(resources), generated_models_dir=str(tmp_path / 'gen'), pre_time=0.0,
                sim_time=T_END, dt=0.1, DEBUG=False, couple_to_1d=False, external_modules_dir=[MODULES],
                solver_info={'solver': 'CVODE', 'dt_solver': 1e-3, 'MaximumNumberOfSteps': 5000})

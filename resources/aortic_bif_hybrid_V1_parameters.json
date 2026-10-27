@@ -53,7 +53,10 @@
   "I_scale_daughter_1": {"value": 1, "units": "dimensionless", "data_reference": "user_defined"},
   "m_tube_daughter_2": {"value": 0.5, "units": "dimensionless", "data_reference": "known"},
   "n_tube_daughter_2": {"value": 0, "units": "dimensionless", "data_reference": "known"},
-  "I_scale_daughter_2": {"value": 1, "units": "dimensionless", "data_reference": "user_defined"}
+  "I_scale_daughter_2": {"value": 1, "units": "dimensionless", "data_reference": "user_defined"},
+  "art_ven_type_parent": {"value": 1, "units": "dimensionless", "data_reference": "defined_by_user"},
+  "art_ven_type_daughter_1": {"value": 1, "units": "dimensionless", "data_reference": "defined_by_user"},
+  "art_ven_type_daughter_2": {"value": 1, "units": "dimensionless", "data_reference": "defined_by_user"}
  },
  "terminal_1": {
   "R_T": {"value": 3169423000, "units": "Js_per_m6", "data_reference": "Boileau_2015"},

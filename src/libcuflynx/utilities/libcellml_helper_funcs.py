@@ -90,7 +90,7 @@ _C_ALL_ARRAYS = "double *constants, double *computedConstants, double *algebraic
 def c_code_with_one_variables_array(code, header):
     """libCellML's C (implementation, or the header if ``header``) with its constants, computed constants, algebraic
     and external variables in one ``variables`` array, in that order, and each variable's type in ``VARIABLE_INFO``:
-    the layout CVSCppGenerator rewrites into its C++ model."""
+    the layout the C++ generator (generators/cpp) rewrites into its C++ model."""
     if "RootFindingInfo" in code:
         raise ValueError("C++ generation does not support models with non-linear algebraic equations")
     externals = "EXTERNAL_VARIABLE_COUNT" in code

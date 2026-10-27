@@ -2,7 +2,6 @@
 Input files for the Python FV 1D solver (libcuflynx/solver1d), used when a cpp model is coupled
 to 1D vessels (couple_to_1d with solver_1d_type: py).
 
-Moved out of CVSCppGenerator.py unchanged.
 '''
 
 import json
@@ -10,7 +9,6 @@ import os
 
 import pandas as pd
 
-from libcuflynx.parsers.PrimitiveParsers import CSVFileParser
 from libcuflynx.utilities.config_schemas import load_module_array
 from libcuflynx.generators.Python1DModelFilesGenerator import generate1DPythonModelFiles, generate1DPythonSimInitFile
 
@@ -20,7 +18,7 @@ class CVS1DPythonGenerator(object):
     Generates Python files for 1D model.
     '''
 
-    def __init__(self, model, file_prefix, vessels1d_csv_abs_path, parameters_csv_abs_path,
+    def __init__(self, model, file_prefix, vessels1d_csv_abs_path, parameters_file_abs_path,
                 model_1d_config_path, generated_model_subdir, cpp_generated_models_dir=None,
                 solver='CVODE', dtSample=1e-3, dtSolver=1e-4, conn_1d_0d_info=None):
         '''
@@ -55,7 +53,6 @@ class CVS1DPythonGenerator(object):
         else:
             self.cpp_generated_models_dir = cpp_generated_models_dir
 
-        self.csv_parser = CSVFileParser()
         # the 1D part of an already supermodule-expanded array (split_0d_1d_module_array)
         self.vessels_df, _ = load_module_array(vessels1d_csv_abs_path)
         # the model's merged parameters (the file's, plus supermodule default_parameters the
@@ -64,7 +61,11 @@ class CVS1DPythonGenerator(object):
         if all_parameters is not None:
             self.params_df = pd.DataFrame(all_parameters).astype(object)
         else:
-            self.params_df = self.csv_parser.get_data_as_dataframe_multistrings(parameters_csv_abs_path, True)
+            # the model's parameters file, under the model's names (C_aortic_root, R)
+            from libcuflynx.utilities.parameters_file import model_parameter_rows
+            self.params_df = pd.DataFrame(
+                model_parameter_rows(parameters_file_abs_path,
+                                     where=f'{parameters_file_abs_path}: ')).astype(object)
 
         self.vessFileName = self.initFiles1dFold+f'/vess_{self.file_prefix[:-3]}.txt'
         self.nodeFileName = self.initFiles1dFold+f'/nodes_{self.file_prefix[:-3]}.txt'

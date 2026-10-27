@@ -49,8 +49,8 @@ Put a module config next to the file: `well_mixed_tissue_module_config.json`.
 
 ```json
 [{
-  "vessel_type": "well_mixed_tissue", "BC_type": "nn",
-  "module_format": "external_api", "module_file": "", "module_type": "well_mixed_tissue",
+  "module_type": "well_mixed_tissue", "module_subtype": "nn",
+  "module_format": "external_api", "component_file": "", "component_type": "well_mixed_tissue",
   "entrance_ports": [{"port_type": "capillary_to_flux_port", "variables": ["C_t", "J_c"]}],
   "exit_ports": [], "general_ports": [],
   "variables_and_units": [
@@ -81,7 +81,7 @@ changing one row. The **directions** come from the CellML side:
 ## 3. Add a row to the module array
 
 ```
-name,BC_type,vessel_type,inp_vessels,out_vessels
+name,module_subtype,module_type,inp_instances,out_instances
 cap_0,pp,capillary,,capillary_GE_0
 cap_1,pp,capillary,,capillary_GE_1
 capillary_GE_0,nn,GE_capillary,cap_0,tissue
@@ -90,11 +90,11 @@ tissue,nn,well_mixed_tissue,capillary_GE_0 capillary_GE_1,
 ```
 
 The parameters file needs:
-- the external module's constants as `<name>_<row>` (`V_tissue`, `M_tissue`, `k_reduce_tissue`,
-  `C_init_tissue`);
-- the starting values of the boundary conditions the class sets (`ub_O2_t_capillary_GE_0`, …).
+- the external module's constants under its row, like any module's (`tissue/V`, `tissue/M`,
+  `tissue/k_reduce`, `tissue/C_init`);
+- the starting values of the boundary conditions the class sets (`capillary_GE_0/ub_O2_t`, …).
 
-Generation lists anything missing in `<prefix>_parameters_unfinished.csv`, as usual.
+Generation lists anything missing in `<prefix>_parameters_unfinished.json`, as usual.
 
 ## 4. Generate as C++
 

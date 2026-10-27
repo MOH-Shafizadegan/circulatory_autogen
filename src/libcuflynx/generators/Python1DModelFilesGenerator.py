@@ -98,7 +98,7 @@ def generate1DPythonModelFiles(df_vess, df_params, vess_file, nodes_file, names_
             # An undetermined type (-1) used to be written to the vessel file, and the 1D solver
             # then stopped with "undetermined art/ven type" at run time.
             sys.exit(f"Artery/vein type couldn't be determined for 1D vessel {nameV}: add parameter "
-                     f"{nameP} (1 = artery, 0 = vein, units dimensionless) to the parameters file.")
+                     f"global/{nameP} (1 = artery, 0 = vein, units dimensionless) to the parameters file.")
 
 
         nameP = "l_"+nameV

@@ -832,7 +832,7 @@ def test_the_1d_generator_reads_the_merged_parameters(tmp_path):
     supermodule's default_parameters never reached it ("Parameter l_FV1D_0 not found"). It
     now reads the model's merged parameters."""
     from types import SimpleNamespace
-    from libcuflynx.generators.CVSCppGenerator import CVS1DPythonGenerator
+    from libcuflynx.generators.Python1DGenerator import CVS1DPythonGenerator
     from libcuflynx.parsers.ModelParsers import merge_default_parameters
     from libcuflynx.parsers.PrimitiveParsers import CSVFileParser
     params = tmp_path / 'm_parameters.json'

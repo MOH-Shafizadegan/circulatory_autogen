@@ -230,7 +230,7 @@ def test_parameters_csv_unit_mismatch_still_exits(tmp_path):
 # ---------------------------------------------------------------------------
 def _cpp_solver_init(solver, reltol=1e-7, abstol=1e-9):
     """The emitted set_ode_solver body, built without generating a whole model."""
-    from libcuflynx.generators.CVSCppGenerator import CVS0DCppGenerator
+    from libcuflynx.generators.cpp.generator import CVS0DCppGenerator
 
     gen = CVS0DCppGenerator.__new__(CVS0DCppGenerator)
     gen.solver = solver

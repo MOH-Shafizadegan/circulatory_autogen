@@ -19,7 +19,7 @@ describes, in data, the calls that couple the generated 0D model to something ou
   A port connected to several modules exchanges one value per module.
 * ``role: process``   -- another program run alongside the generated model (e.g. the FV 1D solver):
   how it is launched (``program``, ``coordinator``) and the pipes it talks over (``channels``,
-  ``message_length``). A consumer names it with ``"process": "<vessel_type>"`` and then lists only
+  ``message_length``). A consumer names it with ``"process": "<module_type>"`` and then lists only
   its ``calls``; the channels come from the process entry, so they are written down once. The C++
   generator writes the coordinator's run configuration (``coupler_config.json``) from it.
 
@@ -255,7 +255,7 @@ def resolve_process_apis(apis):
             continue
         if name not in processes:
             raise APIConfigError(f"api in module config {where} names process {name!r}, but no module config "
-                                 f"entry with vessel_type {name!r} has an api with role 'process'.")
+                                 f"entry with module_type {name!r} has an api with role 'process'.")
         proc = processes[name]
         if proc['transport'] != api['transport']:
             raise APIConfigError(f"api in module config {where} uses transport {api['transport']!r} but its "
@@ -277,7 +277,7 @@ def validate_module_config_apis(module_df):
     for row in module_df.itertuples():
         api = getattr(row, 'api')
         if is_api(api):
-            where = (row.vessel_type, row.BC_type)
+            where = (row.module_type, row.module_subtype)
             validate_api_block(api, where=f"module config {where}")
             apis.append((where, api))
     resolve_process_apis(apis)

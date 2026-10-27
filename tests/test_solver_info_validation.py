@@ -225,7 +225,7 @@ _EXTRA_CONSUMERS = {
 
 # Solvers with no Python backend at all, so the factory has nothing to dispatch to. cpp models are
 # never run through a SimulationHelper: solver_info is baked into the emitted C++ by the cpp branch
-# of script_generate_with_new_architecture, which hands the values to CVSCppGenerator. Those two
+# of script_generate_with_new_architecture, which hands the values to the C++ generator (generators/cpp). Those two
 # files are therefore the real consumer, and the fields are checked against them exactly as a
 # helper module would be -- this is a different consumer, not an exemption.
 _GENERATED_CODE_CONSUMERS = {
@@ -895,7 +895,7 @@ def test_cellml_solver_accepts_maximum_step_keys():
 
 def test_cpp_rk4_accepts_maximum_number_of_steps():
     """MaximumNumberOfSteps is the one integrator key the cpp path really forwards: the generate
-    script reads it and CVSCppGenerator emits it as CVODE's mxsteps."""
+    script reads it and the C++ generator emits it as CVODE's mxsteps."""
     validate_solver_info('RK4', {
         'solver': 'RK4',
         'method': 'RK4',

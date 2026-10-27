@@ -1,10 +1,10 @@
 [
   {
-    "vessel_type": "well_mixed_tissue",
-    "BC_type": "nn",
-    "module_format": "external_api",
-    "module_file": "",
     "module_type": "well_mixed_tissue",
+    "module_subtype": "nn",
+    "module_format": "external_api",
+    "component_file": "",
+    "component_type": "well_mixed_tissue",
     "entrance_ports": [{"port_type": "capillary_to_flux_port", "variables": ["C_t", "J_c"]}],
     "exit_ports": [],
     "general_ports": [],

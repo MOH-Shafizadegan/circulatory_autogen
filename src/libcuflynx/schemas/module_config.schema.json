@@ -290,7 +290,7 @@
             "delayed_variables",
             "delay_amounts"
           ],
-          "description": "model_type cpp only: delayed copies of variables (CVSCppGenerator). Default: none."
+          "description": "model_type cpp only: delayed copies of variables (generators/cpp). Default: none."
         }
       },
       "not": {

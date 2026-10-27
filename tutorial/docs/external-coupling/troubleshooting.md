@@ -10,9 +10,9 @@ modules, without running anything.
 |---|---|
 | `python api … has unknown key(s)` | a typo in the api block; the message lists the allowed keys |
 | `python api …: model file … not found` | `api.python.file` is relative to the folder of the module config that declares it |
-| `Port '…' of external module '…' is not connected to any CellML module with a matching port` | name the 0D module(s) in the row's `inp_vessels` (for an entrance port) or `out_vessels` (exit port), and check they have a port of that `port_type` |
+| `Port '…' of external module '…' is not connected to any CellML module with a matching port` | name the 0D module(s) in the row's `inp_instances` (for an entrance port) or `out_instances` (exit port), and check they have a port of that `port_type` |
 | `'row/var' connects to …, some computed by the 0D model and some not` | the connected modules disagree on who sets the variable; give `api.variables[var].direction` |
-| `Parameter X_row (constant X of external module 'row') is not in the parameters file` | external modules' constants are parameters like any module's |
+| `Parameter row/X (constant X of external module 'row') is not in the parameters file` | external modules' constants are parameters like any module's |
 | `A model coupled to Python external models … cannot also be coupled to the 1D solver` | not supported yet: one kind of coupling per model |
 
 ## Building the shared library

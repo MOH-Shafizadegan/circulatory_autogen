@@ -127,6 +127,13 @@ def convert_0d_to_1d(model, folder_0d, param_file_0d, folder_hyb=None, vess_1d_l
                     break
         df_vess.at[idxV, 'out_instances'] = ' '.join(out_vess)
 
+    # The 1D solver reads a 1D vessel's values (and its K_tube_ module's) by flat name, l_parent,
+    # E_K_tube_parent: they leave their vessel and become globals of the hybrid model.
+    flat_vessels = list(vess_1d_list) + [df_vess.at[j, 'name'] for j in idx_to_drop]
+    for vess in flat_vessels:
+        for variable, leaf in (parameters.pop(vess, None) or {}).items():
+            parameters.setdefault('global', {})[f'{variable}_{vess}'] = leaf
+
     df_vess = df_vess.drop(index=idx_to_drop)
     df_vess.reset_index(drop=True, inplace=True)
 
@@ -161,9 +168,9 @@ def convert_0d_to_1d(model, folder_0d, param_file_0d, folder_hyb=None, vess_1d_l
 
     # The FV 1D solver the 1D vessels run in: a row of its own (module FV1D_solver), from whose
     # module config the C++ generator writes the coupler's configuration.
-    if (df_vess['vessel_type'] == 'FV1D_vessel').any() and not (df_vess['vessel_type'] == 'FV1D_solver').any():
+    if (df_vess['module_type'] == 'FV1D_vessel').any() and not (df_vess['module_type'] == 'FV1D_solver').any():
         df_vess.loc[len(df_vess)] = {c: '' for c in df_vess.columns} | {
-            'name': 'FV1D_solver', 'BC_type': 'nn', 'vessel_type': 'FV1D_solver'}
+            'name': 'FV1D_solver', 'module_subtype': 'nn', 'module_type': 'FV1D_solver'}
 
     if str(source_path).endswith('.json'):
         # JSON in, JSON out: a CSV cannot hold a supermodule instance's per_submodule_* links
