@@ -21,6 +21,7 @@ have to pass in an environment where all of it *is* installed.
 """
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -176,6 +177,75 @@ def test_the_param_id_run_script_fails_with_that_message_rather_than_a_bare_impo
     assert proc.returncode != 0
     assert 'pip install "libcuflynx[mpi]"' in proc.stderr
     assert "No module named 'mpi4py'" not in proc.stderr
+
+
+def _suite_copy(tmp_path):
+    """A checkout whose ``tests/`` is a private copy, for a nested pytest session.
+
+    conftest.py deletes the session result files beside ``tests/`` when a session starts, so a
+    nested session on the real ``tests/`` would clear the running session's. Everything else is
+    a symlink to this checkout, so the copy reads the same sources, resources and git index.
+    """
+    root = tmp_path / 'checkout'
+    root.mkdir()
+    for entry in REPO_ROOT.iterdir():
+        if entry.name != 'tests' and not entry.name.startswith('.pytest'):
+            (root / entry.name).symlink_to(entry)
+    shutil.copytree(REPO_ROOT / 'tests', root / 'tests',
+                    ignore=shutil.ignore_patterns('__pycache__', 'test_outputs'))
+    return root
+
+
+def _pytest_without_mpi4py(root, args, env=None):
+    """Run pytest on the copy at ``root`` in a fresh interpreter with mpi4py hidden."""
+    argv = ['-p', 'no:xdist', '-p', 'no:cacheprovider', '--rootdir', str(root)] + args
+    return _run_without('mpi4py', '''
+        import os, sys
+        import pytest
+        os.chdir(%r)
+        sys.exit(pytest.main(%r))
+    ''' % (str(root), argv), env=env)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('env', [{}, {'PMI_RANK': '0', 'PMI_SIZE': '1'}],
+                         ids=['no-launcher', 'mpiexec-n-1'])
+def test_a_single_rank_test_file_runs_without_mpi4py(tmp_path, env):
+    """conftest.py falls back to mpi_utils' serial MPI, so the base install can run the
+    single-rank tests, under no launcher or ``mpiexec -n 1``."""
+    root = _suite_copy(tmp_path)
+    proc = _pytest_without_mpi4py(root, ['-q', 'tests/test_unit_conversion.py'], env=env)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert '2 passed' in proc.stdout
+
+
+@pytest.mark.unit
+def test_the_whole_suite_collects_without_mpi4py(tmp_path):
+    """The modules that need mpi4py skip, naming the extra, rather than fail to collect."""
+    root = _suite_copy(tmp_path)
+    proc = _pytest_without_mpi4py(root, ['--collect-only', '-q', '-rs', 'tests'])
+    assert proc.returncode == 0, proc.stdout[-5000:] + proc.stderr
+    assert 'error' not in proc.stdout.splitlines()[-1], proc.stdout[-5000:]
+    for module in ('test_param_id', 'test_sensitivity_analysis', 'test_scipy_ode_example',
+                   'test_external_simulation_helper', 'test_no_writes_into_package'):
+        skipped = [line for line in proc.stdout.splitlines()
+                   if line.startswith('SKIPPED') and module + '.py' in line]
+        assert skipped and 'libcuflynx[mpi]' in skipped[0], (module, proc.stdout[-5000:])
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('env', [{'PMI_RANK': '0', 'PMI_SIZE': '2'},
+                                 {'OMPI_COMM_WORLD_RANK': '1', 'OMPI_COMM_WORLD_SIZE': '2'},
+                                 {'HYDRA_CONTROL_FD': '5'}],
+                         ids=['mpich-2-ranks', 'openmpi-2-ranks', 'size-unknown'])
+def test_a_multi_rank_test_run_without_mpi4py_names_the_mpi_extra(tmp_path, env):
+    """Each rank would otherwise run the whole suite as rank 0 of 1 and clear the shared
+    result files under the others."""
+    root = _suite_copy(tmp_path)
+    proc = _pytest_without_mpi4py(root, ['-q', 'tests/test_unit_conversion.py'], env=env)
+    assert proc.returncode != 0
+    assert 'pip install "libcuflynx[mpi]"' in proc.stdout + proc.stderr
+    assert 'passed' not in proc.stdout
 
 
 @pytest.mark.unit
@@ -375,11 +445,10 @@ def test_each_extra_carries_its_package(extra, package):
 def test_dev_installs_everything_the_suite_imports():
     """`[dev]` must pull whole extras, not a hand-picked subset of their contents.
 
-    `tests/conftest.py` does `from mpi4py import MPI` at module scope, so without `[mpi]`
-    the suite does not collect -- not one test, not even the serial ones, and this very file
-    would never run. But collecting is not enough: naming `mpi4py` alone once satisfied that
-    and still broke CI, because paramID's multi-rank branch imports `schwimmbad`, the other
-    half of `[mpi]`. Referencing the extra means a package added to it later cannot go
+    Without `[mpi]` the suite collects, but the modules that need mpi4py skip, so `[dev]`
+    must bring it for the suite to run in full. Naming `mpi4py` alone once satisfied that and
+    still broke CI, because paramID's multi-rank branch imports `schwimmbad`, the other half
+    of `[mpi]`. Referencing the extra means a package added to it later cannot go
     missing here again, which naming its contents cannot promise.
     """
     extras = _load_pyproject()['project']['optional-dependencies']
