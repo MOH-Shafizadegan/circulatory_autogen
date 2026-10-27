@@ -91,7 +91,7 @@ def variable_kind(variable):
 def module_components(model):
     '''The components that are modules (not parameters, globals or the environment), in
     model order. Components without variables are left out: the generator adds empty
-    connection components (``sum_blood_volume``, ``global`` ...) whatever the model.'''
+    connection components (``generic_junction_connection``, ``global`` ...) whatever the model.'''
     return [c for c in model.components()
             if c.name() not in PARAMETER_COMPONENTS and c.name() != ENVIRONMENT
             and c.count_variables() > 0]

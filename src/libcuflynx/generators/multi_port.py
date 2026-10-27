@@ -5,11 +5,9 @@ case-insensitive (``"sum"``, ``"Sum"`` and ``"SUM"`` are the same):
 
 * ``"True"`` -- the port accepts any number of connections; this module's variables are mapped
   to the corresponding variables of every connected module (one source, many sinks).
-* ``"sum"`` on a port with ``port_type`` ``"volume_port"`` -- the legacy blood-volume sum: the
-  port's (single) variable is computed in the ``sum_blood_volume`` component.
-* ``"sum"`` on any other port -- the port must map exactly one variable, which is the sum, over
-  every module connected through the port, of the neighbour's corresponding variable. It is
-  read as the list form ``["sum"]`` (below). This is PhLynx's ``"Sum"``.
+* ``"sum"`` -- each of the port's variables is the sum, over every module connected through
+  the port, of the neighbour's corresponding variable. It is read as the list form with
+  ``"sum"`` for every variable (below). This is PhLynx's ``"Sum"``.
 * ``"Multiply"`` -- the port must map exactly one variable. Whichever end of a connection
   it is on, each connected module's corresponding variable is set to ``multiply_factor`` (an
   optional number on the port, default 1) times this module's variable; if the neighbour's
@@ -31,12 +29,12 @@ The list form gives one entry per port variable, aligned with the port's ``varia
   ``variables`` (null for the others), as PhLynx exports it.
 
 A list-form port accepts any number of neighbours, on entrance, exit or general ports.
-Only one side of a connection can sum, or multiply, a variable pair, and a variable can be
-summed through one port only.
+Only one side of a connection can sum, or multiply, a variable pair. A variable summed through
+several ports is the sum over the neighbours of all of them.
 
 ``normalise_port_multi_port`` puts a port's multi_port in canonical form when the module
 config is loaded (utilities/config_schemas.py), so the generator only sees ``"True"``,
-``"sum"`` (volume ports), ``"Multiply"`` and list forms of ``"sum"``/``"True"``/``"Multiply"``.
+``"Multiply"`` and list forms of ``"sum"``/``"True"``/``"Multiply"``.
 """
 
 import numbers
@@ -44,9 +42,6 @@ import numbers
 MULTI_PORT_SUM = 'sum'
 MULTI_PORT_SHARED = 'True'
 MULTI_PORT_MULTIPLY = 'Multiply'
-
-# the port_type whose whole-port "sum" is the legacy sum_blood_volume sum
-LEGACY_SUM_PORT_TYPE = 'volume_port'
 
 def _canonical_entry(entry):
     """A list-form entry as "sum"/"True"/"Multiply" (case-insensitively), or unchanged if
@@ -103,8 +98,8 @@ def _is_number(value):
 def normalise_port_multi_port(port, module_description):
     """``port`` with its multi_port in canonical form (a new dict if anything changes).
 
-    * a string "sum" in any case: "sum" on a volume_port (the legacy blood-volume sum),
-      ``["sum"]`` on any other port, which must then have exactly one variable;
+    * a string "sum" in any case: ``["sum"]`` with one entry per variable, on a port with at
+      least one variable;
     * a string "multiply" in any case: "Multiply", on a port with exactly one variable, and
       a numeric ``multiply_factor`` if one is given;
     * list-form entries: "sum" and "multiply" in any case become "sum" and "Multiply";
@@ -113,7 +108,8 @@ def normalise_port_multi_port(port, module_description):
     ``multiply_factor`` is a number, or a list with one entry per variable: a number for each
     Multiply variable and null for the others.
 
-    Raises ValueError for a Sum/Multiply port that does not have exactly one variable, a
+    Raises ValueError for a Sum port with no variables, a Multiply port that does not have
+    exactly one variable, a
     ``multiply_factor`` that is not a number (or such a list), or a ``multiply_factor`` on a
     port with no Multiply variable.
     """
@@ -140,21 +136,21 @@ def normalise_port_multi_port(port, module_description):
             f'"True", "Sum" or "Multiply" (any case), true/false, or a list with one entry per '
             f'port variable.')
 
-    def _single_variable(kind):
-        if not isinstance(variables, (list, tuple)) or len(variables) != 1:
-            raise ValueError(
-                f'{module_description}: port "{port_type}" has multi_port "{value}" but '
-                f'variables {variables}. A "{kind}" port must map exactly one variable.')
+    if not isinstance(variables, (list, tuple)):
+        variables = []
 
     new_value = value
     if isinstance(value, str) and value.lower() == 'sum':
-        if port_type == LEGACY_SUM_PORT_TYPE:
-            new_value = MULTI_PORT_SUM
-        else:
-            _single_variable('Sum')
-            new_value = [MULTI_PORT_SUM]
+        if not variables:
+            raise ValueError(
+                f'{module_description}: port "{port_type}" has multi_port "{value}" but no '
+                f'variables. A "Sum" port must map at least one variable.')
+        new_value = [MULTI_PORT_SUM] * len(variables)
     elif isinstance(value, str) and value.lower() == 'multiply':
-        _single_variable('Multiply')
+        if len(variables) != 1:
+            raise ValueError(
+                f'{module_description}: port "{port_type}" has multi_port "{value}" but '
+                f'variables {variables}. A "Multiply" port must map exactly one variable.')
         new_value = MULTI_PORT_MULTIPLY
     elif isinstance(value, (list, tuple)):
         new_value = [_canonical_entry(entry) for entry in value]
