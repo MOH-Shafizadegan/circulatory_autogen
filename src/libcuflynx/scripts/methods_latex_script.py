@@ -40,10 +40,11 @@ def build_parser():
     parser.add_argument('--run-dir', help="a workflow's output directory, or a param_id run "
                                           'directory, to report results from')
     parser.add_argument('--mapping', help='the variable mapping CSV')
-    parser.add_argument('--parameters', metavar='CSV',
-                        help="the generated model's parameters CSV, whose data_reference column "
-                             "gives each parameter's source (one calibration; default: the "
-                             "<prefix>_parameters.csv generation writes beside the model)")
+    parser.add_argument('--parameters', metavar='JSON',
+                        help="the generated model's parameters file, whose data_references give "
+                             "each parameter's source (one calibration; default: the "
+                             "<prefix>_parameters.json generation writes beside the model; an "
+                             "error when it does not exist)")
     parser.add_argument('--bib', action='append', default=None, metavar='BIB',
                         help='a .bib file whose keys the parameter sources cite (repeatable; '
                              'a workflow uses its modules\' *_references.bib by default)')

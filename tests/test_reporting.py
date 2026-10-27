@@ -8,6 +8,7 @@ compiles what it writes.
 """
 import csv
 import os
+import re
 import shutil
 import subprocess
 
@@ -26,6 +27,9 @@ from libcuflynx.reporting.variable_mapping import VariableMappingError
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RESOURCES = os.path.join(REPO_ROOT, 'resources')
 GOODWIN = os.path.join(RESOURCES, 'Goodwin.cellml')
+# Goodwin.cellml is not a generated model: a parameters file with no parameters stands in for
+# the one generation writes
+GOODWIN_PARAMETERS = os.path.join(REPO_ROOT, 'tests', 'test_inputs', 'Goodwin_parameters.json')
 
 needs_latex = pytest.mark.skipif(shutil.which('pdflatex') is None, reason='pdflatex not installed')
 
@@ -142,6 +146,48 @@ def test_refreshing_a_mapping_keeps_edits_and_follows_the_model(tmp_path):
     assert 'Gone/old' not in read_variable_mapping(path)
     with open(path) as f:
         assert next(csv.reader(f))[:2] == ['variable_name', 'latex']
+
+
+@pytest.mark.unit
+def test_a_column_beyond_libcuflynxs_is_kept_through_a_refresh(tmp_path):
+    # a mapping written by a CellDL editor or bgtool: the bond graph name of each variable
+    path = str(tmp_path / 'Goodwin_variable_mapping.csv')
+    rows = update_variable_mapping_file(GOODWIN, path)
+    with open(path, newline='') as f:
+        records = list(csv.reader(f))
+    records[0].append('bondgraph')
+    for record in records[1:]:
+        record.append('q_' + record[0].split('/')[1] if record[0] == 'Xi/Xi' else '')
+    with open(path, 'w', newline='') as f:
+        csv.writer(f).writerows(records)
+    assert read_variable_mapping(path)['Xi/Xi']['bondgraph'] == 'q_Xi'
+    rows = update_variable_mapping_file(GOODWIN, path)
+    assert {r['variable_name']: r['bondgraph'] for r in rows}['Xi/Xi'] == 'q_Xi'
+    with open(path, newline='') as f:
+        assert next(csv.reader(f)) == ['variable_name', 'latex', 'kind', 'component', 'units',
+                                       'bondgraph']
+    assert read_variable_mapping(path)['Xi/Xi']['bondgraph'] == 'q_Xi'
+
+
+@pytest.mark.unit
+def test_a_mapping_its_schema_refuses_is_refused_on_read(tmp_path):
+    path = tmp_path / 'm_variable_mapping.csv'
+    path.write_text('variable_name,latex,kind\nXi/Xi,X_i,variable\n')
+    with pytest.raises(VariableMappingError, match='kind'):
+        read_variable_mapping(str(path))
+    path.write_text('variable_name,latex\nXi,X_i\n')
+    with pytest.raises(VariableMappingError, match='variable_name'):
+        read_variable_mapping(str(path))
+    path.write_text('variable_name,latex\nXi/Xi,X_i\nXi/Xi,Y\n')
+    with pytest.raises(VariableMappingError, match='twice'):
+        read_variable_mapping(str(path))
+    path.write_text('name,latex\nXi/Xi,X_i\n')
+    with pytest.raises(VariableMappingError, match='missing'):
+        read_variable_mapping(str(path))
+    # blank lines and surrounding spaces are fine; libcuflynx's columns may be absent
+    path.write_text('variable_name , latex\n\n Xi/Xi , X_i \n')
+    assert read_variable_mapping(str(path))['Xi/Xi'] == {
+        'variable_name': 'Xi/Xi', 'latex': 'X_i', 'kind': '', 'component': '', 'units': ''}
 
 
 @pytest.mark.unit
@@ -280,6 +326,7 @@ def test_a_single_calibration_flow_chart_has_its_stages():
 # --------------------------------------------------------------------------------------------
 
 def _goodwin_methods(**kwargs):
+    kwargs.setdefault('parameters_path', GOODWIN_PARAMETERS)
     return calibration_methods_latex(
         GOODWIN, os.path.join(RESOURCES, 'Goodwin_obs_data.json'),
         os.path.join(RESOURCES, 'Goodwin_params_for_id.json'),
@@ -299,6 +346,55 @@ def test_methods_of_one_calibration():
     assert r'\paragraph{Observables.}' in text and r'\paragraph{Parameters.}' in text
     body = _goodwin_methods(standalone=False)
     assert not body.startswith(r'\documentclass') and r'\begin{document}' not in body
+
+
+@pytest.mark.integration
+def test_methods_of_one_calibration_cite_the_generated_parameters_file(tmp_path):
+    """A parameter's source is its data_reference in the <prefix>_parameters.json generation
+    writes beside the model, read by default; a parameters CSV is refused."""
+    from libcuflynx.scripts.script_generate_with_new_architecture import \
+        generate_with_new_architecture
+    from libcuflynx.utilities import parameters_file
+    resources, generated = tmp_path / 'resources', tmp_path / 'generated_models'
+    resources.mkdir()
+    for name in ('3compartment_module_array.csv', '3compartment_parameters.json'):
+        shutil.copy(os.path.join(RESOURCES, name), str(resources / name))
+    assert generate_with_new_architecture(False, {
+        'file_prefix': '3compartment', 'input_param_file': '3compartment_parameters.json',
+        'model_type': 'cellml', 'solver': 'CVODE_myokit', 'resources_dir': str(resources),
+        'generated_models_dir': str(generated), 'DEBUG': False})
+    model_dir = generated / '3compartment'
+    assert not (model_dir / '3compartment_parameters.csv').exists()
+    path = str(model_dir / '3compartment_parameters.json')
+    doc = parameters_file.read_parameters_file(path)
+    doc['pvn']['R']['data_reference'] = 'only_in_the_generated_file'
+    parameters_file.write_parameters_file(path, doc)
+
+    def methods(**kwargs):
+        return calibration_methods_latex(
+            str(model_dir / '3compartment_flat.cellml'),
+            os.path.join(RESOURCES, '3compartment_obs_data.json'),
+            os.path.join(RESOURCES, '3compartment_params_for_id.json'),
+            settings={'param_id_method': 'genetic_algorithm', 'dt': 0.01}, **kwargs)
+
+    assert r'only\_in\_the\_generated\_file' in methods()
+    csv_path = tmp_path / '3compartment_parameters.csv'
+    csv_path.write_text('variable_name,units,value,data_reference\nR_pvn,Js_per_m6,1,x\n')
+    with pytest.raises(ValueError, match='nested JSON'):
+        methods(parameters_path=str(csv_path))
+
+
+@pytest.mark.unit
+def test_methods_of_one_calibration_refuse_a_missing_parameters_file(tmp_path):
+    """No parameters file, named or beside the model, is an error naming the path, not a
+    methods section that cites no source."""
+    missing = str(tmp_path / 'm_parameters.json')
+    with pytest.raises(FileNotFoundError, match=re.escape(missing)):
+        _goodwin_methods(parameters_path=missing)
+    # the default: <prefix>_parameters.json beside the model, which Goodwin.cellml lacks
+    with pytest.raises(FileNotFoundError,
+                       match=re.escape(os.path.join(RESOURCES, 'Goodwin_parameters.json'))):
+        _goodwin_methods(parameters_path=None)
 
 
 @pytest.mark.unit
@@ -395,7 +491,8 @@ def test_the_commands_write_the_mapping_and_the_methods(tmp_path):
     assert methods_latex_script.main([
         '--model', GOODWIN, '--obs-data', os.path.join(RESOURCES, 'Goodwin_obs_data.json'),
         '--params-for-id', os.path.join(RESOURCES, 'Goodwin_params_for_id.json'),
-        '--mapping', mapping, '-o', out, '--body-only']) == 0
+        '--parameters', GOODWIN_PARAMETERS, '--mapping', mapping, '-o', out,
+        '--body-only']) == 0
     with open(out) as f:
         assert r'\section{Model}' in f.read()
 

@@ -13,7 +13,6 @@ Its hosts are linked to submodules by ``per_submodule_inputs`` / ``per_submodule
 The fixture modules are those of test_config_schemas.py.
 """
 import copy
-import csv
 import glob
 import json
 import os
@@ -192,8 +191,8 @@ def _full_records():
 def _generated_parameters(cellml_path):
     prefix = os.path.splitext(os.path.basename(cellml_path))[0]
     # the generated model's parameters, named as the model names them
-    with open(os.path.join(os.path.dirname(cellml_path), f'{prefix}_parameters.csv')) as f:
-        return {row['variable_name']: row for row in csv.DictReader(f)}
+    return {row['variable_name']: row for row in parameters_file.model_parameter_rows(
+        os.path.join(os.path.dirname(cellml_path), f'{prefix}_parameters.json'))}
 
 
 def _expand(records, registry):
@@ -240,11 +239,20 @@ def _flowpair_flattened(instance='pair', join='__'):
 
 def _assert_same_up_to_level_joins(flattened, expanded):
     """The expanded model's files, with its '__' level joins written '_', are the files of
-    the model generated from the same array flattened by hand with '_' joins."""
+    the model generated from the same array flattened by hand with '_' joins. The generated
+    parameters files are nested as each model's own parameters file is, so they are compared by
+    the model's names for their parameters."""
     dir_a, dir_b = os.path.dirname(flattened), os.path.dirname(expanded)
     names = sorted(f for f in os.listdir(dir_a) if os.path.isfile(os.path.join(dir_a, f)))
     assert names == sorted(f for f in os.listdir(dir_b) if os.path.isfile(os.path.join(dir_b, f)))
     for name in names:
+        if name.endswith('_parameters.json'):
+            rows_a = parameters_file.model_parameter_rows(os.path.join(dir_a, name))
+            rows_b = parameters_file.model_parameter_rows(os.path.join(dir_b, name))
+            assert sorted(rows_a, key=lambda r: r['variable_name']) == sorted(
+                ({k: v.replace('__', '_') for k, v in r.items()} for r in rows_b),
+                key=lambda r: r['variable_name']), name
+            continue
         with open(os.path.join(dir_a, name), 'rb') as fa, open(os.path.join(dir_b, name), 'rb') as fb:
             assert fa.read() == fb.read().replace(b'__', b'_'), name
 
@@ -561,7 +569,8 @@ def test_supermodule_parameters_are_renamed_and_globals_added_once(registry):
     # the parameterisation's global, once; the instances' values are the model's file's
     assert [row['variable_name'] for row in rows] == ['some_global']
     assert rows[0] == {'variable_name': 'some_global', 'units': 'dimensionless', 'value': '7.0',
-                       'data_reference': 'flowpair_default'}
+                       'data_reference': 'flowpair_default',
+                       'source': 'flowpair/supermodule parameterisation default'}
 
 
 @pytest.mark.unit

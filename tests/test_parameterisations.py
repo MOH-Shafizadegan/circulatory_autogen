@@ -37,7 +37,6 @@ submodule's value over the template), and two parameterisations that set one glo
 (``pulse_src`` v1 ``default`` and ``other``; no real module's parameterisations disagree on a
 global). Its reader modules are those of test_config_schemas.py.
 """
-import csv
 import json
 import os
 import shutil
@@ -306,8 +305,13 @@ def test_a_named_parameterisation_and_the_default_one_are_applied_with_the_vesse
     names = [r['variable_name'] for r in rows]
     for name in globals_ & set(named):
         assert names.count(name) == 1 and f'{name}_s1' not in names
-    # only the four parameter keys are kept (the library's "sourced" is ignored)
-    assert all(set(r) == {'variable_name', 'units', 'value', 'data_reference'} for r in rows)
+    # only the four parameter keys are kept (the library's "sourced" is ignored), and "source"
+    # names the parameterisation each came from
+    assert all(set(r) == {'variable_name', 'units', 'value', 'data_reference', 'source'}
+               for r in rows)
+    assert {r['source'] for r in rows} == {f'{I_M[0]}/{I_M[1]} parameterisation {I_M_NAMED}',
+                                         f'{I_M[0]}/{I_M[1]} parameterisation '
+                                         f'{_entry(lib, I_M)["default_parameterisation"]}'}
 
 
 def _conflicts(caught):
@@ -881,9 +885,9 @@ def test_generation_uses_parameterisations_and_the_host_file_wins(tmp_path, real
               'use_builtin_modules': False, 'DEBUG': False}
     assert generate_with_new_architecture(False, config), f'generation of {prefix} failed'
     # the generated model's parameters, named as the model names them
-    with open(generated / prefix / f'{prefix}_parameters.csv') as f:
-        params = {row['variable_name']: (row['value'], row['data_reference'])
-                  for row in csv.DictReader(f)}
+    params = {row['variable_name']: (row['value'], row['data_reference'])
+              for row in parameters_file.model_parameter_rows(
+                  str(generated / prefix / f'{prefix}_parameters.json'))}
     assert params['tau_w_num_s1'] == ('999', 'host_value')
     assert params['T'] == ('300', 'host_value')
     # values only: generation rewrites the library's data_reference text

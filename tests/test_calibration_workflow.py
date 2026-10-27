@@ -18,7 +18,6 @@ whose optima are known in closed form.
   a reduction, an emulator of what was kept, and MCMC on that emulator.
 """
 import copy
-import csv
 import json
 import os
 
@@ -40,6 +39,7 @@ from libcuflynx.external_testing.workflow_library import (OPTIMISER_SETTINGS, ST
                                                           STD_C, Y_A, Y_B, Z_C,
                                                           build_workflow_library)
 from libcuflynx.schemas import CALIBRATION_WORKFLOW_SCHEMA, load_schema
+from libcuflynx.utilities.parameters_file import model_parameter_rows
 
 
 @pytest.fixture
@@ -502,8 +502,8 @@ def test_fixed_values_flow_into_the_supermodule_and_editing_obs_data_redoes_it(l
     rest = _read_json(os.path.join(out, 'rest', 'step_result.json'))
     assert [(f['model_name'], f['from_step']) for f in rest['fixed']] == [('p_mod__A', 'fit_a')]
     # the generated step model's parameters, named as the model names them
-    with open(os.path.join(os.path.dirname(rest['model_path']), 'rest_parameters.csv')) as f:
-        generated = {r['variable_name']: float(r['value']) for r in csv.DictReader(f)}
+    generated = {r['variable_name']: float(r['value']) for r in model_parameter_rows(
+        os.path.join(os.path.dirname(rest['model_path']), 'rest_parameters.json'))}
     assert generated['p_mod__A'] == pytest.approx(merged['A/p'], rel=1e-12)
 
     # change fit_a's data: everything downstream changes with it
@@ -612,8 +612,8 @@ def test_a_tab_shows_each_model_with_the_values_available_so_far(library, tmp_pa
     out, work = str(tmp_path / 'run'), str(tmp_path / 'views')
 
     def parameters(view):
-        with open(view['parameters_path']) as f:
-            return {r['variable_name']: float(r['value']) for r in csv.DictReader(f)}
+        return {r['variable_name']: float(r['value'])
+                for r in model_parameter_rows(view['parameters_path'])}
 
     rest = workflow_model(library['chain_rest'], 'rest', output_dir=out, work_dir=work)
     assert rest['kind'] == 'step' and rest['waiting_for'] == ['fit_a'] and rest['fixed'] == []
@@ -646,6 +646,38 @@ def test_a_tab_shows_each_model_with_the_values_available_so_far(library, tmp_pa
                           work_dir=work)['stale'] == ['fit_a']
 
 
+@pytest.mark.integration
+def test_a_run_made_step_by_step_writes_its_calibrated_parameters_where_asked(library,
+                                                                              tmp_path):
+    from libcuflynx.calibration_workflow import write_calibrated_parameters_to
+
+    out, path = str(tmp_path / 'run'), str(tmp_path / 'send' / 'chain_parameters.json')
+    run_calibration_workflow(library['chain_array'], output_dir=out, only='a-alone')
+    with pytest.raises(WorkflowError, match=r"steps \['chain'\] have no current result"):
+        write_calibrated_parameters_to(library['chain_array'], out, path)
+    run_calibration_workflow(library['chain_array'], output_dir=out, from_step='chain')
+    before = {name: open(os.path.join(library['arrays'], name), 'rb').read()
+              for name in sorted(os.listdir(library['arrays']))
+              if os.path.isfile(os.path.join(library['arrays'], name))}
+    assert write_calibrated_parameters_to(library['chain_array'], out, path) == path
+    rows = {r['variable_name']: r for r in read_parameters(path)}
+    assert float(rows['A/p']['value']) == pytest.approx(np.sqrt(Y_A / 2), rel=1e-4)
+    assert float(rows['C/q']['value']) == pytest.approx(np.sqrt(Z_C - Y_A), rel=1e-4)
+    assert rows['C/k']['value'] == '1.0'                # not calibrated: as in the target
+    assert 'step chain' in rows['C/q']['data_reference']
+    # only path is written: the target's own files are as they were, and nothing is added
+    assert {name: open(os.path.join(library['arrays'], name), 'rb').read()
+            for name in sorted(os.listdir(library['arrays']))
+            if os.path.isfile(os.path.join(library['arrays'], name))} == before
+
+    obs_path = os.path.join(library['arrays'], 'data', 'chain_obs.json')
+    obs = _read_json(obs_path)
+    obs['data_items'][0]['std'] = 0.2
+    _write_json(obs_path, obs)
+    with pytest.raises(WorkflowError, match=r"steps \['chain'\]"):
+        write_calibrated_parameters_to(library['chain_array'], out, path)
+
+
 @pytest.mark.unit
 def test_calibrated_values_replace_their_rows_and_new_ones_are_added(tmp_path):
     from libcuflynx.calibration_workflow.runner import write_calibrated_parameters
@@ -662,6 +694,12 @@ def test_calibrated_values_replace_their_rows_and_new_ones_are_added(tmp_path):
                      'A/p,dimensionless,1.0,a,yes\nC/q,dimensionless,1.0,c,\n'
                      'global/T,kelvin,300,t,\n', MODULE)
     before = open(_Target.parameters_path).read()
+    # what the target's model used: its file's values, and C/s from a submodule's default
+    generated = str(tmp_path / 'target_parameters.json')
+    write_parameters(generated, 'variable_name,units,value,data_reference\n'
+                     'mod__A/p,dimensionless,1.0,a\nmod__C/q,dimensionless,1.0,c\n'
+                     'mod__C/s,dimensionless,5.0,from c/v1 parameterisation default: s\n'
+                     'T,kelvin,300,t\n')
     merged = [{'model_name': 'p_mod__A', 'parameterisation_name': 'A/p', 'value': 2.0,
                'units': 'dimensionless', 'from_step': 'fit_a'},
               {'model_name': 'q_mod__C', 'parameterisation_name': 'C/q', 'value': 3.0,
@@ -670,11 +708,14 @@ def test_calibrated_values_replace_their_rows_and_new_ones_are_added(tmp_path):
                'units': 'dimensionless', 'from_step': 'fit_a'},
               {'model_name': 'T', 'parameterisation_name': 'global/T', 'value': 310.0,
                'units': 'kelvin', 'from_step': 'rest'}]
-    path = write_calibrated_parameters(_Target(), merged, 'wf')
+    path = write_calibrated_parameters(_Target(), merged, 'wf', generated_path=generated)
     assert path == str(tmp_path / 'rest_calibrated_parameters.json')
     rows = {r['variable_name']: r for r in read_parameters(path, MODULE)}
     assert {n: float(r['value']) for n, r in rows.items()} == \
-        {'global/T': 310.0, 'A/p': 2.0, 'C/q': 3.0, 'A/r': 4.0}
+        {'global/T': 310.0, 'A/p': 2.0, 'C/q': 3.0, 'C/s': 5.0, 'A/r': 4.0}
+    # a value the target's file does not set keeps its source; a calibrated one has its own
+    assert rows['C/s']['data_reference'] == 'from c/v1 parameterisation default: s'
+    assert rows['C/q']['data_reference'].startswith('calibrated by workflow wf, step rest')
     # a calibrated value is no longer sourced; its data_reference says where it came from
     assert rows['A/p']['sourced'] == 'no' and 'step fit_a' in rows['A/p']['data_reference']
     assert rows['A/r']['units'] == 'dimensionless'

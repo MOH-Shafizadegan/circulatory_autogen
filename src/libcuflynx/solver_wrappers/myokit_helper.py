@@ -45,6 +45,7 @@ def _import_myokit_tolerating_first_run_race(attempts=5, delay=0.2):
 
 myokit = _import_myokit_tolerating_first_run_race()
 from myokit.formats import cellml as cellml_format
+import libcellml
 import libcuflynx.utilities.libcellml_helper_funcs as cellml
 from libcuflynx.solver_wrappers.name_resolver import VariableNameResolver
 from libcuflynx.solver_wrappers.experiment_time import ExperimentTimeMixin
@@ -108,6 +109,63 @@ def write_flattened_cellml(prepared_path, model_string):
         except OSError:
             pass
         raise
+
+
+_MATHML_NS = '{http://www.w3.org/1998/Math/MathML}'
+
+
+def _all_components(parent):
+    for i in range(parent.componentCount()):
+        component = parent.component(i)
+        yield component
+        yield from _all_components(component)
+
+
+def _derivative_bvars(component):
+    """``(state_name, bvar_name)`` for each ``<diff>`` in *component*'s MathML."""
+    math = component.math()
+    if not math.strip():
+        return []
+    found = []
+    for apply in ET.fromstring(f'<root>{math}</root>').iter(f'{_MATHML_NS}apply'):
+        children = list(apply)
+        if not children or children[0].tag != f'{_MATHML_NS}diff':
+            continue
+        bvar = apply.find(f'{_MATHML_NS}bvar/{_MATHML_NS}ci')
+        state = apply.find(f'{_MATHML_NS}ci')
+        if bvar is not None and state is not None:
+            found.append((state.text.strip(), bvar.text.strip()))
+    return found
+
+
+def scale_derivatives_to_free_time(model, flat_model):
+    """Rescale ``dot()`` of states whose CellML derivative is taken w.r.t. a time variable
+    in other units than the free variable (issue #604).
+
+    Myokit's CellML importer converts a module's local time (``t = time * 1000`` for a
+    module in ms on a model in s) but takes every derivative w.r.t. the free variable, so
+    ``dx/dt`` written per ms would run 1000x too slowly. Each such state's RHS is multiplied
+    by ``d(t_local)/d(time)``. *model* is the imported Myokit model and *flat_model* the
+    libcellml model it was imported from. Returns ``{qname: factor}`` for the states changed.
+    """
+    free = model.binding('time')
+    if free is None:
+        return {}
+    free_units = flat_model.component(free.parent().name(), True).variable(free.name()).units()
+    scaled = {}
+    for component in _all_components(flat_model):
+        for state_name, bvar_name in _derivative_bvars(component):
+            bvar = component.variable(bvar_name)
+            if bvar is None or not libcellml.Units.compatible(bvar.units(), free_units):
+                continue
+            factor = libcellml.Units.scalingFactor(bvar.units(), free_units)
+            if factor == 1.0:
+                continue
+            qname = f'{component.name()}.{state_name}'
+            var = model.get(qname)
+            var.set_rhs(myokit.Multiply(myokit.Number(factor), var.rhs()))
+            scaled[qname] = factor
+    return scaled
 
 
 # CA's default CVODES tolerances for the Myokit backend, mirrored by the CVODE_myokit schema
@@ -328,6 +386,8 @@ class SimulationHelper(ExperimentTimeMixin):
             # Keep temp file for debugging
             print(f"Myokit import failed, temp file kept at: {prepared_path}")
             raise e
+        scale_derivatives_to_free_time(model, self._last_flat_model)
+        del self._last_flat_model
         # Don't remove temp file for debugging
         try:
             self._apply_post_import_initial_expressions(model, prepared_path)
@@ -444,6 +504,7 @@ class SimulationHelper(ExperimentTimeMixin):
 
             # Flatten the model to resolve all imports and connections
             flat_model = cellml.flatten_model(model, importer)
+            self._last_flat_model = flat_model
 
             # Print the flattened model to string
             model_string = cellml.print_model(flat_model)

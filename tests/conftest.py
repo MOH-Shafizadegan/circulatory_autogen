@@ -62,7 +62,10 @@ import fcntl
 import io
 import contextlib
 import time
-from mpi4py import MPI
+try:
+    from mpi4py import MPI
+except ModuleNotFoundError:
+    MPI = None  # set below, once src/ is on sys.path
 
 # Put this worktree's src/ first on sys.path so the suite exercises the libcuflynx in
 # this tree rather than a copy pip happens to have installed elsewhere. This is the
@@ -78,6 +81,32 @@ if _SRC_DIR not in sys.path:
 _ROOT_DIR = os.path.abspath(_TEST_ROOT)
 if _ROOT_DIR not in sys.path:
     sys.path.insert(0, _ROOT_DIR)
+
+
+def _launcher_reports_one_rank(env):
+    """Whether the MPI launcher that started this process says the job has one rank."""
+    sizes = [env[var] for var in ('PMI_SIZE', 'OMPI_COMM_WORLD_SIZE') if var in env]
+    return bool(sizes) and all(size == '1' for size in sizes)
+
+
+def _mpi_without_mpi4py(env=None):
+    """``libcuflynx.utilities.mpi_utils``'s serial ``MPI`` for a run without mpi4py.
+
+    mpi4py is the optional ``[mpi]`` extra, and a single-rank run (plain ``pytest`` or
+    ``mpiexec -n 1``) needs none of it. A multi-rank launch, or one whose size is unknown,
+    raises ``mpi_utils.MPI4PY_MISSING_MESSAGE``: every rank would otherwise run the whole
+    suite as rank 0 of 1 and clear the others' shared result files.
+    """
+    from libcuflynx.utilities import mpi_utils
+
+    env = os.environ if env is None else env
+    if _launcher_reports_one_rank(env):
+        env = {}
+    return mpi_utils.get_MPI(env)
+
+
+if MPI is None:
+    MPI = _mpi_without_mpi4py()
 
 from libcuflynx.scripts.script_generate_with_new_architecture import generate_with_new_architecture
 

@@ -27,6 +27,9 @@ Each command writes `<prefix>_variable_mapping.csv` beside the model. For a cali
 | `latex` | The symbol, without `$`. **Edit these.** |
 | `kind` | `state`, `parameter`, `constant`, `algebraic` or `time`. |
 | `component`, `units` | Where the variable is defined, and its units. |
+| any other | Kept as it is. A CellDL editor or `bgtool --variable-mapping` adds `bondgraph`, each variable's bond graph name. |
+
+The file's structure is defined by `src/libcuflynx/schemas/variable_mapping.schema.json`, the JSON form a CSV is converted to when it is read (`variable_mapping_document`). Only `variable_name` and `latex` are required. An empty `kind` or `units` is filled in from the model when the file is refreshed. Reading or writing a file the schema refuses raises an error that gives each problem and where it is: the row's index among the non-blank rows, counting from 0, and the column (`variables[1].kind`).
 
 The default symbols follow a simple rule, meant to be edited:
 
@@ -35,7 +38,7 @@ The default symbols follow a simple rule, meant to be edited:
 - **Upright text:** one-character parts stay italic, and longer ones are set upright: `Nai` → $\mathrm{Nai}$.
 - **Module subscript:** the module a variable belongs to is added as a last subscript. A generated parameter `<var>_<vessel>` is split into its variable and its vessel. In a model generated alone (vessel `mod`), the `mod_` prefix is dropped: `p_mod_A` → $p_{A}$.
 
-Running the command again keeps every symbol already in the file. It adds new variables with the default rule and drops variables the model no longer has. The command also warns when two variables share a symbol, because they could not be told apart in the equations. CUFLynx edits the same file from its Variables panel.
+Running the command again keeps every symbol already in the file, and every column beyond these. It adds new variables with the default rule and drops variables the model no longer has. The command also warns when two variables share a symbol, because they could not be told apart in the equations. CUFLynx edits the same file from its Variables panel.
 
 ## The methods section
 
@@ -73,10 +76,10 @@ The document has four parts.
 
 ### Citations
 
-A parameter's source is its `data_reference` in the generated model's parameters CSV (the workflow's target, or the calibrated model). By convention it starts with the BibTeX key of the source, followed by a note: `martin2023modelling; Methods (p. 16): w_inf k = 10 mV`. Every word in it that is a key of the bibliography becomes `\cite{key}`; other words, such as `definitional` or `user_defined`, stay as text.
+A parameter's source is its `data_reference` in the generated model's parameters file, the `<prefix>_parameters.json` beside it (the workflow's target, or the calibrated model). By convention it starts with the BibTeX key of the source, followed by a note: `martin2023modelling; Methods (p. 16): w_inf k = 10 mV`. Every word in it that is a key of the bibliography becomes `\cite{key}`; other words, such as `definitional` or `user_defined`, stay as text.
 
 - **For a workflow,** the bibliography is the `*_references.bib` (and `*_references_proposed.bib`) of every module version in the target, as the module library keeps them. Pass `--bib` to use other files instead.
-- **For one calibration,** pass the `.bib` files with `--bib` (repeatable). The parameters are the `<prefix>_parameters.csv` that generation writes beside the generated model, or `--parameters`.
+- **For one calibration,** pass the `.bib` files with `--bib` (repeatable). The parameters are the `<prefix>_parameters.json` that generation writes beside the generated model, or `--parameters`; when that file does not exist the command stops with an error naming it.
 
 The command writes the cited entries to a `.bib` beside the `.tex` (`methods.bib` for `-o methods.tex`), and the document ends with `\bibliography{methods}`. `--pdf` compiles it with `latexmk`, which runs BibTeX.
 
@@ -89,7 +92,7 @@ The command writes the cited entries to a `.bib` beside the `.tex` (`methods.bib
 | `--settings` | the `user_inputs.yaml` of that calibration (method, optimiser options, solver, UQ) |
 | `--run-dir` | a workflow's output directory, or a param_id run directory: adds the results |
 | `--mapping` | the variable mapping CSV (default: the one `cuflynx-variable-mapping` writes) |
-| `--parameters` | the generated model's parameters CSV (one calibration) |
+| `--parameters` | the generated model's parameters file, `<prefix>_parameters.json` (one calibration) |
 | `--bib` | a `.bib` file the sources cite (repeatable) |
 | `-o` | the `.tex` to write |
 | `--title` | the document title |
