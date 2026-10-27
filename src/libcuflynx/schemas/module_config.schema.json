@@ -30,7 +30,7 @@
           "description": "Required. The module variables the port maps, in order, onto the same positions of the connected port. An empty string or null maps nothing in that position."
         },
         "multi_port": {
-          "description": "Whether the port takes several connections, and how (libcuflynx/generators/multi_port.py). \"True\" (or true): every connected module's variables are mapped to this module's (one source, many sinks). \"Sum\" (any case): the port's one variable is the sum over every connected module (on a volume_port, the legacy blood-volume sum). \"Multiply\" (any case): the port's one variable, times multiply_factor, sets each connected module's variable. A list gives one \"sum\", \"True\" or \"multiply\" (any case) per variable. Default (absent, null or false): one connection.",
+          "description": "Whether the port takes several connections, and how (libcuflynx/generators/multi_port.py). \"True\" (or true): every connected module's variables are mapped to this module's (one source, many sinks). \"Sum\" (any case): each of the port's variables is the sum over every connected module, the same as a list with \"sum\" for every variable. \"Multiply\" (any case): the port's one variable, times multiply_factor, sets each connected module's variable. A list gives one \"sum\", \"True\" or \"multiply\" (any case) per variable. Default (absent, null or false): one connection.",
           "anyOf": [
             {
               "type": "boolean"

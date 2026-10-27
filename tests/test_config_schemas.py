@@ -5,9 +5,10 @@ Module configs and arrays use PhLynx's key names (#163); the keys libcuflynx use
 array name ``<prefix>_vessel_array.*`` are refused with the ``cuflynx-upgrade`` command that
 converts them (utilities/config_schemas.py).
 
-multi_port values are case-insensitive. A whole-port "Sum" on a port other than a
-volume_port makes the port's single variable the sum of the neighbours' variables (read as
-the list form ``["sum"]``); on a volume_port it keeps the legacy sum_blood_volume sum.
+multi_port values are case-insensitive. A whole-port "Sum" makes each of the port's variables
+the sum of the neighbours' corresponding variables (read as the list form with "sum" for every
+variable), whatever the port_type. A variable summed through several ports is the sum over the
+neighbours of all of them.
 "Multiply" on a port, at either end of a connection, sets each neighbour's variable to
 ``multiply_factor`` times this module's.
 
@@ -19,7 +20,11 @@ Fixture modules (in an ``external_modules_dir``):
 * ``distributor`` -- exit flow_port [v_out_sum], multi_port "Sum"; ``v_seen = v_out_sum``
   (the microvasculature_network Nout pattern).
 * ``tank`` -- exit volume_port [q]; ``dq/dt = rate``.
-* ``vol_sum`` -- entrance volume_port [q_sum], multi_port "sum" (the legacy volume sum).
+* ``vol_sum`` -- entrance volume_port [q_sum], multi_port "sum".
+* ``tank_gen`` / ``vol_sum_gen`` -- ``tank`` and ``vol_sum`` with a general volume_port, so a
+  neighbour can be drawn on either side of the sum.
+* ``pair_vol_src`` / ``pair_vol_sum`` -- a two-variable volume_port [a, b], and one [ya, yb]
+  with a whole-port "sum".
 * ``gain`` -- exit gain_port [x] (a sinusoid), multi_port "Multiply".
 * ``reader`` -- entrance gain_port [y]; ``y_seen = y``. ``reader_multi`` has a "True" port.
 * ``gain_sum`` -- entrance gain_port [y_sum], multi_port "Sum"; ``y_seen = y_sum``.
@@ -213,6 +218,16 @@ def modules_config(volume_sum="sum", gain_factor=2.5):
         _module("pair_reader_mul", "pair_seen_type",
                 [_port("pair_port", ["ya", "yb"], ["True", "multiply"])], [], pair_seen_vars),
     ]
+    config += [
+        dict(_module("tank_gen", "tank_type", [], [],
+                     [["q", "m3", "access", "variable"], ["rate", "m3_per_s", "access", "constant"]]),
+             general_ports=[_port("volume_port", ["q"])]),
+        dict(_module("vol_sum_gen", "vol_sum_type", [], [], _seen_vars("q_sum", "m3")),
+             general_ports=[_port("volume_port", ["q_sum"], volume_sum)]),
+        _module("pair_vol_src", "pair_src_type", [], [_port("volume_port", ["a", "b"])], pair_vars),
+        _module("pair_vol_sum", "pair_seen_type", [_port("volume_port", ["ya", "yb"], volume_sum)],
+                [], pair_seen_vars),
+    ]
     if gain_factor is None:
         del config[6]["exit_ports"][0]["multiply_factor"]
     return config
@@ -292,7 +307,7 @@ def _read(path):
 
 EXACT = dict(rtol=1e-12, atol=0.0)
 
-# a model that uses every fixture module: flow sums on both sides, a legacy volume sum and
+# a model that uses every fixture module: flow sums on both sides, a volume sum and
 # Multiply into a plain port and into a Sum port
 FULL_ROWS = [
     ("src_a", "flow_src", [], ["coll"]),
@@ -407,16 +422,19 @@ def test_the_old_vessel_array_file_name_is_refused(tmp_path):
 @pytest.mark.unit
 def test_multi_port_normalisation():
     for value in ["sum", "Sum", "SUM"]:
-        assert normalise_port_multi_port(_port("volume_port", ["q"], value), "m")["multi_port"] == "sum"
-        assert normalise_port_multi_port(_port("flow_port", ["v"], value), "m")["multi_port"] == ["sum"]
+        for port_type in ["volume_port", "flow_port"]:
+            assert normalise_port_multi_port(_port(port_type, ["q"], value), "m")["multi_port"] == \
+                ["sum"]
+            assert normalise_port_multi_port(_port(port_type, ["q", "r"], value), "m")[
+                "multi_port"] == ["sum", "sum"]
     for value in ["multiply", "Multiply", "MULTIPLY"]:
         assert normalise_port_multi_port(_port("p", ["x"], value), "m")["multi_port"] == "Multiply"
     assert normalise_port_multi_port(_port("p", ["v", "u"], ["Sum", "True"]), "m")["multi_port"] == \
         ["sum", "True"]
     unchanged = _port("p", ["v"], "True")
     assert normalise_port_multi_port(unchanged, "m") is unchanged
-    with pytest.raises(ValueError, match="exactly one variable"):
-        normalise_port_multi_port(_port("flow_port", ["v", "u"], "Sum"), "m")
+    with pytest.raises(ValueError, match="at least one variable"):
+        normalise_port_multi_port(_port("volume_port", [], "Sum"), "m")
     with pytest.raises(ValueError, match="exactly one variable"):
         normalise_port_multi_port(_port("p", ["x", "y"], "Multiply"), "m")
     with pytest.raises(ValueError, match="not a number"):
@@ -452,13 +470,44 @@ def test_volume_port_sum_is_case_insensitive(tmp_path):
         modules_dir = _write_library(tmp_path / f"modules_{value}",
                                      {"m_modules_config.json": modules_config(volume_sum=value)})
         paths[value] = _generate(str(tmp_path / value), modules_dir, "schema_vol", rows, params)
-    assert '<component name="sum_blood_volume">' in _read(paths["sum"])
+    assert '<component name="multiport_sum_vsum_q_sum">' in _read(paths["sum"])
     _assert_same_generated_models(paths["sum"], paths["Sum"])
     _assert_same_generated_models(paths["sum"], paths["SUM"])
 
     res = _simulate(paths["Sum"], ["tank_a/q", "tank_b/q", "vsum/v_seen"])
     np.testing.assert_allclose(res["vsum/v_seen"], res["tank_a/q"] + res["tank_b/q"], **EXACT)
     assert np.ptp(res["vsum/v_seen"]) > 0
+
+
+@pytest.mark.integration
+def test_volume_port_sum_counts_a_neighbour_drawn_as_an_output(tmp_path, library_dir):
+    """A volume_port "sum" is an ordinary sum: it covers every module connected through the
+    port, whichever side of the connection the neighbour is drawn on."""
+    rows = [("tank_a", "tank_gen", [], ["vsum"]),
+            ("vsum", "vol_sum_gen", ["tank_a"], ["tank_b"]),
+            ("tank_b", "tank_gen", ["vsum"], [])]
+    params = [("tank_a/rate", "m3_per_s", 1.0e-6), ("tank_b/rate", "m3_per_s", 3.0e-6)]
+    path = _generate(str(tmp_path), library_dir, "schema_vol_out", rows, params)
+    res = _simulate(path, ["tank_a/q", "tank_b/q", "vsum/v_seen"])
+    np.testing.assert_allclose(res["vsum/v_seen"], res["tank_a/q"] + res["tank_b/q"], **EXACT)
+    # q = 1e-6 + rate * t
+    np.testing.assert_allclose(res["vsum/v_seen"][-1], 2.0e-6 + 4.0e-6 * 2.0, rtol=1e-9)
+
+
+@pytest.mark.integration
+def test_a_multi_variable_volume_port_sums_each_variable(tmp_path, library_dir):
+    rows = [("p1", "pair_vol_src", [], ["psum"]), ("p2", "pair_vol_src", [], ["psum"]),
+            ("psum", "pair_vol_sum", ["p1", "p2"], [])]
+    params = _prescribed_params("p1", 1.0e-5, 0.5, 6.0) + _prescribed_params("p2", 2.0e-5, 0.3, 4.0)
+    path = _generate(str(tmp_path), library_dir, "schema_vol_pair", rows, params)
+    text = _read(path)
+    assert '<component name="multiport_sum_psum_ya">' in text
+    assert '<component name="multiport_sum_psum_yb">' in text
+    res = _simulate(path, ["p1/a", "p1/b", "p2/a", "p2/b", "psum/a_seen", "psum/b_seen"])
+    np.testing.assert_allclose(res["psum/a_seen"], res["p1/a"] + res["p2/a"], **EXACT)
+    np.testing.assert_allclose(res["psum/b_seen"], res["p1/b"] + res["p2/b"], **EXACT)
+    np.testing.assert_allclose(res["psum/b_seen"], 3.0 * res["psum/a_seen"], rtol=1e-12)
+    assert np.ptp(res["psum/a_seen"]) > 0
 
 
 @pytest.mark.integration
@@ -572,13 +621,25 @@ def test_list_form_multiply_on_both_ends_of_a_variable_is_rejected(tmp_path, lib
 
 
 @pytest.mark.integration
-def test_a_variable_summed_through_two_ports_is_rejected(tmp_path, library_dir):
-    rows = [("src", "flow_src", [], ["coll"]), ("g", "gain", [], ["coll"]),
-            ("coll", "collector2", ["src", "g"], [])]
-    params = _prescribed_params("src", 1.0e-5, 0.5, 6.0) + _prescribed_params("g", 2.0e-5, 0.4, 8.0)
-    with pytest.raises(ValueError, match='"coll" sums "v_in_sum" through ports "flow_port" and '
-                                         '"gain_port"; a variable can be summed through one port only'):
-        _generate(str(tmp_path), library_dir, "schema_sum_two_ports", rows, params)
+def test_a_variable_summed_through_two_ports_sums_both_ports_neighbours(tmp_path, library_dir):
+    """v_in_sum is "Sum" on a flow_port and on a gain_port: it is the sum over the neighbours of
+    both ports (the gain's term scaled by its Multiply factor, 2.5)."""
+    rows = [("src", "flow_src", [], ["coll"]), ("src_b", "flow_src", [], ["coll"]),
+            ("g", "gain", [], ["coll"]),
+            ("coll", "collector2", ["src", "src_b", "g"], [])]
+    params = (_prescribed_params("src", 1.0e-5, 0.5, 6.0) +
+              _prescribed_params("src_b", 3.0e-5, 0.2, 5.0) +
+              _prescribed_params("g", 2.0e-5, 0.4, 8.0))
+    path = _generate(str(tmp_path), library_dir, "schema_sum_two_ports", rows, params)
+    text = _read(path)
+    assert text.count('<component name="multiport_sum_coll_v_in_sum">') == 1
+    t = np.arange(0.0, 2.0 + 1e-9, 0.01)
+    res = _simulate(path, ["src/v", "src_b/v", "g/x", "coll/v_seen"])
+    expected = (1.0e-5 * (1 + 0.5 * np.sin(6.0 * t)) + 3.0e-5 * (1 + 0.2 * np.sin(5.0 * t)) +
+                2.5 * 2.0e-5 * (1 + 0.4 * np.sin(8.0 * t)))
+    np.testing.assert_allclose(res["coll/v_seen"], res["src/v"] + res["src_b/v"] + 2.5 * res["g/x"],
+                               **EXACT)
+    np.testing.assert_allclose(res["coll/v_seen"], expected[:len(res["coll/v_seen"])], rtol=1e-9)
 
 
 @pytest.mark.integration
