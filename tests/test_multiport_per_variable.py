@@ -476,7 +476,7 @@ def test_malformed_list_multi_port_fails_generation(tmp_path, external_modules_d
 
 @pytest.mark.unit
 def test_cpp_generator_refuses_list_multi_port_with_1d_coupling(tmp_path):
-    from libcuflynx.generators.CVSCppGenerator import CVS0DCppGenerator
+    from libcuflynx.generators.cpp.generator import CVS0DCppGenerator
 
     class _Model:
         vessels_df = pd.DataFrame([{

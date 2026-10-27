@@ -43,6 +43,7 @@ EXPECTED_ENTRY_POINTS = {
     "cuflynx-generate-pipeline",
     "cuflynx-upgrade",
     "cuflynx-run-predictions",
+    "cuflynx-couple",
 }
 
 
@@ -359,6 +360,9 @@ NON_STAGE_COMMANDS = {
     "cuflynx-methods-latex",
     "cuflynx-upgrade",
     "cuflynx-run-predictions",
+    # runs a generated model folder; its configuration (external_models.json) was written from
+    # user_inputs.yaml by cuflynx-generate
+    "cuflynx-couple",
 }
 
 

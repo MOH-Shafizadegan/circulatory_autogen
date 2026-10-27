@@ -20,6 +20,10 @@
       "tests/test_calibration_workflow.py",
       "tests/test_solvers.py",
       "tests/test_sensitivity_analysis.py"
+    ],
+    "cpp": [
+      "tests/test_cpp_template_generator.py",
+      "tests/test_external_coupling.py"
     ]
   },
   "param-id": {
