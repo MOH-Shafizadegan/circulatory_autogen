@@ -16,6 +16,14 @@ replaced by their inverse), which 0.7.1 fixes (#271). 0.7.1 drops an imported un
 is in no release yet, so CI builds libCellML from source (`.github/actions/libcellml-from-source`)
 until 0.7.2 is on PyPI.
 
+### Added — `"multiply"` in a list-form `multi_port`
+
+A list-form port's entry may be `"multiply"` (any case), as PhLynx exports a port whose
+variables have different types: that variable reaches its neighbour times its factor, like a
+whole-port `"Multiply"`. `multiply_factor` may be a list aligned with the port's variables (a
+number for each Multiply variable, null for the others). A variable pair cannot be Multiply on
+both ends.
+
 ### Changed — a generated model has one parameters file, nested JSON; the generated CSV is gone
 
 Generation writes one parameters file beside the generated model, `<prefix>_parameters.json` (in
