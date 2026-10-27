@@ -3,8 +3,7 @@
 Tests about module libraries use the real one (physiomelinks/circulatory-autogen-modules)
 rather than one written into a temporary directory, so they check libcuflynx against the
 layouts, instances and supermodules a library actually has. CI checks the library out at the
-commit pinned in ``tests/MODULE_LIBRARY_REF`` (a commit of its ``devel_module_tests`` branch
-until that branch reaches ``main``). Move the pin deliberately, when libcuflynx should be
+commit pinned in ``tests/MODULE_LIBRARY_REF`` (a commit of its ``main`` branch). Move the pin deliberately, when libcuflynx should be
 tested against a newer library.
 
 The library's ``modules/`` directory is found from, in order:

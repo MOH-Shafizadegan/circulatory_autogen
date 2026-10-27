@@ -17,7 +17,7 @@ from libcuflynx.utilities.package_resources import builtin_modules_dir
 DECAY_CELLML = """\
 <?xml version='1.0' encoding='UTF-8'?>
 <model name="modules" xmlns="http://www.cellml.org/cellml/1.1#" xmlns:cellml="http://www.cellml.org/cellml/1.1#">
-    <component name="{module_type}">
+    <component name="{component_type}">
         <variable name="t" public_interface="in" units="second"/>
         <variable name="x_init" public_interface="in" units="dimensionless"/>
         <variable name="k" public_interface="in" units="lib_test_per_second"/>
@@ -36,11 +36,11 @@ DECAY_CELLML = """\
 DECAY_CONFIG = """\
 [
   {{
-    "vessel_type": "{vessel_type}",
-    "BC_type": "nn",
-    "module_format": "cellml",
-    "module_file": "{name}_modules.cellml",
     "module_type": "{module_type}",
+    "module_subtype": "nn",
+    "module_format": "cellml",
+    "component_file": "{name}_modules.cellml",
+    "component_type": "{component_type}",
     "entrance_ports": [],
     "exit_ports": [],
     "general_ports": [],
@@ -63,13 +63,13 @@ UNITS_CELLML = """\
 """
 
 
-def _write_module(library_dir, name, vessel_type, module_type, units_exponent='-1'):
+def _write_module(library_dir, name, module_type, component_type, units_exponent='-1'):
     module_dir = os.path.join(library_dir, name)
     os.makedirs(module_dir, exist_ok=True)
     with open(os.path.join(module_dir, f'{name}_modules.cellml'), 'w') as f:
-        f.write(DECAY_CELLML.format(module_type=module_type))
+        f.write(DECAY_CELLML.format(component_type=component_type))
     with open(os.path.join(module_dir, f'{name}_modules_config.json'), 'w') as f:
-        f.write(DECAY_CONFIG.format(vessel_type=vessel_type, name=name, module_type=module_type))
+        f.write(DECAY_CONFIG.format(module_type=module_type, name=name, component_type=component_type))
     with open(os.path.join(module_dir, f'{name}_units.cellml'), 'w') as f:
         f.write(UNITS_CELLML.format(exponent=units_exponent))
     # Non-config JSON next to a module must not be read as a module config.
@@ -78,25 +78,26 @@ def _write_module(library_dir, name, vessel_type, module_type, units_exponent='-
     return module_dir
 
 
-def _write_resources(resources_dir, prefix, vessel_type, k=0.5, x_init=2.0):
+def _write_resources(resources_dir, prefix, module_type, k=0.5, x_init=2.0):
     os.makedirs(resources_dir, exist_ok=True)
     with open(os.path.join(resources_dir, f'{prefix}_module_array.csv'), 'w') as f:
         f.write(textwrap.dedent(f"""\
-            name,BC_type,vessel_type,inp_vessels,out_vessels
-            decay,nn,{vessel_type},,
+            name,module_subtype,module_type,inp_instances,out_instances
+            decay,nn,{module_type},,
             """))
-    with open(os.path.join(resources_dir, f'{prefix}_parameters.csv'), 'w') as f:
-        f.write(textwrap.dedent(f"""\
-            variable_name,units,value,data_reference
-            x_init_decay,dimensionless,{x_init},test
-            k_decay,lib_test_per_second,{k},test
-            """))
+    from _parameters import write_parameters
+    write_parameters(os.path.join(resources_dir, f'{prefix}_parameters.json'),
+                     textwrap.dedent(f"""\
+                         variable_name,units,value,data_reference
+                         decay/x_init,dimensionless,{x_init},test
+                         decay/k,lib_test_per_second,{k},test
+                         """))
 
 
 def _config(tmp_path, prefix, library_dir, use_builtin_modules):
     config = {
         'file_prefix': prefix,
-        'input_param_file': f'{prefix}_parameters.csv',
+        'input_param_file': f'{prefix}_parameters.json',
         'model_type': 'cellml',
         'solver': 'CVODE_myokit',
         'resources_dir': str(tmp_path / 'resources'),
@@ -141,7 +142,7 @@ def test_module_library_dir_only(tmp_path):
 
 @pytest.mark.integration
 def test_module_library_redefines_builtin_when_builtins_off(tmp_path):
-    """A library may redefine a built-in (vessel_type, BC_type) once built-ins are off."""
+    """A library may redefine a built-in (module_type, module_subtype) once built-ins are off."""
     library_dir = str(tmp_path / 'library')
     _write_module(library_dir, 'Lotka_Volterra', 'Lotka_Volterra', 'Lotka_Volterra_lib')
     _write_resources(str(tmp_path / 'resources'), 'lib_lv', 'Lotka_Volterra')
@@ -208,3 +209,33 @@ def test_conflicting_units_raise(tmp_path):
 def test_missing_library_dir_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
         ModuleSources({'external_modules_dir': None, 'module_library_dirs': [str(tmp_path / 'nope')]})
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize('use_builtin_modules', [True, False])
+def test_user_units_in_external_modules_dir(tmp_path, use_builtin_modules):
+    """A ``user_units.cellml`` in a flat external_modules_dir supplies the units of the
+    modules next to it, with or without the built-in modules (issue #603)."""
+    library_dir = str(tmp_path / 'library')
+    module_dir = _write_module(library_dir, 'decay', 'decay', 'decay_type')
+    external_dir = tmp_path / 'external_modules'
+    external_dir.mkdir()
+    for name in ('decay_modules.cellml', 'decay_modules_config.json'):
+        os.replace(os.path.join(module_dir, name), external_dir / name)
+    os.replace(os.path.join(module_dir, 'decay_units.cellml'), external_dir / 'user_units.cellml')
+    _write_resources(str(tmp_path / 'resources'), 'ext_decay', 'decay')
+
+    config = _config(tmp_path, 'ext_decay', None, use_builtin_modules)
+    del config['module_library_dirs']
+    config['external_modules_dir'] = str(external_dir)
+    assert generate_with_new_architecture(False, config)
+
+    generated_dir = tmp_path / 'generated_models' / 'ext_decay'
+    assert 'lib_test_per_second' in (generated_dir / 'ext_decay_units.cellml').read_text()
+    helper = get_simulation_helper(model_path=str(generated_dir / 'ext_decay.cellml'),
+                                   solver='CVODE_myokit', model_type='cellml',
+                                   dt=0.01, sim_time=2.0, pre_time=0.0)
+    helper.run()
+    x = np.asarray(helper.get_results([['decay/x']], flatten=True)).ravel()
+    t = np.asarray(helper.get_time())
+    np.testing.assert_allclose(x, 2.0 * np.exp(-0.5 * t), rtol=1e-4)

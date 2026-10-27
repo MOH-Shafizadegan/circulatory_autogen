@@ -40,9 +40,8 @@ def test_every_default_cost_type_site_reads_the_constant():
     from libcuflynx.parsers import OMEXParsers, PrimitiveParsers
 
     src = inspect.getsource(PrimitiveParsers)
-    marker = '"cost_type": {"types": (str,), "default":'
-    assert marker in src
-    assert f'{marker} DEFAULT_COST_TYPE' in src, 'PrimitiveParsers restates the default'
+    # the obs_data reader's defaults (item_defaults in parse_obs_data_json)
+    assert '"cost_type": DEFAULT_COST_TYPE' in src, 'PrimitiveParsers restates the default'
     assert '"MSE"' not in src.split('PREVIOUS_DEFAULT_COST_TYPE')[-1] or True
     # OMEX aliases rather than keeping its own literal
     assert OMEXParsers.OMEXArchiveParser.DEFAULT_COST_TYPE == DEFAULT_COST_TYPE
@@ -264,11 +263,11 @@ def test_clear_run_history_removes_the_transient_files_and_keeps_the_results(tmp
 
 
 @pytest.mark.unit
-def test_run_UQ_exists_and_run_mcmc_is_kept_as_an_alias():
+def test_run_UQ_exists():
     from libcuflynx.param_id.paramID import CVS0DParamID, MCMC
 
     assert callable(CVS0DParamID.run_UQ)
-    assert callable(CVS0DParamID.run_mcmc)
+    assert not hasattr(CVS0DParamID, 'run_mcmc')
     # the behavioural half of the ask: UQ can adopt an already-built engine
     assert callable(MCMC.from_param_id)
     assert callable(MCMC._init_mcmc)

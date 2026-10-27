@@ -1,26 +1,15 @@
-"""Module configs and module arrays in either schema, and PhLynx's multi_port semantics.
+"""Module configs and module arrays, and PhLynx's multi_port semantics.
 
-The module library (circulatory-autogen-modules) and PhLynx write module configs with
-PhLynx's key names; libcuflynx reads both (utilities/config_schemas.py):
-
-==================  ==================
-libcuflynx          PhLynx
-==================  ==================
-``vessel_type``     ``module_type``
-``BC_type``         ``module_subtype``
-``module_file``     ``component_file``
-``module_type``     ``component_type``
-==================  ==================
-
-and both module-array layouts (``name,BC_type,vessel_type,inp_vessels,out_vessels`` and
-PhLynx's ``name,module_type,module_subtype,inp_instances,out_instances``, which may be named
-``<prefix>_module_array.csv``).
+Module configs and arrays use PhLynx's key names (#163); the keys libcuflynx used before
+(``vessel_type``, ``BC_type``, ``module_file``, ``inp_vessels``, ``out_vessels``) and the older
+array name ``<prefix>_vessel_array.*`` are refused with the ``cuflynx-upgrade`` command that
+converts them (utilities/config_schemas.py).
 
 multi_port values are case-insensitive. A whole-port "Sum" on a port other than a
 volume_port makes the port's single variable the sum of the neighbours' variables (read as
 the list form ``["sum"]``); on a volume_port it keeps the legacy sum_blood_volume sum.
-"Multiply" on an upstream port sets each neighbour's variable to ``multiply_factor`` times
-this module's.
+"Multiply" on a port, at either end of a connection, sets each neighbour's variable to
+``multiply_factor`` times this module's.
 
 Fixture modules (in an ``external_modules_dir``):
 
@@ -35,8 +24,12 @@ Fixture modules (in an ``external_modules_dir``):
 * ``reader`` -- entrance gain_port [y]; ``y_seen = y``. ``reader_multi`` has a "True" port.
 * ``gain_sum`` -- entrance gain_port [y_sum], multi_port "Sum"; ``y_seen = y_sum``.
 * ``gain_vp`` / ``reader_vp`` -- ``gain`` (factor 3) and ``reader`` on vessel_ports.
+* ``gain_in`` -- ``gain`` with its Multiply port (factor 2) an entrance flow_port, so it is
+  the downstream end; ``gain_flow`` has a Multiply exit flow_port.
+* ``reader_out`` / ``reader_in`` -- ``reader`` with a plain exit / entrance flow_port [y];
+  ``reader_out_mul`` has a Multiply exit flow_port (factor 2) instead.
+* ``collector2`` -- ``collector`` with a second "Sum" port (gain_port) on the same variable.
 """
-import copy
 import filecmp
 import json
 import os
@@ -50,7 +43,7 @@ from libcuflynx.scripts.script_generate_with_new_architecture import generate_wi
 from libcuflynx.solver_wrappers import get_simulation_helper
 from libcuflynx.utilities.config_schemas import (normalise_module_config_entry,
                                                  normalise_module_array_columns,
-                                                 module_array_path)
+                                                 normalise_vessel_record, module_array_path)
 
 
 # --------------------------------------------------------------------------------------------
@@ -120,29 +113,20 @@ def _port(port_type, variables, multi_port=None, **extra):
     return port
 
 
-def _module(vessel_type, module_type, entrance_ports, exit_ports, variables_and_units, BC_type="nn"):
-    """A module config entry in the libcuflynx schema."""
+def _module(module_type, component_type, entrance_ports, exit_ports, variables_and_units,
+            module_subtype="nn"):
+    """A module config entry."""
     return {
-        "vessel_type": vessel_type,
-        "BC_type": BC_type,
-        "module_format": "cellml",
-        "module_file": "schema_test_modules.cellml",
         "module_type": module_type,
+        "module_subtype": module_subtype,
+        "module_format": "cellml",
+        "component_file": "schema_test_modules.cellml",
+        "component_type": component_type,
         "entrance_ports": entrance_ports,
         "exit_ports": exit_ports,
         "general_ports": [],
         "variables_and_units": variables_and_units,
     }
-
-
-def _to_phlynx(entry):
-    """The same entry in the PhLynx schema, keys in PhLynx's export order."""
-    out = {"module_type": entry["vessel_type"], "module_subtype": entry["BC_type"]}
-    for key, value in entry.items():
-        if key in ("vessel_type", "BC_type"):
-            continue
-        out[{"module_file": "component_file", "module_type": "component_type"}.get(key, key)] = value
-    return out
 
 
 def _prescribed_vars(variable):
@@ -182,6 +166,17 @@ def modules_config(volume_sum="sum", gain_factor=2.5):
         _module("reader_vp", "reader_type", [_port("vessel_port", ["y"])], [], _seen_vars("y")),
         _module("gain_sum", "gain_sum_type", [_port("gain_port", ["y_sum"], "Sum")], [],
                 _seen_vars("y_sum")),
+        _module("gain_in", "gain_type",
+                [_port("flow_port", ["x"], "Multiply", multiply_factor=2)], [], _prescribed_vars("x")),
+        _module("gain_flow", "gain_type", [], [_port("flow_port", ["x"], "Multiply")],
+                _prescribed_vars("x")),
+        _module("reader_out", "reader_type", [], [_port("flow_port", ["y"])], _seen_vars("y")),
+        _module("reader_in", "reader_type", [_port("flow_port", ["y"])], [], _seen_vars("y")),
+        _module("reader_out_mul", "reader_type", [],
+                [_port("flow_port", ["y"], "Multiply", multiply_factor=2)], _seen_vars("y")),
+        _module("collector2", "collector_type",
+                [_port("flow_port", ["v_in_sum"], "Sum"), _port("gain_port", ["v_in_sum"], "Sum")],
+                [], _seen_vars("v_in_sum")),
     ]
     if gain_factor is None:
         del config[6]["exit_ports"][0]["multiply_factor"]
@@ -210,34 +205,32 @@ def library_dir(tmp_path_factory):
 # --------------------------------------------------------------------------------------------
 
 def _prescribed_params(name, mean, amp, omega):
-    return [(f"mean_{name}", "m3_per_s", mean), (f"amp_{name}", "dimensionless", amp),
-            (f"omega_{name}", "per_s", omega)]
+    return [(f"{name}/mean", "m3_per_s", mean), (f"{name}/amp", "dimensionless", amp),
+            (f"{name}/omega", "per_s", omega)]
 
 
-LIBCUFLYNX_HEADER = "name,BC_type,vessel_type,inp_vessels,out_vessels"
-PHLYNX_HEADER = "name,module_subtype,module_type,inp_instances,out_instances"
+# the columns as PhLynx writes them, subtype before type
+HEADER = "name,module_subtype,module_type,inp_instances,out_instances"
 
 
-def _generate(work_dir, modules_dir, prefix, vessel_rows, params, layout="libcuflynx",
-              array_name="module_array"):
-    """Write the module array (in ``layout``) and parameters and generate the model."""
+def _generate(work_dir, modules_dir, prefix, vessel_rows, params):
+    """Write the module array and parameters and generate the model."""
     resources_dir = os.path.join(work_dir, "resources")
     os.makedirs(resources_dir, exist_ok=True)
-    lines = [LIBCUFLYNX_HEADER if layout == "libcuflynx" else PHLYNX_HEADER]
-    for name, vessel_type, inp, out in vessel_rows:
-        # both headers put the BC column (BC_type / module_subtype) before the type column
-        lines.append(f"{name},nn,{vessel_type},{' '.join(inp)},{' '.join(out)}")
-    with open(os.path.join(resources_dir, f"{prefix}_{array_name}.csv"), "w") as f:
+    lines = [HEADER]
+    for name, module_type, inp, out in vessel_rows:
+        lines.append(f"{name},nn,{module_type},{' '.join(inp)},{' '.join(out)}")
+    with open(os.path.join(resources_dir, f"{prefix}_module_array.csv"), "w") as f:
         f.write("\n".join(lines) + "\n")
-    with open(os.path.join(resources_dir, f"{prefix}_parameters.csv"), "w") as f:
-        f.write("variable_name,units,value,data_reference\n")
-        for variable_name, units, value in params:
-            f.write(f"{variable_name},{units},{value},test\n")
+    from _parameters import write_parameters
+    write_parameters(os.path.join(resources_dir, f"{prefix}_parameters.json"),
+                     [{'variable_name': variable_name, 'units': units, 'value': str(value),
+                       'data_reference': 'test'} for variable_name, units, value in params])
 
     generated_dir = os.path.join(work_dir, "generated_models")
     config = {
         'file_prefix': prefix,
-        'input_param_file': f'{prefix}_parameters.csv',
+        'input_param_file': f'{prefix}_parameters.json',
         'model_type': 'cellml',
         'solver': 'CVODE_myokit',
         'resources_dir': resources_dir,
@@ -285,7 +278,7 @@ FULL_PARAMS = (_prescribed_params("src_a", 1.0e-5, 0.5, 6.0) +
                _prescribed_params("src_b", 2.0e-5, 0.3, 4.0) +
                _prescribed_params("sink_a", 3.0e-6, 0.4, 5.0) +
                _prescribed_params("sink_b", 4.0e-6, 0.2, 7.0) +
-               [("rate_tank_a", "m3_per_s", 1.0e-6), ("rate_tank_b", "m3_per_s", 3.0e-6)] +
+               [("tank_a/rate", "m3_per_s", 1.0e-6), ("tank_b/rate", "m3_per_s", 3.0e-6)] +
                _prescribed_params("g1", 1.0e-5, 0.5, 3.0) +
                _prescribed_params("g2", 2.0e-5, 0.4, 8.0))
 
@@ -309,99 +302,67 @@ def _assert_same_generated_models(path_a, path_b):
 # --------------------------------------------------------------------------------------------
 
 @pytest.mark.unit
-def test_phlynx_entry_is_renamed_to_libcuflynx_names():
-    entry = modules_config()[0]
-    normalised = normalise_module_config_entry(_to_phlynx(entry))
-    assert normalised == entry
-    assert list(normalised) == list(entry)
-    # a libcuflynx entry is returned as it is
-    assert normalise_module_config_entry(entry) == entry
+def test_entries_come_back_with_module_type_and_subtype_first():
+    entry = dict(reversed(list(modules_config()[0].items())))
+    assert list(normalise_module_config_entry(entry))[:2] == ["module_type", "module_subtype"]
+    record = normalise_vessel_record({"out_instances": "x y", "module_subtype": "nn",
+                                      "module_type": "flow_src", "name": "a"})
+    assert list(record) == ["name", "module_type", "module_subtype", "inp_instances",
+                            "out_instances"]
+    assert record["out_instances"] == ["x", "y"]
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("entry, message", [
-    # component_type marks the PhLynx schema, vessel_type the libcuflynx one
-    ({"vessel_type": "a", "BC_type": "nn", "module_file": "f.cellml", "module_type": "a_type",
-      "component_type": "a_type"}, "mixes the libcuflynx schema"),
-    ({"module_type": "a", "module_subtype": "nn", "component_file": "f.cellml",
-      "component_type": "a_type", "BC_type": "nn"}, "mixes the libcuflynx schema"),
-    # PhLynx schema with a key missing
-    ({"module_type": "a", "module_subtype": "nn", "component_type": "a_type"},
-     r"missing \['component_file'\]"),
-    # module_type alone is ambiguous: it is a key of both schemas
-    ({"module_type": "a", "module_format": "cellml"}, "Cannot tell the schema"),
+@pytest.mark.parametrize("read, value, kind", [
+    (normalise_module_config_entry,
+     {"vessel_type": "a", "BC_type": "nn", "module_file": "f.cellml", "module_type": "a_type"},
+     "module-config"),
+    (normalise_module_config_entry,
+     {"module_type": "pair", "module_subtype": "supermodule", "module_format": "supermodule",
+      "default_parameters": "p.csv",
+      "submodule_versions": [{"module_type": "flow_src", "module_subtype": "nn"}]},
+     "module-config"),
+    # inline instance records: a supermodule's instances are its own module array now
+    (normalise_module_config_entry,
+     {"module_type": "pair", "module_subtype": "supermodule", "module_format": "supermodule",
+      "submodules": [{"name": "a", "module_type": "flow_src", "module_subtype": "nn"}]},
+     "module-config"),
+    (normalise_module_config_entry,
+     dict(_module("a", "a_type", [], [], []), default_instance="p"), "module-config"),
+    (normalise_vessel_record,
+     {"name": "a", "vessel_type": "flow_src", "BC_type": "nn", "out_vessels": ["z"]},
+     "module-array"),
 ])
-def test_mixed_or_ambiguous_entry_is_rejected(entry, message):
-    with pytest.raises(ValueError, match=message):
-        normalise_module_config_entry(entry, source="lib.json")
-
-
-@pytest.mark.integration
-def test_phlynx_config_generates_identically(tmp_path, library_dir):
-    """The whole fixture library in the PhLynx schema, split over two files of which one is
-    PhLynx and one libcuflynx, generates byte-identical files."""
-    reference = _generate_full(tmp_path / "lib", library_dir)
-    entries = modules_config()
-    phlynx_dir = _write_library(tmp_path / "phlynx_modules", {
-        "a_modules_config.json": [_to_phlynx(e) for e in entries],
-    })
-    mixed_dir = _write_library(tmp_path / "mixed_modules", {
-        "a_modules_config.json": [_to_phlynx(e) for e in entries[:5]],
-        "b_module_config.json": entries[5:],
-    })
-    _assert_same_generated_models(reference, _generate_full(tmp_path / "phlynx", phlynx_dir))
-    _assert_same_generated_models(reference, _generate_full(tmp_path / "mixed", mixed_dir))
-
-
-@pytest.mark.integration
-def test_mixed_entry_fails_generation(tmp_path):
-    bad = _to_phlynx(modules_config()[0])
-    bad["vessel_type"] = "flow_src"
-    modules_dir = _write_library(tmp_path / "bad_modules",
-                                 {"bad_modules_config.json": [bad] + modules_config()[1:]})
-    with pytest.raises(ValueError, match="mixes the libcuflynx schema"):
-        _generate(str(tmp_path), modules_dir, "schema_bad",
-                  [("src_a", "flow_src", [], ["coll"]), ("coll", "collector", ["src_a"], [])],
-                  _prescribed_params("src_a", 1.0e-5, 0.5, 6.0))
-
-
-# --------------------------------------------------------------------------------------------
-# 2. module array layouts
-# --------------------------------------------------------------------------------------------
-
-@pytest.mark.unit
-def test_module_array_columns_are_normalised():
-    phlynx = pd.DataFrame([["a", "nn", "src", "", "b"]], columns=PHLYNX_HEADER.split(","))
-    out = normalise_module_array_columns(phlynx)
-    assert list(out.columns) == LIBCUFLYNX_HEADER.split(",")
-    assert out.iloc[0].tolist() == ["a", "nn", "src", "", "b"]
-    libcuflynx = pd.DataFrame([["a", "nn", "src", "", "b"]], columns=LIBCUFLYNX_HEADER.split(","))
-    assert normalise_module_array_columns(libcuflynx) is libcuflynx
-    mixed = pd.DataFrame([["a", "nn", "src", "", "b"]],
-                         columns=["name", "BC_type", "module_type", "inp_instances", "out_vessels"])
-    with pytest.raises(ValueError, match="mixes libcuflynx columns"):
-        normalise_module_array_columns(mixed)
+def test_an_old_key_is_refused_with_the_command_that_converts_it(read, value, kind):
+    with pytest.raises(ValueError, match=rf"no longer reads.*cuflynx-upgrade {kind} lib\.json"):
+        read(value, source="lib.json")
 
 
 @pytest.mark.unit
-def test_the_old_vessel_array_file_name_is_a_fallback(tmp_path):
+def test_an_entry_missing_a_key_is_rejected():
+    with pytest.raises(ValueError, match=r"missing \['component_file'\]"):
+        normalise_module_config_entry({"module_type": "a", "module_subtype": "nn",
+                                       "component_type": "a_type"}, source="lib.json")
+
+
+@pytest.mark.unit
+def test_old_module_array_columns_are_refused():
+    old = pd.DataFrame([["a", "nn", "src", "", "b"]],
+                       columns=["name", "BC_type", "vessel_type", "inp_vessels", "out_vessels"])
+    with pytest.raises(ValueError, match="cuflynx-upgrade module-array m.csv"):
+        normalise_module_array_columns(old, source="m.csv")
+    current = pd.DataFrame([["a", "nn", "src", "", "b"]], columns=HEADER.split(","))
+    assert normalise_module_array_columns(current) is current
+
+
+@pytest.mark.unit
+def test_the_old_vessel_array_file_name_is_refused(tmp_path):
     assert module_array_path(str(tmp_path), "m").endswith("m_module_array.csv")
-    (tmp_path / "m_vessel_array.csv").write_text(PHLYNX_HEADER + "\n")
-    with pytest.warns(FutureWarning, match="m_vessel_array.csv uses the old name.*rename it to m_module_array.csv"):
-        assert module_array_path(str(tmp_path), "m").endswith("m_vessel_array.csv")
-    (tmp_path / "m_module_array.csv").write_text(LIBCUFLYNX_HEADER + "\n")
-    with pytest.warns(UserWarning, match="Using m_module_array.csv; the others are ignored"):
-        assert module_array_path(str(tmp_path), "m").endswith("m_module_array.csv")
-
-
-@pytest.mark.integration
-@pytest.mark.parametrize("array_name", ["module_array", "vessel_array"])
-@pytest.mark.filterwarnings("ignore:m_vessel_array.csv uses the old name:FutureWarning")
-def test_phlynx_module_array_generates_identically(tmp_path, library_dir, array_name):
-    """Either file name (vessel_array is the old one), in the PhLynx layout."""
-    reference = _generate_full(tmp_path / "lib", library_dir)
-    phlynx = _generate_full(tmp_path / "phlynx", library_dir, layout="phlynx", array_name=array_name)
-    _assert_same_generated_models(reference, phlynx)
+    (tmp_path / "m_vessel_array.csv").write_text(HEADER + "\n")
+    with pytest.raises(ValueError, match="cuflynx-upgrade module-array .*m_vessel_array.csv"):
+        module_array_path(str(tmp_path), "m")
+    (tmp_path / "m_module_array.csv").write_text(HEADER + "\n")
+    assert module_array_path(str(tmp_path), "m").endswith("m_module_array.csv")
 
 
 # --------------------------------------------------------------------------------------------
@@ -433,7 +394,7 @@ def test_multi_port_normalisation():
 def test_volume_port_sum_is_case_insensitive(tmp_path):
     rows = [("tank_a", "tank", [], ["vsum"]), ("tank_b", "tank", [], ["vsum"]),
             ("vsum", "vol_sum", ["tank_a", "tank_b"], [])]
-    params = [("rate_tank_a", "m3_per_s", 1.0e-6), ("rate_tank_b", "m3_per_s", 3.0e-6)]
+    params = [("tank_a/rate", "m3_per_s", 1.0e-6), ("tank_b/rate", "m3_per_s", 3.0e-6)]
     paths = {}
     for value in ["sum", "Sum", "SUM"]:
         modules_dir = _write_library(tmp_path / f"modules_{value}",
@@ -504,6 +465,66 @@ def test_multiply_on_vessel_ports(tmp_path, library_dir):
     for reader in ["rd_a", "rd_b"]:
         np.testing.assert_allclose(res[f"{reader}/v_seen"], 3.0 * res["g/x"], **EXACT)
     assert np.ptp(res["g/x"]) > 0
+
+
+@pytest.mark.integration
+def test_multiply_on_the_downstream_end(tmp_path, library_dir):
+    """A Multiply entrance port scales its variable into the upstream neighbour: into a plain
+    port (y = 2 x) and into a "Sum" port (one term of the sum)."""
+    rows = [("rd", "reader_out", [], ["g"]), ("g", "gain_in", ["rd"], []),
+            ("dist", "distributor", [], ["g2", "sink"]), ("g2", "gain_in", ["dist"], []),
+            ("sink", "flow_sink", ["dist"], [])]
+    params = (_prescribed_params("g", 1.0e-5, 0.5, 3.0) + _prescribed_params("g2", 2.0e-5, 0.4, 8.0) +
+              _prescribed_params("sink", 3.0e-6, 0.4, 5.0))
+    path = _generate(str(tmp_path), library_dir, "schema_mul_down", rows, params)
+    res = _simulate(path, ["g/x", "rd/v_seen", "g2/x", "sink/v", "dist/v_seen"])
+    np.testing.assert_allclose(res["rd/v_seen"], 2.0 * res["g/x"], **EXACT)
+    np.testing.assert_allclose(res["dist/v_seen"], 2.0 * res["g2/x"] + res["sink/v"], **EXACT)
+    assert np.ptp(res["rd/v_seen"]) > 0
+
+
+@pytest.mark.integration
+def test_multiply_on_both_ends_is_rejected(tmp_path, library_dir):
+    rows = [("g1", "gain_flow", [], ["g2"]), ("g2", "gain_in", ["g1"], [])]
+    params = _prescribed_params("g1", 1.0e-5, 0.5, 3.0) + _prescribed_params("g2", 2.0e-5, 0.4, 8.0)
+    with pytest.raises(ValueError, match='both ports are "Multiply"'):
+        _generate(str(tmp_path), library_dir, "schema_mul_both", rows, params)
+
+
+@pytest.mark.integration
+def test_a_variable_summed_through_two_ports_is_rejected(tmp_path, library_dir):
+    rows = [("src", "flow_src", [], ["coll"]), ("g", "gain", [], ["coll"]),
+            ("coll", "collector2", ["src", "g"], [])]
+    params = _prescribed_params("src", 1.0e-5, 0.5, 6.0) + _prescribed_params("g", 2.0e-5, 0.4, 8.0)
+    with pytest.raises(ValueError, match='"coll" sums "v_in_sum" through ports "flow_port" and '
+                                         '"gain_port"; a variable can be summed through one port only'):
+        _generate(str(tmp_path), library_dir, "schema_sum_two_ports", rows, params)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("rows, expected", [
+    # a BC that is only a sum term
+    ([("b", "reader_out", [], ["coll"]), ("coll", "collector", ["b"], [])],
+     {"b/v_seen": 3.0e-6, "coll/v_seen": 3.0e-6}),
+    # a BC that is the source of a Multiply; its target BC is computed
+    ([("b", "reader_out_mul", [], ["r"]), ("r", "reader_in", ["b"], [])],
+     {"b/v_seen": 3.0e-6, "r/v_seen": 6.0e-6}),
+])
+def test_a_bc_that_only_feeds_a_sum_or_multiply_keeps_its_value(tmp_path, library_dir, rows,
+                                                                 expected):
+    path = _generate(str(tmp_path), library_dir, "schema_bc_term", rows,
+                     [("b/y", "m3_per_s", 3.0e-6)])
+    res = _simulate(path, list(expected), sim_time=0.1)
+    for name, value in expected.items():
+        np.testing.assert_allclose(res[name], value, rtol=1e-12, err_msg=name)
+
+
+@pytest.mark.integration
+def test_bcs_connected_only_to_each_other_are_rejected(tmp_path, library_dir):
+    rows = [("a", "reader_out", [], ["b"]), ("b", "reader_in", ["a"], [])]
+    with pytest.raises(ValueError, match='"y" of "a", "y" of "b" are connected only to each other'):
+        _generate(str(tmp_path), library_dir, "schema_bc_only", rows,
+                  [("a/y", "m3_per_s", 1.0), ("b/y", "m3_per_s", 2.0)])
 
 
 @pytest.mark.integration

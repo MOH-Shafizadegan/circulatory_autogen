@@ -33,14 +33,17 @@ _SRC_DIR = _REPO_ROOT / "src"
 EXPECTED_ENTRY_POINTS = {
     "cuflynx-generate",
     "cuflynx-param-id",
-    "cuflynx-sequential-param-id",
+    "cuflynx-calibration-workflow",
+    "cuflynx-variable-mapping",
+    "cuflynx-methods-latex",
     "cuflynx-sensitivity",
     "cuflynx-identifiability",
     "cuflynx-train-emulator",
     "cuflynx-plot",
     "cuflynx-generate-pipeline",
+    "cuflynx-upgrade",
+    "cuflynx-run-predictions",
     "cuflynx-couple",
-    "cuflynx-migrate-obs-data",
 }
 
 
@@ -206,7 +209,6 @@ PIPELINE_LAUNCHERS = {
     "run_autogeneration.sh": "cuflynx-generate",
     "run_autogeneration_with_id_params.sh": "cuflynx-generate",
     "run_param_id.sh": "cuflynx-param-id",
-    "run_sequential_param_id.sh": "cuflynx-sequential-param-id",
     "run_sensitivity_analysis.sh": "cuflynx-sensitivity",
     "run_identifiability_analysis.sh": "cuflynx-identifiability",
     "run_emulator_training.sh": "cuflynx-train-emulator",
@@ -348,11 +350,16 @@ def test_launcher_reports_a_missing_install_before_launching_mpi():
 #: what the command is for, and guessing it from the module path or from the parser would let
 #: the test pass for a stage that simply forgot the option.
 #:
-#: ``cuflynx-migrate-obs-data`` (arriving with #466) rewrites obs_data files given a path. A
-#: name here that is not in [project.scripts] is never reached, so this may name a command
-#: before the PR adding it lands.
+#: ``cuflynx-calibration-workflow`` is configured by the calibration_workflow.json it is
+#: given: each step's model, obs_data and params_for_id come from the module library, and its
+#: settings from the workflow file. ``cuflynx-variable-mapping`` and ``cuflynx-methods-latex``
+#: take a model (or a workflow) and its files by path.
 NON_STAGE_COMMANDS = {
-    "cuflynx-migrate-obs-data",
+    "cuflynx-calibration-workflow",
+    "cuflynx-variable-mapping",
+    "cuflynx-methods-latex",
+    "cuflynx-upgrade",
+    "cuflynx-run-predictions",
     # runs a generated model folder; its configuration (external_models.json) was written from
     # user_inputs.yaml by cuflynx-generate
     "cuflynx-couple",
