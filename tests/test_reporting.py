@@ -8,6 +8,7 @@ compiles what it writes.
 """
 import csv
 import os
+import re
 import shutil
 import subprocess
 
@@ -26,6 +27,9 @@ from libcuflynx.reporting.variable_mapping import VariableMappingError
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RESOURCES = os.path.join(REPO_ROOT, 'resources')
 GOODWIN = os.path.join(RESOURCES, 'Goodwin.cellml')
+# Goodwin.cellml is not a generated model: a parameters file with no parameters stands in for
+# the one generation writes
+GOODWIN_PARAMETERS = os.path.join(REPO_ROOT, 'tests', 'test_inputs', 'Goodwin_parameters.json')
 
 needs_latex = pytest.mark.skipif(shutil.which('pdflatex') is None, reason='pdflatex not installed')
 
@@ -280,6 +284,7 @@ def test_a_single_calibration_flow_chart_has_its_stages():
 # --------------------------------------------------------------------------------------------
 
 def _goodwin_methods(**kwargs):
+    kwargs.setdefault('parameters_path', GOODWIN_PARAMETERS)
     return calibration_methods_latex(
         GOODWIN, os.path.join(RESOURCES, 'Goodwin_obs_data.json'),
         os.path.join(RESOURCES, 'Goodwin_params_for_id.json'),
@@ -335,6 +340,19 @@ def test_methods_of_one_calibration_cite_the_generated_parameters_file(tmp_path)
     csv_path.write_text('variable_name,units,value,data_reference\nR_pvn,Js_per_m6,1,x\n')
     with pytest.raises(ValueError, match='nested JSON'):
         methods(parameters_path=str(csv_path))
+
+
+@pytest.mark.unit
+def test_methods_of_one_calibration_refuse_a_missing_parameters_file(tmp_path):
+    """No parameters file, named or beside the model, is an error naming the path, not a
+    methods section that cites no source."""
+    missing = str(tmp_path / 'm_parameters.json')
+    with pytest.raises(FileNotFoundError, match=re.escape(missing)):
+        _goodwin_methods(parameters_path=missing)
+    # the default: <prefix>_parameters.json beside the model, which Goodwin.cellml lacks
+    with pytest.raises(FileNotFoundError,
+                       match=re.escape(os.path.join(RESOURCES, 'Goodwin_parameters.json'))):
+        _goodwin_methods(parameters_path=None)
 
 
 @pytest.mark.unit
@@ -431,7 +449,8 @@ def test_the_commands_write_the_mapping_and_the_methods(tmp_path):
     assert methods_latex_script.main([
         '--model', GOODWIN, '--obs-data', os.path.join(RESOURCES, 'Goodwin_obs_data.json'),
         '--params-for-id', os.path.join(RESOURCES, 'Goodwin_params_for_id.json'),
-        '--mapping', mapping, '-o', out, '--body-only']) == 0
+        '--parameters', GOODWIN_PARAMETERS, '--mapping', mapping, '-o', out,
+        '--body-only']) == 0
     with open(out) as f:
         assert r'\section{Model}' in f.read()
 

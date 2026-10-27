@@ -23,7 +23,9 @@ when the model is generated again.
 Everything that read the generated CSV reads the JSON, naming each parameter as the model does
 with `parameters_file.model_parameter_rows` (`C_aortic_root`, `E_A_heart__lv`, `R`): the
 calibration workflow (fixed values, identifiability's start point, the target's check of the
-calibrated names) and the methods LaTeX (`cuflynx-methods-latex --parameters` takes the JSON).
+calibrated names) and the methods LaTeX (`cuflynx-methods-latex --parameters` takes the JSON; a
+parameters file that does not exist, named or the default beside the model, is an error naming its
+path rather than a methods section citing no source).
 
 A calibration workflow's calibrated parameters (`write_calibrated`,
 `write_calibrated_parameters_to`) are the target's parameters file completed with every other

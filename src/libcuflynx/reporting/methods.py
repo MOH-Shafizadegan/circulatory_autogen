@@ -355,9 +355,12 @@ def _document(body, title, standalone, bibliography=None):
 
 def _read_parameters(path):
     '''The rows of the generated model's parameters file at ``path``, named as the model names
-    them; none when there is no file.'''
+    them. FileNotFoundError naming ``path`` when it does not exist.'''
     if not path or not os.path.isfile(path):
-        return []
+        raise FileNotFoundError(
+            f'{path}: no generated parameters file, so no parameter\'s source can be cited. '
+            f'Generation writes <prefix>_parameters.json beside the generated model; generate '
+            f'the model, or name its parameters file (--parameters).')
     return model_parameter_rows(path)
 
 
