@@ -16,7 +16,7 @@ solvers on them.
 - **Assembly:** AdaptOrDeity's (github.com/FinbarArgus/AdaptOrDeity) `aod-kernelgen-flatten` (its ADR 0007) takes
   libcuflynx's flat model of the supermodule and merges it into one component. These files are AdaptOrDeity's
   `content/assembled/generic_adaptive_cell/versions/fermenter` at commit `66a6024` (2026-10-11), with the
-  `default` instance only.
+  `default` parameterisation only.
 - **Licence:** CC0-1.0, as its modules config records (`licence`, `assembled_from`). Authors: the
   circulatory-autogen-modules contributors.
 
@@ -30,4 +30,6 @@ tools/kernelgen/.venv/bin/aod-kernelgen-flatten <flat.cellml> content/assembled 
 ```
 
 then copy `content/assembled/generic_adaptive_cell/versions/fermenter` here (the two `.cellml` files, the
-modules config and `instances/default/default_parameters.csv`).
+modules config and its default parameters). If they are in an older form (an `instances/` directory, a parameters
+CSV), rename `instances/` to `parameterisations/` and convert them with
+`cuflynx-upgrade module-config <modules_config.json>`; the result is `parameterisations/default/default_parameters.json`.

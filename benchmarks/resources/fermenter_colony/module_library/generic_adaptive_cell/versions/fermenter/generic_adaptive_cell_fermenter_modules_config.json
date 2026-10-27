@@ -5,7 +5,7 @@
   "module_format": "cellml",
   "component_file": "generic_adaptive_cell_fermenter_modules.cellml",
   "component_type": "cell",
-  "default_instance": "default",
+  "default_parameterisation": "default",
   "licence": "CC0-1.0",
   "assembled_from": "circulatory-autogen-modules homogenisation-checks worktree (uncommitted), cell/generic_adaptive_cell/versions/fermenter, assembled by libcuflynx 2026-10-09",
   "entrance_ports": [],

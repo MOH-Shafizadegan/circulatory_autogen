@@ -806,7 +806,7 @@ def test_a_user_inputs_config_selects_it(base_user_inputs, temp_output_dir, temp
     and gets its own step limit."""
     from libcuflynx.parsers.PrimitiveParsers import YamlFileParser
     solver_info = {'rtol': 1e-5, 'threads': 2, **({'method': method} if method else {})}
-    config = dict(base_user_inputs, file_prefix='3compartment', input_param_file='3compartment_parameters.csv',
+    config = dict(base_user_inputs, file_prefix='3compartment', input_param_file='3compartment_parameters.json',
                   model_type='cellml', solver='BE_batched_c', solver_info=solver_info,
                   generated_models_dir=temp_generated_models_dir, param_id_output_dir=temp_output_dir)
     info = YamlFileParser().parse_user_inputs_file(config, obs_path_needed=False)['solver_info']
@@ -818,7 +818,7 @@ def test_a_user_inputs_config_selects_it(base_user_inputs, temp_output_dir, temp
 def test_a_user_inputs_config_with_another_solvers_method_is_refused(base_user_inputs, temp_output_dir,
                                                                      temp_generated_models_dir):
     from libcuflynx.parsers.PrimitiveParsers import YamlFileParser
-    config = dict(base_user_inputs, file_prefix='3compartment', input_param_file='3compartment_parameters.csv',
+    config = dict(base_user_inputs, file_prefix='3compartment', input_param_file='3compartment_parameters.json',
                   model_type='cellml', solver='BE_batched_c', solver_info={'method': 'CVODE'},
                   generated_models_dir=temp_generated_models_dir, param_id_output_dir=temp_output_dir)
     with pytest.raises(SystemExit):

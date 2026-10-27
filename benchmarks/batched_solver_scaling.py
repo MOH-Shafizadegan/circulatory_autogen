@@ -25,7 +25,7 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 LIBRARY = os.path.join(HERE, 'resources', 'fermenter_colony', 'module_library')
 OUT = os.path.join(HERE, '_results', 'batched_solver_scaling')
-MODULE = {'module_type': 'generic_adaptive_cell', 'module_subtype': 'fermenter', 'instance': 'default'}
+MODULE = {'module_type': 'generic_adaptive_cell', 'module_subtype': 'fermenter', 'parameterisation': 'default'}
 GLUCOSE = 'C_glc_e_mod_membrane_face'
 SIM_TIMES = [60.0, 120.0, 120.0]
 GLUCOSE_MM = [0.1, 50.0, 0.1]
@@ -42,14 +42,14 @@ REFERENCE = ('CVODES_batched_c, rtol 1e-10, atol 1e-12', 'CVODES_batched_c', {'r
 
 def write_colony_inputs(n, resources_dir):
     """Write the module array of ``n`` fermenter cells (``cell_0`` .. ``cell_{n-1}``) and an empty parameters
-    file (each cell takes its instance's parameters) as ``colony_{n}_*``; returns the file prefix."""
+    file (each cell takes its parameterisation's parameters) as ``colony_{n}_*``; returns the file prefix."""
     prefix = f'colony_{n}'
     os.makedirs(resources_dir, exist_ok=True)
     records = [{'name': f'cell_{i}', **MODULE, 'inp_instances': [], 'out_instances': []} for i in range(n)]
     with open(os.path.join(resources_dir, f'{prefix}_module_array.json'), 'w') as f:
         json.dump(records, f, indent=1)
-    with open(os.path.join(resources_dir, f'{prefix}_parameters.csv'), 'w') as f:
-        f.write('variable_name,units,value,data_reference\n')
+    with open(os.path.join(resources_dir, f'{prefix}_parameters.json'), 'w') as f:
+        json.dump({'schema_version': 1}, f)
     return prefix
 
 
@@ -69,7 +69,7 @@ def generate_colony(n, work_dir):
         CVS0DCellMLGenerator._validate_with_myokit = lambda self, cellml_path: (True, None)
         try:
             ok = generate_with_new_architecture(False, {
-                'file_prefix': prefix, 'input_param_file': f'{prefix}_parameters.csv', 'model_type': 'cellml',
+                'file_prefix': prefix, 'input_param_file': f'{prefix}_parameters.json', 'model_type': 'cellml',
                 'solver': 'CVODE_myokit', 'resources_dir': resources, 'generated_models_dir': generated,
                 'module_library_dirs': [LIBRARY], 'use_builtin_modules': False, 'DEBUG': False})
         finally:

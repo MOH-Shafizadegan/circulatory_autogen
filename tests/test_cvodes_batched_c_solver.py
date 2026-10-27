@@ -531,7 +531,7 @@ def test_outputs_and_initial_values_as_on_be_batched_c(tmp_path):
 def test_a_user_inputs_config_selects_it(base_user_inputs, temp_output_dir, temp_generated_models_dir):
     """solver: CVODES_batched_c in user_inputs passes validation with its method (CVODE) and its own step limit."""
     from libcuflynx.parsers.PrimitiveParsers import YamlFileParser
-    config = dict(base_user_inputs, file_prefix='3compartment', input_param_file='3compartment_parameters.csv',
+    config = dict(base_user_inputs, file_prefix='3compartment', input_param_file='3compartment_parameters.json',
                   model_type='cellml', solver=SOLVER, solver_info={'rtol': 1e-7, 'threads': 4},
                   generated_models_dir=temp_generated_models_dir, param_id_output_dir=temp_output_dir)
     parsed = YamlFileParser().parse_user_inputs_file(config, obs_path_needed=False)
