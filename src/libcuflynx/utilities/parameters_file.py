@@ -13,9 +13,10 @@ A module's parameterisation (``parameterisations/<name>/<name>_parameters.json``
 form rooted at the module: a component module's variables at the top (``{"C": {...}}``), a
 supermodule's sub-instances (``{"lv": {"E_A": {...}}}``), and the globals the module sets under
 ``global``. Calibrated results (``<name>_calibrated_parameters.json``) are written in the same
-form, and so is ``<prefix>_parameters_used.json`` beside a generated model: every value the model
-uses, a value its parameters file does not set naming its parameterisation at the start of its
-``data_reference`` (``sourced_reference``).
+form, and so is the ``<prefix>_parameters.json`` generation writes beside a generated model: every
+value the model uses, a value its parameters file does not set naming its parameterisation at the
+start of its ``data_reference`` (``sourced_reference``). ``model_parameter_rows`` reads it with
+each parameter named as the model names it.
 
 The rules (``schemas/parameters.schema.json``):
 
@@ -74,18 +75,12 @@ def sourced_reference(source, reference):
     '''The data_reference of a value taken from ``source`` (``<module_type>/<module_subtype>
     parameterisation <name>``) whose own data_reference there is ``reference``:
     ``from <source>: <reference>``, or ``from <source>`` without one. A reference that already
-    starts ``from `` is returned as it is, so a used parameters file read back is not prefixed
+    starts ``from `` is returned as it is, so a generated parameters file read back is not prefixed
     again.'''
     reference = str(reference or '').strip()
     if reference.startswith(SOURCE_PREFIX):
         return reference
     return f'{SOURCE_PREFIX}{source}' + (f'{SOURCE_SEPARATOR}{reference}' if reference else '')
-
-
-def used_parameters_file_name(prefix):
-    '''``<prefix>_parameters_used.json``: every value a generated model uses, written beside it,
-    in the form of a model's parameters file.'''
-    return f'{prefix}_parameters_used{EXTENSION}'
 
 
 def is_leaf(node):
@@ -214,6 +209,16 @@ def leaves(doc):
 def read_parameter_rows(path, where='', kind=MODEL):
     '''``parameter_rows`` of the parameters file at ``path``.'''
     return parameter_rows(read_parameters_file(path, where, kind), kind)
+
+
+def model_parameter_rows(path, where=''):
+    '''``read_parameter_rows`` of the model's parameters file at ``path`` (such as the
+    ``<prefix>_parameters.json`` generation writes beside a generated model), each
+    ``variable_name`` the name the model gives it (``parameter_names.model_name``):
+    ``C_aortic_root``, ``E_A_heart__lv``, ``R``.'''
+    from libcuflynx.utilities.parameter_names import model_name
+    return [dict(row, variable_name=model_name(row['variable_name'], where))
+            for row in read_parameter_rows(path, where)]
 
 
 def name_path(name, kind=MODEL, where=''):

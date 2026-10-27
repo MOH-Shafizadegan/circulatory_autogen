@@ -705,16 +705,15 @@ class _Run:
                     f'module array.')
             workflow_result['target_model'] = {
                 'model_path': generated['model_path'],
-                'parameters_path': generated['parameters_path'],
-                'used_parameters_path': generated['used_parameters_path']}
+                'parameters_path': generated['parameters_path']}
         if write_calibrated and merged:
             if not complete:
                 raise WorkflowError('the calibrated parameters file is written only for a '
                                     'complete workflow run; some steps have no result.')
-            used = (workflow_result['target_model'] or {}).get('used_parameters_path')
+            generated_path = (workflow_result['target_model'] or {}).get('parameters_path')
             workflow_result['calibrated_parameters_file'] = write_calibrated_parameters(
                 target, workflow_result['merged_parameters'], self.workflow.name,
-                library_inputs=self.resolved.library_inputs, used_path=used)
+                library_inputs=self.resolved.library_inputs, generated_path=generated_path)
         _write_json(os.path.join(self.output_dir, WORKFLOW_RESULT), workflow_result)
         return workflow_result
 
@@ -778,7 +777,7 @@ def write_calibrated_parameters_to(source, output_dir, path, module_library_dirs
     result, or a step has not run or is stale (its inputs changed since it ran).
 
     The values the target's parameters file does not set are those the run used: the
-    ``<prefix>_parameters_used.json`` of the target model it generated in ``output_dir``
+    generated ``<prefix>_parameters.json`` of the target model it generated in ``output_dir``
     (``_target/``), whatever the module library holds now. Only when the run has none is the
     target generated again, against the library as it is now.'''
     workflow = source if hasattr(source, 'steps') else load_workflow(source, module_library_dirs)
@@ -797,29 +796,38 @@ def write_calibrated_parameters_to(source, output_dir, path, module_library_dirs
     return write_calibrated_parameters(resolved.target, result['merged_parameters'],
                                        workflow.name, path=path,
                                        library_inputs=resolved.library_inputs,
-                                       used_path=run_target_used_parameters(output_dir, result))
+                                       generated_path=run_target_parameters(output_dir, result))
 
 
-def run_target_used_parameters(output_dir, workflow_result=None):
-    '''The ``<prefix>_parameters_used.json`` of the target model the run in ``output_dir``
-    generated (``workflow_result['target_model']``, else its place under ``_target/``); None
-    when the run has none.'''
-    from libcuflynx.utilities.parameters_file import used_parameters_file_name
-    candidates = [((workflow_result or {}).get('target_model') or {}).get('used_parameters_path'),
-                  os.path.join(output_dir, TARGET_DIR, 'model', 'generated_models', TARGET_PREFIX,
-                               used_parameters_file_name(TARGET_PREFIX))]
+def run_target_parameters(output_dir, workflow_result=None):
+    '''The generated ``<prefix>_parameters.json`` of the target model the run in ``output_dir``
+    generated (``workflow_result['target_model']['parameters_path']``, else its place under
+    ``_target/``); None when the run has none. WorkflowError when the run recorded a parameters
+    CSV, which libcuflynx no longer reads.'''
+    from libcuflynx.utilities.parameters_file import EXTENSION, parameters_file_name
+    target_dir = os.path.join(output_dir, TARGET_DIR)
+    recorded = ((workflow_result or {}).get('target_model') or {}).get('parameters_path')
+    if recorded and os.path.splitext(recorded)[1].lower() != EXTENSION:
+        raise WorkflowError(
+            f'the run in {output_dir} records its target model\'s parameters as {recorded}, '
+            f'which libcuflynx no longer reads (a generated model\'s parameters are '
+            f'{parameters_file_name("<prefix>")}). Run the workflow again, or remove '
+            f'{target_dir} to have the target generated again against the module library as it '
+            f'is now.')
+    candidates = [recorded, os.path.join(target_dir, 'model', 'generated_models', TARGET_PREFIX,
+                                         parameters_file_name(TARGET_PREFIX))]
     return next((p for p in candidates if p and os.path.isfile(p)), None)
 
 
-def target_used_parameters(target, library_inputs=None, used_path=None):
-    '''Every value the target's model uses, as a parameters document: the used parameters file
-    (``<prefix>_parameters_used.json``) at ``used_path``, or, without one, of the target
-    generated as it stands in a temporary directory. A module array's is a model's document; a
-    library module's is rooted at the module, as its parameterisations are (its instance's
-    values and the model's globals). WorkflowError when, generated again, the target alone
-    leaves a parameter without a value.'''
+def target_generated_parameters(target, library_inputs=None, generated_path=None):
+    '''Every value the target's model uses, as a parameters document: the generated parameters
+    file (``<prefix>_parameters.json`` beside a generated model) at ``generated_path``, or,
+    without one, that of the target generated as it stands in a temporary directory. A module
+    array's is a model's document; a library module's is rooted at the module, as its
+    parameterisations are (its instance's values and the model's globals). WorkflowError when,
+    generated again, the target alone leaves a parameter without a value.'''
     from libcuflynx.utilities import parameters_file as pf
-    if used_path is None:
+    if generated_path is None:
         with tempfile.TemporaryDirectory() as work_dir:
             try:
                 generated = generate_model(target.model, os.path.join(work_dir, 'model'),
@@ -828,9 +836,9 @@ def target_used_parameters(target, library_inputs=None, used_path=None):
                 raise WorkflowError(f'the target leaves {exc.model_names} without a value, so '
                                     f'its calibrated parameters cannot hold every value its '
                                     f'model uses; set them in its parameters file.') from exc
-            doc = pf.read_parameters_file(generated['used_parameters_path'])
+            doc = pf.read_parameters_file(generated['parameters_path'])
     else:
-        doc = pf.read_parameters_file(used_path)
+        doc = pf.read_parameters_file(generated_path)
     if target.kind == 'array':
         return doc
     module = pf.new_document()
@@ -841,19 +849,19 @@ def target_used_parameters(target, library_inputs=None, used_path=None):
 
 
 def write_calibrated_parameters(target, merged_parameters, workflow_name, path=None,
-                                library_inputs=None, used_path=None):
+                                library_inputs=None, generated_path=None):
     '''``path`` (default ``<name>_calibrated_parameters.json`` beside the target's parameters
     file, ``<name>`` its parameterisation, or its module array's prefix): the target's parameters
     file (nested JSON, utilities/parameters_file.py), completed with every other value its model
-    uses (:func:`target_used_parameters`; each one's data_reference names the parameterisation it
-    came from, ``from <parameterisation>: <reference>``), with
-    each merged value set at the path the target names it by -- ``<vessel>/<variable>`` in a
+    uses (:func:`target_generated_parameters`; each one's data_reference names the
+    parameterisation it came from, ``from <parameterisation>: <reference>``), with each merged
+    value set at the path the target names it by -- ``<vessel>/<variable>`` in a
     module array's file (a vessel inside a super instance, ``sys__C/q``, at ``sys/C/q``), the
     module's own path in a parameterisation. So the result reproduces the run without the
     module library. Only ``path`` is written; the target's files are not changed.'''
     from libcuflynx.utilities import parameters_file as pf
     kind = pf.MODEL if target.kind == 'array' else pf.MODULE
-    doc = target_used_parameters(target, library_inputs, used_path)
+    doc = target_generated_parameters(target, library_inputs, generated_path)
     # the target's own leaves as it writes them (a library's "sourced" kept)
     for place, leaf in pf.leaves(pf.read_parameters_file(target.parameters_path, kind=kind)):
         pf.set_leaf(doc, place, leaf)

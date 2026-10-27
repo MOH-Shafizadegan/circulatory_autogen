@@ -105,7 +105,7 @@ class CVS0DCellMLGenerator(object):
         self.__generate_CellML_file()
         if self.model.param_id_name_and_vals:
             self.__modify_parameters_array_from_param_id()
-        self.__generate_parameters_csv()
+        self.__write_parameters_json()
         self.__generate_parameters_file()
         self.__generate_modules_file()
         self.__copy_solver_make_files()
@@ -458,17 +458,16 @@ class CVS0DCellMLGenerator(object):
                                                  const_name)[0][0]]['data_reference'] = \
                 f'{self.model.param_id_date}_identified'
 
-    def __generate_parameters_csv(self):
-        # The model's parameters, named as it names them, beside the generated model, and
-        # <prefix>_parameters_used.json: the same values in the form of a model's parameters
-        # file (a default's data_reference names the parameterisation it came from, as
-        # ModelParsers.merge_default_parameters wrote it). Generating again from
-        # that file alone, with the same module array, gives the same model. When not all the
-        # required parameters have been defined, the model's parameters file is written instead
-        # as <prefix>_parameters_unfinished.json in the resources directory, with
-        # EMPTY_MUST_BE_FILLED where a value is missing, for the user to complete.
-        from libcuflynx.utilities.parameters_file import (dump_parameters, rows_to_document,
-                                                          used_parameters_file_name)
+    def __write_parameters_json(self):
+        # <prefix>_parameters.json beside the generated model: every value the model uses, in the
+        # form of a model's parameters file (a default's data_reference names the
+        # parameterisation it came from, as ModelParsers.merge_default_parameters wrote it).
+        # Generating again from that file alone, with the same module array, gives the same
+        # model. When not all the required parameters have been defined, the model's parameters
+        # file is written instead as <prefix>_parameters_unfinished.json in the resources
+        # directory, with EMPTY_MUST_BE_FILLED where a value is missing, for the user to complete.
+        from libcuflynx.utilities.parameters_file import (dump_parameters, parameters_file_name,
+                                                          rows_to_document)
         df = pd.DataFrame(self.model.parameters_array)
         if not self.all_parameters_defined:
             print(self.__missing_parameters_report(
@@ -479,13 +478,12 @@ class CVS0DCellMLGenerator(object):
                 for row in df.astype(str).to_dict('records')]
         text = dump_parameters(rows_to_document(rows, duplicates=[]))
         if self.all_parameters_defined:
-            file_to_create = os.path.join(self.output_dir, f'{self.file_prefix}_parameters.csv')
+            # a <prefix>_parameters.csv here is an older libcuflynx's, not this model's
+            stale = os.path.join(self.output_dir, f'{self.file_prefix}_parameters.csv')
+            if os.path.isfile(stale):
+                os.remove(stale)
             self._write_text_file_atomic(
-                file_to_create,
-                lambda wf: df.to_csv(wf, index=None, header=True),
-            )
-            self._write_text_file_atomic(
-                os.path.join(self.output_dir, used_parameters_file_name(self.file_prefix)),
+                os.path.join(self.output_dir, parameters_file_name(self.file_prefix)),
                 lambda wf: wf.write(text))
             return
         file_to_create = os.path.join(self.resources_dir,

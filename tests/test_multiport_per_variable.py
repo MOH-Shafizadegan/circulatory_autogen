@@ -48,6 +48,7 @@ from libcuflynx.generators.multi_port import (list_multi_port, is_multi_port,
                                               module_has_list_multi_port)
 from libcuflynx.scripts.script_generate_with_new_architecture import generate_with_new_architecture
 from libcuflynx.solver_wrappers import get_simulation_helper
+from libcuflynx.utilities.parameters_file import model_parameter_rows
 
 
 # --------------------------------------------------------------------------------------------
@@ -749,8 +750,9 @@ def test_flow_merge_without_neighbours_sums_to_zero(tmp_path, external_modules_d
     out = capsys.readouterr().out
     assert re.search(r'WARNING: "merge" variable "v_in" is a multi_port "sum".*set to 0', out)
 
-    parameters = _read(os.path.join(os.path.dirname(cellml_path), "mp_none_parameters.csv"))
-    assert "v_in_merge" not in parameters
+    parameters = model_parameter_rows(
+        os.path.join(os.path.dirname(cellml_path), "mp_none_parameters.json"))
+    assert parameters and "v_in_merge" not in {r["variable_name"] for r in parameters}
     res = _simulate(cellml_path, ["merge/v_out", "wk/q"], sim_time=0.5)
     assert np.all(res["merge/v_out"] == 0.0)
     assert np.all(res["wk/q"] == 0.0)

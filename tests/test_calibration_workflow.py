@@ -18,7 +18,6 @@ whose optima are known in closed form.
   a reduction, an emulator of what was kept, and MCMC on that emulator.
 """
 import copy
-import csv
 import json
 import os
 
@@ -40,6 +39,7 @@ from libcuflynx.external_testing.workflow_library import (OPTIMISER_SETTINGS, ST
                                                           STD_C, Y_A, Y_B, Z_C,
                                                           build_workflow_library)
 from libcuflynx.schemas import CALIBRATION_WORKFLOW_SCHEMA, load_schema
+from libcuflynx.utilities.parameters_file import model_parameter_rows
 
 
 @pytest.fixture
@@ -502,8 +502,8 @@ def test_fixed_values_flow_into_the_supermodule_and_editing_obs_data_redoes_it(l
     rest = _read_json(os.path.join(out, 'rest', 'step_result.json'))
     assert [(f['model_name'], f['from_step']) for f in rest['fixed']] == [('p_mod__A', 'fit_a')]
     # the generated step model's parameters, named as the model names them
-    with open(os.path.join(os.path.dirname(rest['model_path']), 'rest_parameters.csv')) as f:
-        generated = {r['variable_name']: float(r['value']) for r in csv.DictReader(f)}
+    generated = {r['variable_name']: float(r['value']) for r in model_parameter_rows(
+        os.path.join(os.path.dirname(rest['model_path']), 'rest_parameters.json'))}
     assert generated['p_mod__A'] == pytest.approx(merged['A/p'], rel=1e-12)
 
     # change fit_a's data: everything downstream changes with it
@@ -612,8 +612,8 @@ def test_a_tab_shows_each_model_with_the_values_available_so_far(library, tmp_pa
     out, work = str(tmp_path / 'run'), str(tmp_path / 'views')
 
     def parameters(view):
-        with open(view['parameters_path']) as f:
-            return {r['variable_name']: float(r['value']) for r in csv.DictReader(f)}
+        return {r['variable_name']: float(r['value'])
+                for r in model_parameter_rows(view['parameters_path'])}
 
     rest = workflow_model(library['chain_rest'], 'rest', output_dir=out, work_dir=work)
     assert rest['kind'] == 'step' and rest['waiting_for'] == ['fit_a'] and rest['fixed'] == []
@@ -695,8 +695,8 @@ def test_calibrated_values_replace_their_rows_and_new_ones_are_added(tmp_path):
                      'global/T,kelvin,300,t,\n', MODULE)
     before = open(_Target.parameters_path).read()
     # what the target's model used: its file's values, and C/s from a submodule's default
-    used = str(tmp_path / 'target_parameters_used.json')
-    write_parameters(used, 'variable_name,units,value,data_reference\n'
+    generated = str(tmp_path / 'target_parameters.json')
+    write_parameters(generated, 'variable_name,units,value,data_reference\n'
                      'mod__A/p,dimensionless,1.0,a\nmod__C/q,dimensionless,1.0,c\n'
                      'mod__C/s,dimensionless,5.0,from c/v1 parameterisation default: s\n'
                      'T,kelvin,300,t\n')
@@ -708,7 +708,7 @@ def test_calibrated_values_replace_their_rows_and_new_ones_are_added(tmp_path):
                'units': 'dimensionless', 'from_step': 'fit_a'},
               {'model_name': 'T', 'parameterisation_name': 'global/T', 'value': 310.0,
                'units': 'kelvin', 'from_step': 'rest'}]
-    path = write_calibrated_parameters(_Target(), merged, 'wf', used_path=used)
+    path = write_calibrated_parameters(_Target(), merged, 'wf', generated_path=generated)
     assert path == str(tmp_path / 'rest_calibrated_parameters.json')
     rows = {r['variable_name']: r for r in read_parameters(path, MODULE)}
     assert {n: float(r['value']) for n, r in rows.items()} == \

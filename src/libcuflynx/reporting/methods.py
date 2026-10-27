@@ -15,7 +15,6 @@ directory) and reports them. Symbols come from a variable mapping
 (``<prefix>_variable_mapping.csv``, see ``variable_mapping.py``).
 '''
 
-import csv
 import json
 import os
 import tempfile
@@ -24,6 +23,7 @@ from libcuflynx.reporting import flowchart
 from libcuflynx.reporting.bibliography import cite, cited_keys, module_bib_files, read_bib, write_bib
 from libcuflynx.reporting.latex_names import escape
 from libcuflynx.utilities.parameter_names import LEVEL_SEPARATOR, PARAMETER_COMPONENTS
+from libcuflynx.utilities.parameters_file import model_parameter_rows, parameters_file_name
 from libcuflynx.reporting.model_latex import (format_number, format_units, module_sections,
                                               parameter_sources_section)
 from libcuflynx.reporting.variable_mapping import (default_mapping_path, load_model,
@@ -353,11 +353,15 @@ def _document(body, title, standalone, bibliography=None):
             '\\maketitle\n' + body + '\n\\end{document}\n')
 
 
-def _read_csv(path):
+def _read_parameters(path):
+    '''The rows of the generated model's parameters file at ``path``, named as the model names
+    them. FileNotFoundError naming ``path`` when it does not exist.'''
     if not path or not os.path.isfile(path):
-        return []
-    with open(path, newline='', encoding='utf-8-sig') as f:
-        return list(csv.DictReader(f))
+        raise FileNotFoundError(
+            f'{path}: no generated parameters file, so no parameter\'s source can be cited. '
+            f'Generation writes <prefix>_parameters.json beside the generated model; generate '
+            f'the model, or name its parameters file (--parameters).')
+    return model_parameter_rows(path)
 
 
 def _parameter_sources(parameter_rows, entries, calibrated):
@@ -586,7 +590,7 @@ def workflow_methods_latex(workflow_path, run_dir=None, mapping=None, module_lib
         view = workflow_model(workflow, 'target', output_dir=run_dir or os.path.join(work, 'run'),
                               work_dir=work)
         model = load_model(view['flat_model_path'] or view['model_path'])
-        parameter_rows = _read_csv(view.get('parameters_path'))
+        parameter_rows = _read_parameters(view.get('parameters_path'))
     if mapping is None:
         candidate = resolved.target.file('variable_mapping.csv')
         mapping = candidate if os.path.isfile(candidate) else None
@@ -752,8 +756,8 @@ def calibration_methods_latex(model_path, obs_data_path, params_for_id_path, set
     ``solver_info``, ``dt``, ``UQ_options`` ...). ``run_dir`` is the param_id run directory
     (``<method>_<prefix>_<obs>``), whose best fit is then reported. ``mapping`` defaults to
     ``<prefix>_variable_mapping.csv`` beside the model, if it exists. ``parameters_path`` is the
-    generated model's parameters CSV, whose data_reference column gives each parameter's source
-    (default: the ``<prefix>_parameters.csv`` generation writes beside the model); its BibTeX
+    generated model's parameters file, whose data_references give each parameter's source
+    (default: the ``<prefix>_parameters.json`` generation writes beside the model); its BibTeX
     keys are cited from ``bib_files``, and the cited entries written to ``bib_out`` when given.
     '''
     settings = dict(settings or {})
@@ -786,12 +790,12 @@ def calibration_methods_latex(model_path, obs_data_path, params_for_id_path, set
     if parameters_path is None:
         prefix = os.path.splitext(os.path.basename(model_path))[0]
         prefix = prefix[:-len('_flat')] if prefix.endswith('_flat') else prefix
-        parameters_path = os.path.join(os.path.dirname(model_path), f'{prefix}_parameters.csv')
+        parameters_path = os.path.join(os.path.dirname(model_path), parameters_file_name(prefix))
     entries = read_bib(list(bib_files or ()))
     from libcuflynx.parsers.PrimitiveParsers import param_name_for_gen
     calibrated = {param_name_for_gen(v, p): 'calibration' for row in params
                   for v, p in row['targets']}
-    sources, keys = _parameter_sources(_read_csv(parameters_path), entries, calibrated)
+    sources, keys = _parameter_sources(_read_parameters(parameters_path), entries, calibrated)
     body = [_model_section(model, rows, None, mapping),
             parameter_sources_section(model, {r['variable_name']: r for r in rows}, sources),
             '\\section{Calibration}\nFigure~\\ref{fig:calibration-flowchart} shows the '

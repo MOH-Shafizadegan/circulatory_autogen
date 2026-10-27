@@ -87,13 +87,15 @@ def _c_alone(library, x=None):
 
 
 def _parameters(path):
-    '''``{name: value}`` of a model's parameters file (nested JSON), or of a generated model's
-    parameters CSV.'''
-    if path.endswith('.csv'):
-        with open(path) as f:
-            return {r['variable_name']: float(r['value']) for r in csv.DictReader(f)}
+    '''``{name: value}`` of a model's parameters file (nested JSON).'''
     return {r['variable_name']: float(r['value'])
             for r in parameters_file.read_parameter_rows(path)}
+
+
+def _model_parameters(path):
+    '''``{model name: value}`` of a generated model's parameters file.'''
+    return {r['variable_name']: float(r['value'])
+            for r in parameters_file.model_parameter_rows(path)}
 
 
 def _write_parameters(path, text):
@@ -334,7 +336,7 @@ def test_one_instance_calibrated_from_its_protocol_lands_on_that_instance(librar
     view = workflow_model(path, 'c-alone', output_dir=str(tmp_path / 'run'),
                           work_dir=str(tmp_path / 'views'))
     assert view['place'] == 'C'
-    assert _parameters(view['parameters_path'])['x_mod'] == Y_A
+    assert _model_parameters(view['parameters_path'])['x_mod'] == Y_A
     # the tab's obs_data names the model's vessel
     assert _read_json(view['obs_data_path'])['data_items'][0]['operands'] == ['mod/z']
 

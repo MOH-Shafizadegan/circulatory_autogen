@@ -5,23 +5,43 @@ next release; add to that section as you land a change.
 
 ## Unreleased
 
-### Added — every generated model has a complete parameters file; calibrated results build on it
+### Changed — a generated model has one parameters file, nested JSON; the generated CSV is gone
 
-Generation writes `<prefix>_parameters_used.json` beside the generated model: every value the
-model uses, in the form of a model's parameters file (`aortic_root/C`, `heart/lv/E_A`, globals
-under `global`), with its units and data_reference. A value the model's parameters file does not
-set (a supermodule instance written `"heart": {}`, a module's default parameterisation, a
-supermodule parameterisation's global) names its source at the start of its data_reference:
-`"from <module_type>/<module_subtype> parameterisation <name>: <its own data_reference>"`, in
-the generated `<prefix>_parameters.csv` too; a data_reference already starting `from ` is not
-prefixed again. Generating again from it alone, with
-the same module array, gives the same model. A calibration workflow's calibrated parameters
-(`write_calibrated`, `write_calibrated_parameters_to`) are the target's parameters file completed
-with every other value its model uses, with the calibrated values set, so a result reproduces the
-run without the module library; `write_calibrated_parameters_to` builds on the run's own target
-used file (regenerating the target only when the run has none) and still writes only its `path`. A
-parameter's data_reference is no longer cut at 80 characters in the generated
-`<prefix>_parameters.csv`.
+Generation writes one parameters file beside the generated model, `<prefix>_parameters.json` (in
+the generated-models directory; the model's own input file of that name stays in its resources
+directory), and no `<prefix>_parameters.csv`: every value the model uses, in the form of a
+model's parameters file (`aortic_root/C`, `heart/lv/E_A`, globals under `global`), with its units
+and data_reference. A value the model's parameters file does not set (a supermodule instance
+written `"heart": {}`, a module's default parameterisation, a supermodule parameterisation's
+global) names its source at the start of its data_reference:
+`"from <module_type>/<module_subtype> parameterisation <name>: <its own data_reference>"`; a
+data_reference already starting `from ` is not prefixed again, and none is cut at 80 characters.
+Generating again from it alone, with the same module array, gives the same model. A
+`<prefix>_parameters.csv` an older libcuflynx left in the generated model's directory is removed
+when the model is generated again.
+
+Everything that read the generated CSV reads the JSON, naming each parameter as the model does
+with `parameters_file.model_parameter_rows` (`C_aortic_root`, `E_A_heart__lv`, `R`): the
+calibration workflow (fixed values, identifiability's start point, the target's check of the
+calibrated names) and the methods LaTeX (`cuflynx-methods-latex --parameters` takes the JSON; a
+parameters file that does not exist, named or the default beside the model, is an error naming its
+path rather than a methods section citing no source).
+
+A calibration workflow's calibrated parameters (`write_calibrated`,
+`write_calibrated_parameters_to`) are the target's parameters file completed with every other
+value its model uses, with the calibrated values set, so a result reproduces the run without the
+module library; `write_calibrated_parameters_to` builds on the run's own generated target
+parameters file (regenerating the target only when the run has none) and still writes only its
+`path`.
+
+Renamed, so the names match the file: `generate_model(...)['used_parameters_path']` and
+`workflow_result['target_model']['used_parameters_path']` are `parameters_path` (which named the
+CSV); `runner.run_target_used_parameters` is `run_target_parameters`,
+`runner.target_used_parameters` is `target_generated_parameters`, and the `used_path` argument
+of `write_calibrated_parameters` is `generated_path`; `parameters_file.used_parameters_file_name`
+is gone (`parameters_file_name`). A workflow run whose `workflow_result.json` records a parameters
+CSV for its target model is refused when its calibrated parameters are written: run the workflow
+again.
 
 ### Added — calibration workflow steps that select instances of the target
 
@@ -96,9 +116,9 @@ A model's parameter values are `<prefix>_parameters.json` beside its module arra
   parameterisation (globals by its config), a config's parameterisations (and a supermodule version's
   `<module_type>_<module_subtype>_parameters.json`, folded into its default parameterisation), or every
   one below a directory. Name the `.json` file in `input_param_file`.
-- Generation writes the generated model's parameters as `<prefix>_parameters.csv` beside the
-  generated model, named as the model names them. A model with missing values gets
-  `<prefix>_parameters_unfinished.json` in its resources directory.
+- Generation writes the generated model's parameters as `<prefix>_parameters.json` beside the
+  generated model (see "a generated model has one parameters file" above). A model with missing
+  values gets `<prefix>_parameters_unfinished.json` in its resources directory.
 
 ### Changed — params_for_id is JSON
 

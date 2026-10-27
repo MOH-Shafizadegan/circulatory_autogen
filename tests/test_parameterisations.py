@@ -37,7 +37,6 @@ submodule's value over the template), and two parameterisations that set one glo
 (``pulse_src`` v1 ``default`` and ``other``; no real module's parameterisations disagree on a
 global). Its reader modules are those of test_config_schemas.py.
 """
-import csv
 import json
 import os
 import shutil
@@ -886,9 +885,9 @@ def test_generation_uses_parameterisations_and_the_host_file_wins(tmp_path, real
               'use_builtin_modules': False, 'DEBUG': False}
     assert generate_with_new_architecture(False, config), f'generation of {prefix} failed'
     # the generated model's parameters, named as the model names them
-    with open(generated / prefix / f'{prefix}_parameters.csv') as f:
-        params = {row['variable_name']: (row['value'], row['data_reference'])
-                  for row in csv.DictReader(f)}
+    params = {row['variable_name']: (row['value'], row['data_reference'])
+              for row in parameters_file.model_parameter_rows(
+                  str(generated / prefix / f'{prefix}_parameters.json'))}
     assert params['tau_w_num_s1'] == ('999', 'host_value')
     assert params['T'] == ('300', 'host_value')
     # values only: generation rewrites the library's data_reference text
