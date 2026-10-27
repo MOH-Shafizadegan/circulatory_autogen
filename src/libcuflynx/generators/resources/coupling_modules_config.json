@@ -361,7 +361,7 @@
       [
         {
           "port_type":"volume_port",
-          "variables":[]
+          "variables":["q_sum"]
         }
       ],
       "general_ports":[],

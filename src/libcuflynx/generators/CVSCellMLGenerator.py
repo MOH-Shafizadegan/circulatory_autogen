@@ -326,17 +326,13 @@ class CVS0DCellMLGenerator(object):
 
                 # TODO get the units from the indicidual variables that 
                 # are being coupled. This is known in the module_config files.
-                vol_units = 'm3'
                 flow_units = 'm3_per_s'
                 for param, unit in zip(self.model.parameters_array["variable_name"], self.model.parameters_array["units"]):
                     if param.startswith('q_'):
                         if unit=='litre':
-                            vol_units = 'litre'
                             flow_units = 'L_per_s'
                             break
                         #XXX ADD MORE CASES IF NEEDED
-                # print("Volume units: ",vol_units)
-                # print("Flow units: ",flow_units)
 
                 # create computation environment to sum flows from terminals
                 # to have a total flow input into each first venous component.
@@ -350,13 +346,7 @@ class CVS0DCellMLGenerator(object):
                 self.__write_section_break(wf, 'generic junction connection')
                 self.__write_generic_junction_connection_comp(wf, self.model.vessels_df, flow_units)
 
-                # create computation environment to compute the total blood volume in the whole system 
-                # or in specific portions of it.
-                print('writing environment to apply operations for multiports')
-                self.__write_section_break(wf, 'applying multiport operations for ports')
-                self.__write_blood_volume_sum_comp(wf, self.model.vessels_df, vol_units)
-
-                # sums for list-form multi_port "sum" variables (nothing is written without any)
+                # sums for multi_port "sum" variables (nothing is written without any)
                 self.__write_multiport_sum_comps(wf)
 
                 # define variables so they can be accessed
@@ -613,8 +603,6 @@ class CVS0DCellMLGenerator(object):
     def __write_module_mappings(self, wf, module_df):
         """This function maps between ports of the modules in a module dataframe."""
         self._multiport_sums = {}
-        # (module, variable) -> the ports it is summed through
-        self._sum_ports = {}
         # one-to-one mapped variable pairs, and BCs computed by a sum, Multiply or junction
         self._plain_links = []
         self._bcs_supplied = set()
@@ -1093,12 +1081,6 @@ class CVS0DCellMLGenerator(object):
                                 # when doing the venous_terminal_connection. Fine for now.
                                 self.__set_bcs_supplied(main_module, variables_1, out_module, variables_2)
 
-                            # Check if any port in out_module has multi_port='sum'
-                            elif 'multi_port' in out_module_entrance_general_ports[entrance_port_idx].keys() and \
-                                    out_module_entrance_general_ports[entrance_port_idx]['multi_port']=='sum':
-                                # the blood volume sum connections are done through the blood_volume_sum
-                                self.__set_bcs_supplied(main_module, variables_1, out_module, variables_2)
-
                             else:
                                 self.__map_plain_pair(main_module, out_module, variables_1, variables_2,
                                                       pending_mappings,
@@ -1270,9 +1252,6 @@ class CVS0DCellMLGenerator(object):
                     f'are both marked "sum" in their multi_port lists; only one side of a '
                     f'connection can sum over its neighbours.')
             ends = [(main_module, var_1, entry_1, main_port), (out_module, var_2, entry_2, out_port)]
-            for module, variable, entry, port in ends:
-                if entry == MULTI_PORT_SUM:
-                    self.__record_sum_port(module, variable, port)
             if MULTI_PORT_MULTIPLY in (entry_1, entry_2):
                 scaled, other = ends if entry_1 == MULTI_PORT_MULTIPLY else ends[::-1]
                 kind = MULTI_PORT_SUM if other[2] == MULTI_PORT_SUM else MULTI_PORT_MULTIPLY
@@ -1288,17 +1267,6 @@ class CVS0DCellMLGenerator(object):
 
         if direct_1:
             self.__map_plain_pair(main_module, out_module, direct_1, direct_2, pending_mappings)
-
-    def __record_sum_port(self, module, variable, port):
-        """Raise ValueError if ``variable`` of ``module`` is summed through a second port."""
-        ports = self._sum_ports.setdefault((module, variable), [])
-        if not any(other is port for other in ports):
-            ports.append(port)
-        if len(ports) > 1:
-            names = ' and '.join(f'"{other.get("port_type")}"' for other in ports)
-            raise ValueError(
-                f'"{module}" sums "{variable}" through ports {names}; a variable can be summed '
-                f'through one port only.')
 
     def __register_multiport_sum(self, module, variable, kind=MULTI_PORT_SUM):
         """The registry entry of a "sum" variable (or a Multiply target), created on first use.
@@ -1946,117 +1914,6 @@ class CVS0DCellMLGenerator(object):
 
         # print("writing environment to sum generic junctions input flows :: SUCCESSFUL")
 
-    def __write_blood_volume_sum_comp(self, wf, vessel_df, vol_units='m3'):
-        
-        sum_vess_names = []
-        vess_to_sum_names = []
-        
-        for vessel_tup in vessel_df.itertuples():
-            if vessel_tup.module_format != 'cellml':
-                # if not cellml then don't do anything for this vessel/module
-                continue
-            
-            # Get the module row from the dataframe to check ports
-            module_row = vessel_df.loc[vessel_df['name'] == vessel_tup.name].iloc[0]
-            
-            # Check if any port has multi_port='sum' or if using legacy module_type
-            # TODO same thing for general and exit ports
-            for idx, port in enumerate(module_row['entrance_ports'] + module_row['general_ports'] + \
-                    module_row['exit_ports']):
-                
-                if 'multi_port' in port and port['multi_port'] == 'sum':
-                    if idx >= len(module_row['entrance_ports']) + len(module_row['general_ports']):
-                        is_exit_port = True
-                    else:
-                        is_exit_port = False
-                    port_type = port['port_type']
-                    sum_vess_name = vessel_tup.name
-                    sum_vess_variable = port['variables'][0] # assumes only one variable per port
-                    if sum_vess_name not in sum_vess_names:
-                        sum_vess_names.append(sum_vess_name)
-                    
-                        inp_vessel_names = []
-                        inp_variable_names = []
-                        for inp_vessel_name in vessel_tup.inp_instances:
-                            if is_exit_port:
-                                coupling_ports = vessel_df.loc[vessel_df["name"] == inp_vessel_name].squeeze()["entrance_ports"] + \
-                                    vessel_df.loc[vessel_df["name"] == inp_vessel_name].squeeze()["general_ports"]
-                            else:
-                                coupling_ports = vessel_df.loc[vessel_df["name"] == inp_vessel_name].squeeze()["exit_ports"] + \
-                                    vessel_df.loc[vessel_df["name"] == inp_vessel_name].squeeze()["general_ports"]
-                            for couple_port in coupling_ports:
-                                if couple_port['port_type'] == port_type:
-                                    if len(couple_port['variables'])>=1:
-                                        inp_variable_name = couple_port['variables'][0]
-                                        if inp_vessel_name not in inp_vessel_names:
-                                            inp_vessel_names.append(inp_vessel_name)
-                                            inp_variable_names.append(inp_variable_name)
-                                            # print(inp_vessel_names[-1])
-                                            # print(inp_variable_names[-1])
-                                    elif len(couple_port['variables'])==0:
-                                        if vessel_df.loc[vessel_df['name'] == inp_vessel_name].squeeze()["module_type"] == 'FV1D_volume_sum':
-                                            inp_vessel_names.append(inp_vessel_name)
-                                            inp_variable_names.append('q_sum')
-                                            # print(inp_vessel_names[-1])
-                                            # print(inp_variable_names[-1])
-                                        else:
-                                            print(f"ERROR No coupling port variable found between {sum_vess_name} and {inp_vessel_name} : {couple_port} . Exiting.")
-                                            exit()
-
-                        vess_to_sum_names.append(inp_vessel_names)
-
-                        if len(inp_vessel_names) == 0:
-                            # An empty sum is 0 (see the equations below); it is still
-                            # mapped to the vessel so the port variable is defined (#525).
-                            print(f'WARNING: {sum_vess_name} has a "sum" multi_port '
-                                  f'({port_type}) with no inputs connected; its sum is set to 0.')
-                        # map volume
-                        for inp_vessel_idx in range(len(inp_vessel_names)):
-                            q_1 = inp_variable_names[inp_vessel_idx]
-                            inp_vessel_name = inp_vessel_names[inp_vessel_idx]
-                            q_2 = f'q_{inp_vessel_name}'
-                            self.__write_mapping(wf, inp_vessel_name+'_module', 'sum_blood_volume', [q_1], [q_2])
-
-                        # then map volume
-                        # q_1 = f'q_{sum_vess_name}'
-                        # q_2 = sum_vess_variable add _sum to change the name
-                        q_1 = f'q_{sum_vess_name}_sum'
-                        q_2 = sum_vess_variable
-                        self.__write_mapping(wf, 'sum_blood_volume', sum_vess_name+'_module', [q_1], [q_2])
-
-        # create computation environment for connection and write the variable definition 
-        # and calculation of total blood volume in the whole system or in specific portions of it
-        wf.write(f'<component name="sum_blood_volume">\n')
-        variables = []
-        units = []
-        in_outs = []
-
-        for idx_sum, sum_vess_name in enumerate(sum_vess_names):
-            variables.append(f'q_{sum_vess_name}_sum')
-            units.append(vol_units)
-            in_outs.append('out') 
-            for inp_vess_name in vess_to_sum_names[idx_sum]:
-                variables.append(f'q_{inp_vess_name}')
-                units.append(vol_units) 
-                in_outs.append('in') 
-
-        self.__write_variable_declarations(wf, variables, units, in_outs)
-
-        for idx_sum, sum_vess_name in enumerate(sum_vess_names):
-            rhs_variables = []
-            lhs_variable = f'q_{sum_vess_name}_sum'
-            for inp_vess_name in vess_to_sum_names[idx_sum]:
-                rhs_variables.append(f'q_{inp_vess_name}')
-
-            if rhs_variables:
-                self.__write_variable_sum(wf, lhs_variable, rhs_variables)
-            else:
-                self.__write_zero_value(wf, lhs_variable, vol_units)
-
-        wf.write('</component>\n')
-
-
-
     def __write_variable_sum_junc(self, wf, lhs_variable, rhs_variables, rhs_signs):
         # Add-on for writing the sum of flow variables for a generic junction connection
 
@@ -2439,16 +2296,6 @@ class CVS0DCellMLGenerator(object):
 
         wf.write('   </apply>\n')
         wf.write('</math>\n')
-
-    def __write_zero_value(self, wf, lhs_variable, units):
-        """Write ``lhs_variable = 0`` with the zero in ``units``."""
-        wf.writelines('<math xmlns="http://www.w3.org/1998/Math/MathML">\n'
-                      '   <apply>\n'
-                      '       <eq/>\n'
-                      f'       <ci>{lhs_variable}</ci>\n'
-                      f'       <cn cellml:units="{units}">0</cn>\n'
-                      '   </apply>\n'
-                      '</math>\n')
 
     def __write_variable_average(self, wf, lhs_variable, rhs_variables_to_average, rhs_variables_weighting):
         """ writes the cellml code for averaging variables with weighting. Designed for getting an equivalent
