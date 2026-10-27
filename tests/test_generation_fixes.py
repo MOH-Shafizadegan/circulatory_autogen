@@ -321,17 +321,14 @@ def test_empty_sum_multi_port_is_zero(tmp_path, capsys):
     assert any('extra_sum' in line for line in warnings), warnings
 
     model_text = (generated_dir / 'empty_sum.cellml').read_text()
-    assert '<cn cellml:units="m3">0</cn>' in model_text
-    # ... and the sum is still mapped to the vessel's port variable.
-    assert 'variable_1="q_extra_sum_sum" variable_2="q"' in model_text
+    assert '<component name="multiport_sum_extra_sum_q">' in model_text
 
     # Myokit merges connected variables, so read the sums where they are computed.
     _, res = _run(generated_dir / 'empty_sum.cellml',
-                  ['sum_blood_volume/q_extra_sum_sum', 'sum_blood_volume/q_volume_sum_sum'],
-                  sim_time=0.1)
-    np.testing.assert_array_equal(res['sum_blood_volume/q_extra_sum_sum'], 0.0)
+                  ['multiport_sum_extra_sum_q/q', 'multiport_sum_volume_sum_q/q'], sim_time=0.1)
+    np.testing.assert_array_equal(res['multiport_sum_extra_sum_q/q'], 0.0)
     # The populated sum is untouched.
-    assert np.all(res['sum_blood_volume/q_volume_sum_sum'] > 0.0)
+    assert np.all(res['multiport_sum_volume_sum_q/q'] > 0.0)
 
 
 # ---------------------------------------------------------------------------------------

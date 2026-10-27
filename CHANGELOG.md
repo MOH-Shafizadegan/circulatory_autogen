@@ -95,6 +95,28 @@ replaced by their inverse), which 0.7.1 fixes (#271). 0.7.1 drops an imported un
 is in no release yet, so CI builds libCellML from source (`.github/actions/libcellml-from-source`)
 until 0.7.2 is on PyPI.
 
+### Changed — a `volume_port` "sum" is an ordinary multi_port sum
+
+No `port_type` has a meaning of its own. A whole-port `"sum"` (any case) on any port, a `volume_port`
+included, is the list form with `"sum"` for every port variable: each variable is the sum, over every
+module connected through the port, of the neighbour's corresponding variable, computed in
+`multiport_sum_<module>_<variable>`. A port with several variables sums each of them, and on a
+general port a neighbour counts whichever side of the connection it is drawn on, as in PhLynx.
+
+- The `sum_blood_volume` component is gone. A blood-volume total such as the 3compartment
+  `volume_sum` is now read as `multiport_sum_volume_sum_q/q` (it was
+  `sum_blood_volume/q_volume_sum_sum`); obs_data, plots and checks that name the old output need
+  the new name. The values are the same for every model in `resources/` and the module library.
+- `FV1D_volume_sum`'s exit `volume_port` maps `q_sum`, so it is an ordinary term of the volume sum it
+  feeds.
+- With `couple_to_1d`, only a module next to a 1D vessel is refused a `"sum"`, `"Multiply"` or
+  list-form port; sums elsewhere in the 0D model are allowed.
+
+### Changed — a variable may be summed through several ports
+
+A variable marked `"sum"` on two or more of a module's ports is the sum over the neighbours of all
+of those ports, in one `multiport_sum_<module>_<variable>` component.
+
 ### Added — `"multiply"` in a list-form `multi_port`
 
 A list-form port's entry may be `"multiply"` (any case), as PhLynx exports a port whose
