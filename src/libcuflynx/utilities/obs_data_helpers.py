@@ -20,12 +20,8 @@ from typing import Any
 # get_valid_plot_types().
 # ---------------------------------------------------------------------------
 
-# Recognised data_item ``data_type`` values. ``timeseries`` is a deprecated
-# alias for ``series`` and is intentionally not advertised here. Nor is
-# ``prob_dist``, which was removed in issue #421: it described the shape of the
-# ground truth rather than of the data, and an observable compared against a
-# distribution is an ordinary ``constant`` whose cost_type takes
-# ``prob_dist_params``.
+# Recognised data_item ``data_type`` values. An observable compared against a
+# distribution is a ``constant`` whose cost_type takes ``prob_dist_params``.
 VALID_DATA_TYPES = ("constant", "series", "frequency")
 
 # Recognised ``plot_type`` values. ``None`` / ``""`` means "draw no marker".
@@ -53,29 +49,6 @@ DEFAULT_COST_TYPE = "gaussian_MLE"
 # What the default used to be, so a run can tell the user what changed and how to pin it.
 PREVIOUS_DEFAULT_COST_TYPE = "MSE"
 
-
-
-#: obs_data entry keys superseded by the #466 vocabulary split, mapped to the key that now
-#: carries the value. ``variable`` had two jobs -- it named the item *and* stood in as the operand
-#: when ``operation`` was null -- so only its naming job moves here; the operand job moves to
-#: ``operands``, which is why its advice names both.
-LEGACY_OBS_ITEM_KEYS = {
-    'variable': 'data_item_name',
-    'name_for_plotting': 'trace_name_for_plotting',
-}
-
-LEGACY_OBS_KEY_ADVICE = {
-    'variable': ("'variable' is deprecated: use 'data_item_name' for the item's identity -- it "
-                 "must be unique, and it is what an operation_kwargs reference to another item "
-                 "resolves against -- and 'operands' for the model variable the item reduces. "
-                 "The old fallback, where a null 'operation' took its operand from 'variable', "
-                 "has been removed."),
-    'name_for_plotting': ("'name_for_plotting' is deprecated: it named two different things. Use "
-                          "'trace_name_for_plotting' for the axis label of the trace, and "
-                          "'item_name_for_plotting' for the item's own label (in sensitivity "
-                          "tables and the like), which defaults to "
-                          "'<trace_name_for_plotting> (<operation>)'."),
-}
 
 
 def obs_item_names(obs_info):
@@ -149,64 +122,20 @@ def obs_operand_lists(info):
     return _column(info, "operands")
 
 
-def migrate_legacy_obs_item_keys(items, where='data_items', variable_was_the_operand=False):
-    """Rewrite an obs_data entry's superseded key names, warning once per key per file.
-
-    Runs before schema validation, so everything downstream -- the series hydration helpers, the
-    schema, ``process_obs_info`` -- sees only the current vocabulary. Returns a new list; the
-    caller's dicts are not mutated, because an obs_data dict passed in by a user (or by
-    ``ObsDataCreator``) is theirs, not ours.
-
-    An entry that sets both a legacy key and its replacement is an error rather than a
-    precedence rule: there is no reading of that which is not a mistake, and silently picking
-    one would fit whichever the author did not mean.
-
-    ``variable_was_the_operand`` is for ``prediction_items``, where the legacy ``variable`` held
-    the model qname and there was no ``operands`` key at all -- so it seeds ``operands`` too.
-    A data_item already states ``operands``, so there it only supplies the name.
-    """
-    if not isinstance(items, (list, tuple)):
-        return items
-
-    migrated = []
-    seen_legacy = set()
-    for idx, item in enumerate(items):
-        if not isinstance(item, dict):
-            migrated.append(item)
-            continue
-        item = dict(item)
-        for old, new in LEGACY_OBS_ITEM_KEYS.items():
-            if old not in item:
-                continue
-            if new in item:
-                raise ValueError(
-                    f"{where}[{idx}] sets both '{old}' and its replacement '{new}'. "
-                    f"Remove '{old}'. {LEGACY_OBS_KEY_ADVICE[old]}")
-            item[new] = item.pop(old)
-            seen_legacy.add(old)
-        if (variable_was_the_operand and 'data_item_name' in item
-                and not item.get('operands')):
-            item['operands'] = [item['data_item_name']]
-        migrated.append(item)
-
-    for old in sorted(seen_legacy):
-        warnings.warn(f"{where}: {LEGACY_OBS_KEY_ADVICE[old]}", DeprecationWarning, stacklevel=3)
-    return migrated
-
-#: Top-level key naming an obs_data file: the module instance (or data set) it belongs to. In a
-#: module library an instance's ``instances/<name>/<name>_obs_data.json`` carries
-#: ``"obs_data_name": "<name>"``. Optional; see ``schemas/obs_data.schema.json``.
+#: Top-level key naming an obs_data file: the module parameterisation (or data set) it belongs
+#: to. In a module library a parameterisation's ``parameterisations/<name>/<name>_obs_data.json``
+#: carries ``"obs_data_name": "<name>"``. Optional;
+#: see ``schemas/obs_data.schema.json``.
 OBS_DATA_NAME_KEY = 'obs_data_name'
 
 
 def check_obs_data_name(json_obj, path=None):
     """The ``obs_data_name`` of an obs_data document, or None when it has none.
 
-    ``json_obj`` is the loaded file (a dict, or the legacy bare list of data items, which has
-    no name). A name that is not a non-empty string is a ValueError. When ``path`` lies in an
-    ``instances/<name>/`` directory of a module library, a missing or different
-    ``obs_data_name`` is warned about (UserWarning), since the file then describes another
-    instance than the one it is filed under.
+    ``json_obj`` is the loaded file. A name that is not a non-empty string is a ValueError.
+    When ``path`` lies in a ``parameterisations/<name>/`` directory of a module
+    library, a missing or different ``obs_data_name`` is warned about (UserWarning), since the
+    file then describes another parameterisation than the one it is filed under.
     """
     name = json_obj.get(OBS_DATA_NAME_KEY) if isinstance(json_obj, dict) else None
     if name is not None and (not isinstance(name, str) or not name.strip()):
@@ -216,21 +145,20 @@ def check_obs_data_name(json_obj, path=None):
         name = name.strip()
     if path is not None:
         directory = os.path.dirname(os.path.abspath(str(path)))
-        if os.path.basename(os.path.dirname(directory)) == 'instances':
+        if os.path.basename(os.path.dirname(directory)) == 'parameterisations':
             instance = os.path.basename(directory)
             if name != instance:
                 found = f"'{OBS_DATA_NAME_KEY}' is {name!r}" if name is not None else \
                     f"it has no '{OBS_DATA_NAME_KEY}'"
                 warnings.warn(
-                    f"obs_data {path} is in the directory of instance '{instance}', but "
-                    f"{found}. Set \"{OBS_DATA_NAME_KEY}\": \"{instance}\" if it is that "
-                    f"instance's data, or move it.", UserWarning, stacklevel=2)
+                    f"obs_data {path} is in the directory of parameterisation '{instance}', "
+                    f"but {found}. Set \"{OBS_DATA_NAME_KEY}\": \"{instance}\" if it is that "
+                    f"parameterisation's data, or move it.", UserWarning, stacklevel=2)
     return name
 
 
-#: Superseded keys of the parsed ``obs_info`` dict. This is a DIFFERENT layer from
-#: :data:`LEGACY_OBS_ITEM_KEYS`, which renames keys of an obs_data *entry* -- the file a user
-#: writes. These rename keys of the dict the parser hands the engine.
+#: Superseded keys of the parsed ``obs_info`` dict the parser hands the engine (not of the
+#: obs_data file, whose schema has only the current keys).
 LEGACY_OBS_INFO_KEYS = {
     'obs_names': 'data_item_names',
     'names_for_plotting': 'item_names_for_plotting',
@@ -272,8 +200,7 @@ def _advice(where, old):
 def _normalise_info(info, table, where):
     """Rewrite a parsed info dict's superseded keys, warning once per key.
 
-    The obs_info twin of :func:`migrate_legacy_obs_item_keys`, and deliberately the same
-    bargain: a copy rather than a mutation, because a dict handed in by a caller is theirs;
+    A copy rather than a mutation, because a dict handed in by a caller is theirs;
     an error rather than a precedence rule when both spellings are set, because no reading of
     that is not a mistake; and one warning per key, not per element.
 
@@ -406,7 +333,7 @@ class ObsDataCreator:
     def add_prediction_item(self, variable, unit, experiment_idx):
         """
         Add a prediction item to the dictionary.
-        variable: name of the variable to predict
+        variable: the model variable to record ("vessel/variable"); it also names the item
         unit: unit of the variable
         experiment_idx: index of the experiment this prediction item belongs to
         """
@@ -415,7 +342,8 @@ class ObsDataCreator:
             raise ValueError(f"experiment_idx {experiment_idx} is out of bounds for the number of experiments ({len(self.obs_data_dict['protocol_info']['sim_times'])}).")
 
         prediction_item = {
-            'variable': variable,
+            'data_item_name': variable,
+            'operands': [variable],
             'unit': unit,
             'experiment_idx': experiment_idx
         }
@@ -450,18 +378,6 @@ class ObsDataCreator:
             raise ValueError(
                 f"'cost_kwargs' must be a dict of keyword arguments for the 'cost_type' "
                 f"func, got {type(entry['cost_kwargs']).__name__}.")
-
-        # `variable` did two jobs and is gone (#466); accept it for now so an existing script
-        # keeps working, and say which key each of its jobs moved to.
-        for legacy, current in (('variable', 'data_item_name'),
-                                ('name_for_plotting', 'trace_name_for_plotting')):
-            if legacy in entry:
-                if current in entry:
-                    raise ValueError(
-                        f"data item sets both '{legacy}' and its replacement '{current}'. "
-                        f"Remove '{legacy}'.")
-                warnings.warn(LEGACY_OBS_KEY_ADVICE[legacy], DeprecationWarning, stacklevel=2)
-                entry[current] = entry.pop(legacy)
 
         # Caught here rather than at parse time, which is where the uniqueness rule is
         # enforced: by then the offending call is long gone, and the message can only name the
@@ -557,7 +473,7 @@ class ObsDataCreator:
 
 
 def fill_protocol_info(
-    obs_data: dict[str, Any] | list | None, protocol_info: dict[str, Any]
+    obs_data: dict[str, Any] | None, protocol_info: dict[str, Any]
 ) -> dict[str, Any]:
     """Put ``protocol_info`` into an obs_data document, returning a new dict.
 
@@ -566,23 +482,19 @@ def fill_protocol_info(
     pacing" reads better than "pacing, period 1000"), and re-deriving the timings
     is no reason to throw them away.
 
-    A bare array of data_items -- the other accepted shape, and what the
-    3compartment / heat_fenics studies ship -- becomes the object form carrying
-    those same items, which is the only shape that can hold a protocol_info at
-    all. ``dict(obs_data or {})`` used to raise on one, so a data-only file died
-    rather than being updated.
+    A bare list of data items is refused (``cuflynx-upgrade obs-data`` converts one).
 
     Here rather than beside the ``.mmt`` reader that first needed it: every key
     it writes -- ``protocol_info``, ``data_items``, ``experiment_labels``,
-    ``experiment_colors`` -- is this module's vocabulary, and this is the module
-    that migrates those names when they change (see
-    :func:`migrate_legacy_obs_item_keys`). A copy of this living beside one
+    ``experiment_colors`` -- is this module's vocabulary. A copy of this living beside one
     *producer* of a protocol_info would be a second place to update and a
     second thing to forget; the EasyML reader produces one too, and so could
     anything else.
     """
     if isinstance(obs_data, list):
-        obs_data = {"data_items": obs_data}
+        from libcuflynx.upgrade import hint
+        raise ValueError("obs_data is a bare list of data items, which libcuflynx no longer "
+                         "reads. " + hint("obs-data", "<file>", " --user-inputs <user_inputs.yaml>"))
     out = dict(obs_data or {})
     existing = out.get("protocol_info") or {}
     merged = dict(protocol_info)

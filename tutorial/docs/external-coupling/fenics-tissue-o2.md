@@ -102,7 +102,7 @@ Generate the system model as C++ from the module library, then run it:
 ```yaml
 # user_inputs.yaml
 file_prefix: microvasc_O2_FEniCS
-input_param_file: microvasc_O2_FEniCS_parameters.csv
+input_param_file: microvasc_O2_FEniCS_parameters.json
 resources_dir: circulatory-autogen-modules/system_models/coupled/microvasc_O2_FEniCS
 module_library_dirs: [circulatory-autogen-modules/modules]
 use_builtin_modules: false

@@ -7,6 +7,7 @@ import libcellml
 import libcuflynx.utilities.libcellml_helper_funcs as cellml
 import libcuflynx.utilities.libcellml_utilities as libcellml_utils
 from libcuflynx.parsers.PrimitiveParsers import YamlFileParser
+from libcuflynx.utilities.parameter_names import hoisted_names
 import re
 import pint
 import numdifftools as nd
@@ -182,15 +183,33 @@ class UnitConverter:
             return self.expand_compound_unit(unit_str)
 
     def get_scale_factor(self, from_unit_str, to_unit_str):
+        """The factor ``f`` with ``value_in_to_unit = f * value_in_from_unit``.
+
+        Raises AffineUnitsError when the conversion also needs an offset (e.g. kelvin and
+        celsius), and ValueError when the units cannot be parsed or are incompatible.
+        """
+        affine = AffineUnitsError(
+            f"Converting {from_unit_str} to {to_unit_str} needs an offset as well as a scale "
+            f"factor; couplings between affine units (such as kelvin and celsius) are not "
+            f"supported. Use the same units on both sides.")
         try:
             from_unit = self.ureg(self.parse_unit_string(from_unit_str))
             to_unit = self.ureg(self.parse_unit_string(to_unit_str))
+            offset = self.ureg.Quantity(0, from_unit.units).to(to_unit.units).magnitude
             factor = (1 * from_unit).to(to_unit).magnitude
-            return factor
+        except pint.OffsetUnitCalculusError:
+            raise affine from None
         except pint.DimensionalityError as e:
             raise ValueError(f"Incompatible units: {e}")
         except Exception as e:
             raise ValueError(f"Failed to parse or convert units: {e}")
+        if offset != 0:
+            raise affine
+        return factor
+
+
+class AffineUnitsError(ValueError):
+    """Two units whose conversion needs an offset (e.g. kelvin and celsius)."""
 
 def change_parameter_values_and_save(cellml_file, parameter_names, parameter_values, output_file):
     """
@@ -243,6 +262,18 @@ def change_parameter_values_and_save(cellml_file, parameter_names, parameter_val
                     found = True
             # print(comp.variableCount())
             # print([comp.variable(i).name() for i in range(comp.variableCount())])
+        if not found:
+            # A model hoisted by another generator (HOISTED_PARAMETER_CONVENTIONS): the first
+            # name that exists with an initial value is the parameter.
+            for hoisted in hoisted_names(module, name):
+                comp_name, var_name = hoisted.split('/', 1)
+                comp = flat_model.component(comp_name)
+                if comp is not None and comp.hasVariable(var_name):
+                    var = comp.variable(var_name)
+                    if var.initialValue() != '':
+                        var.setInitialValue(str(new_val))
+                        found = True
+                        break
         if not found:
             print(f"Parameter '{name}' not found in any component.")
 
@@ -377,7 +408,7 @@ def get_default_inp_data_dict(file_prefix, input_param_file, resources_dir):
     Args:
         file_prefix: Model name prefix; ties together the ``{prefix}_*`` resource
             files in ``resources_dir``.
-        input_param_file: Name of the parameters CSV file.
+        input_param_file: Name of the parameters file (``<prefix>_parameters.json``).
         resources_dir: Directory holding the input resources.
 
     Returns:

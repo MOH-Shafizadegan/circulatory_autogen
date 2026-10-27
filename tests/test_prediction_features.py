@@ -11,6 +11,7 @@ emulator training with them.
 import copy
 import json
 import os
+import shutil
 import warnings
 from types import SimpleNamespace
 
@@ -48,8 +49,7 @@ def _parsed_prediction_info(items, sim_times=((2.0,),)):
            "prediction_items": items,
            "protocol_info": {"pre_times": [0.0] * len(sim_times),
                              "sim_times": [list(t) for t in sim_times]}}
-    parsed = ObsAndParamDataParser().parse_obs_data_json(obs_data_dict=doc, pre_time=0.0,
-                                                          sim_time=2.0)
+    parsed = ObsAndParamDataParser().parse_obs_data_json(obs_data_dict=doc)
     return parsed["prediction_info"], parsed["protocol_info"]
 
 
@@ -340,7 +340,7 @@ def _benchmark_obs(tmp_path, items=PREDICTION_ITEMS, resources_dir=None):
 
 def _parsed_benchmark(obs_path, scratch):
     parser = ObsAndParamDataParser()
-    parsed = parser.parse_obs_data_json(param_id_obs_path=obs_path, pre_time=0.0, sim_time=8.0)
+    parsed = parser.parse_obs_data_json(param_id_obs_path=obs_path)
     os.makedirs(scratch, exist_ok=True)
     obs_info = parser.process_obs_info(gt_df=parsed['gt_df'], output_dir=scratch, dt=0.05)
     protocol_info = parser.process_protocol_and_weights(
@@ -355,7 +355,7 @@ def _stub_trainer(resources_dir, tmp_path, include):
     obs_info, protocol_info, prediction_info = _parsed_benchmark(obs_path,
                                                                  str(tmp_path / 'scratch'))
     param_id_info = ObsAndParamDataParser().get_param_id_info(
-        os.path.join(resources_dir, 'Simple_ODE_Benchmark_params_for_id.csv'))
+        os.path.join(resources_dir, 'Simple_ODE_Benchmark_params_for_id.json'))
     pid = SimpleNamespace(sim_helper=SimpleNamespace(emulates_features=False),
                           obs_info=obs_info, protocol_info=protocol_info,
                           prediction_info=prediction_info, param_id_info=param_id_info,
@@ -453,12 +453,12 @@ def _emulator_config(base_user_inputs, resources_dir, tmp_path, obs_path):
     config = base_user_inputs.copy()
     config.update({
         'file_prefix': 'Simple_ODE_Benchmark',
-        'input_param_file': 'Simple_ODE_Benchmark_parameters.csv',
+        'input_param_file': 'Simple_ODE_Benchmark_parameters.json',
         'model_type': 'cellml',
         'resources_dir': resources_dir,
         'param_id_obs_path': obs_path,
         'params_for_id_path': os.path.join(resources_dir,
-                                           'Simple_ODE_Benchmark_params_for_id.csv'),
+                                           'Simple_ODE_Benchmark_params_for_id.json'),
         'param_id_output_dir': str(tmp_path / 'param_id_output'),
         'param_id_method': 'genetic_algorithm',
         'DEBUG': True,
@@ -596,7 +596,7 @@ def _benchmark_config(base_user_inputs, resources_dir, temp_output_dir,
     config = base_user_inputs.copy()
     config.update({
         'file_prefix': 'Simple_ODE_Benchmark',
-        'input_param_file': 'Simple_ODE_Benchmark_parameters.csv',
+        'input_param_file': 'Simple_ODE_Benchmark_parameters.json',
         'model_type': 'cellml',
         'solver': 'CVODE_myokit',
         'param_id_method': 'genetic_algorithm',
@@ -607,10 +607,10 @@ def _benchmark_config(base_user_inputs, resources_dir, temp_output_dir,
         'do_uq': False,
         'do_ia': False,
         'plot_predictions': False,
-        'solver_info': {'MaximumStep': 0.01, 'MaximumNumberOfSteps': 5000},
+        'solver_info': {'MaximumStep': 0.01},
         'param_id_obs_path': obs_path,
         'params_for_id_path': os.path.join(resources_dir,
-                                           'Simple_ODE_Benchmark_params_for_id.csv'),
+                                           'Simple_ODE_Benchmark_params_for_id.json'),
         'param_id_output_dir': temp_output_dir,
         'resources_dir': resources_dir,
         'generated_models_dir': temp_generated_models_dir,
@@ -668,15 +668,21 @@ def test_sobol_sa_reports_prediction_features_end_to_end(
 @pytest.mark.integration
 @pytest.mark.slow
 @pytest.mark.mpi
+@pytest.mark.parametrize('gradient_method', ['FD', None])
 def test_local_sa_reports_prediction_features_end_to_end(
         base_user_inputs, resources_dir, temp_output_dir, temp_generated_models_dir, mpi_comm,
-        tmp_path):
-    """d(x_max)/dp -> 1 and d(y_mean_late)/dq -> 1/3 on the benchmark (closed form)."""
+        tmp_path, monkeypatch, gradient_method):
+    """d(x_max)/dp -> 1 and d(y_mean_late)/dq -> 1/3 on the benchmark (closed form), by finite
+    differences and by the analytic arm (here Myokit CVODES), which must not fall back to FD."""
     from libcuflynx.sensitivity_analysis.sensitivityAnalysis import SensitivityAnalysis
 
+    if gradient_method is None:
+        def no_fd(*args, **kwargs):
+            raise AssertionError('the analytic arm fell back to finite differences')
+        monkeypatch.setattr(prediction_features, 'feature_sensitivities', no_fd)
     obs_path, obs_doc = _benchmark_obs(tmp_path, resources_dir=resources_dir)
-    out_dir = os.path.join(temp_output_dir, 'local_sa_prediction_features')
-    sa_options = {'method': 'local', 'gradient_method': 'FD', 'num_samples': 4,
+    out_dir = os.path.join(temp_output_dir, f'local_sa_prediction_features_{gradient_method}')
+    sa_options = {'method': 'local', 'gradient_method': gradient_method, 'num_samples': 4,
                   'sample_type': 'saltelli', 'output_dir': out_dir,
                   'include_prediction_items': True}
     config = _benchmark_config(base_user_inputs, resources_dir, temp_output_dir,
@@ -702,6 +708,88 @@ def test_local_sa_reports_prediction_features_end_to_end(
         df = pd.read_csv(os.path.join(out_dir, 'local_sensitivity_absolute.csv'),
                          index_col='output')
         assert 'x_max' in df.index and 'y_mean_late' in df.index
+
+
+def _local_prediction_rows(config, obs_doc, gradient_method):
+    from libcuflynx.sensitivity_analysis.sensitivityAnalysis import SensitivityAnalysis
+    sa_options = dict(config['sa_options'], gradient_method=gradient_method)
+    sa = SensitivityAnalysis.init_from_dict(dict(config, sa_options=sa_options))
+    sa.set_ground_truth_data(obs_doc)
+    sa.set_params_for_id([
+        {'vessel_name': 'benchmark', 'param_name': 'p', 'param_type': 'const', 'min': 0, 'max': 6},
+        {'vessel_name': 'benchmark', 'param_name': 'q', 'param_type': 'const', 'min': 0, 'max': 6},
+    ])
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', prediction_features.PredictionFeatureWarning)
+        sa.run_sensitivity_analysis(sa_options)
+    local = sa.get_local_sensitivities()
+    return {row: local['raw'][row] for row in local['prediction_feature_names']}
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.mpi
+def test_local_sa_of_prediction_features_by_casadi_matches_finite_differences(
+        base_user_inputs, resources_dir, temp_output_dir, temp_generated_models_dir, mpi_comm,
+        tmp_path, monkeypatch):
+    """The CasADi arm differentiates prediction features too, without falling back to finite
+    differences. (Operations CasADi has: the benchmark's steady_state_avg is numpy-only.)"""
+    items = [{"data_item_name": "x_max", "operands": ["benchmark/x"], "unit": "dimensionless",
+              "operation": "max", "data_type": "constant"},
+             {"data_item_name": "y_mean", "operands": ["benchmark/y"], "unit": "dimensionless",
+              "operation": "mean"}]
+    obs_path, obs_doc = _benchmark_obs(tmp_path, items=items, resources_dir=resources_dir)
+    for item in obs_doc['data_items']:
+        item['operation'] = 'mean'
+    with open(obs_path, 'w') as f:
+        json.dump(obs_doc, f)
+    sa_options = {'method': 'local', 'num_samples': 4, 'sample_type': 'saltelli',
+                  'output_dir': os.path.join(temp_output_dir, 'local_casadi'),
+                  'include_prediction_items': True}
+    config = _benchmark_config(base_user_inputs, resources_dir, temp_output_dir,
+                               temp_generated_models_dir, obs_path, sa_options=sa_options,
+                               model_type='casadi_python', solver='casadi_integrator',
+                               solver_info={'method': 'bdf'})
+    _generate(config, mpi_comm)
+    fd = _local_prediction_rows(config, obs_doc, 'FD')
+    monkeypatch.setattr(prediction_features, 'feature_sensitivities',
+                        lambda *a, **k: pytest.fail('fell back to finite differences'))
+    rows = _local_prediction_rows(config, obs_doc, None)
+    assert list(rows) == ['x_max', 'y_mean'] == list(fd)
+    for name in rows:
+        for label, value in fd[name].items():
+            assert rows[name][label] == pytest.approx(value, rel=1e-3, abs=1e-6), (name, label)
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.mpi
+@pytest.mark.parametrize('exp1_sim_times, analytic', [((3.0,), True), ((1.5, 1.5), False)])
+def test_local_sa_of_a_feature_in_a_validation_only_experiment(
+        base_user_inputs, resources_dir, temp_output_dir, temp_generated_models_dir, mpi_comm,
+        tmp_path, monkeypatch, exp1_sim_times, analytic):
+    """A feature measured in a validation-only experiment: the analytic arm differentiates it
+    there and agrees with finite differences. Where the arm cannot (Myokit's needs a single
+    sub-experiment) it says so and the finite-difference numbers are used."""
+    obs_path, obs_doc = _validation_obs(tmp_path, resources_dir, exp1_sim_times=exp1_sim_times)
+    sa_options = {'method': 'local', 'num_samples': 4, 'sample_type': 'saltelli',
+                  'output_dir': os.path.join(temp_output_dir, f'local_validation_{analytic}'),
+                  'include_prediction_items': True}
+    config = _benchmark_config(base_user_inputs, resources_dir, temp_output_dir,
+                               temp_generated_models_dir, obs_path, sa_options=sa_options)
+    _generate(config, mpi_comm)
+    fd = _local_prediction_rows(config, obs_doc, 'FD')
+    if analytic:
+        monkeypatch.setattr(prediction_features, 'feature_sensitivities',
+                            lambda *a, **k: pytest.fail('fell back to finite differences'))
+        rows = _local_prediction_rows(config, obs_doc, None)
+    else:
+        with pytest.warns(UserWarning, match='finite differences instead'):
+            rows = _local_prediction_rows(config, obs_doc, None)
+    assert list(rows) == ['x_mean_val'] == list(fd)
+    for label, value in fd['x_mean_val'].items():
+        assert rows['x_mean_val'][label] == pytest.approx(value, rel=1e-3, abs=1e-6)
+    assert abs(fd['x_mean_val'][next(iter(fd['x_mean_val']))]) > 0.1
 
 
 @pytest.mark.integration
@@ -998,3 +1086,85 @@ def test_every_experiment_with_data_is_simulated_as_before(
     cost = engine.get_cost_from_params(np.array([1.0, 1.0]))
     assert np.isfinite(cost)
     assert spy.calls == [[0, 1]]
+
+
+# ============================================================================ save_prediction_data
+# output pin. The files save_prediction_data writes, for a protocol with items in the last and in
+# an earlier sub-experiment, compared with tests/test_inputs/prediction_data_pin (written by the
+# implementation this pin was taken from). Set CA_WRITE_PREDICTION_PIN=1 to rewrite them.
+
+PREDICTION_PIN_DIR = os.path.join(os.path.dirname(__file__), 'test_inputs', 'prediction_data_pin')
+
+
+
+def _assert_same_json(got, want, where=''):
+    if isinstance(want, dict):
+        assert isinstance(got, dict) and sorted(got) == sorted(want), where
+        for key in want:
+            _assert_same_json(got[key], want[key], f'{where}.{key}')
+    elif isinstance(want, list):
+        assert isinstance(got, list) and len(got) == len(want), where
+        for i, (g, w) in enumerate(zip(got, want)):
+            _assert_same_json(g, w, f'{where}[{i}]')
+    elif isinstance(want, float):
+        assert got == pytest.approx(want, rel=1e-9, abs=1e-12), where
+    else:
+        assert got == want, where
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.mpi
+def test_save_prediction_data_outputs_are_stable(
+        base_user_inputs, resources_dir, temp_output_dir, temp_generated_models_dir, mpi_comm,
+        tmp_path):
+    t_obs = np.arange(5) * 0.5
+    items = [
+        {"data_item_name": "x_trace", "operands": ["benchmark/x"], "unit": "dimensionless",
+         "experiment_idx": 0},
+        {"data_item_name": "y_trace", "operands": ["benchmark/y"], "unit": "dimensionless",
+         "experiment_idx": 0},
+        {"data_item_name": "x_sub0", "operands": ["benchmark/x"], "unit": "dimensionless",
+         "experiment_idx": 1, "subexperiment_idx": 0, "data_type": "series",
+         "value": _x_exp1(1.0, t_obs).tolist(), "std": 0.05, "obs_dt": 0.5},
+        {"data_item_name": "x_sub1", "operands": ["benchmark/x"], "unit": "dimensionless",
+         "experiment_idx": 1, "data_type": "series",
+         "value": _x_exp1(1.0, 2.0 + t_obs).tolist(), "std": 0.05, "obs_dt": 0.5},
+        {"data_item_name": "x_max_sub0", "operands": ["benchmark/x"], "unit": "dimensionless",
+         "experiment_idx": 1, "subexperiment_idx": 0, "operation": "max",
+         "data_type": "constant", "value": 2.0, "std": 0.1},
+        {"data_item_name": "x_max_sub1", "operands": ["benchmark/x"], "unit": "dimensionless",
+         "experiment_idx": 1, "operation": "max", "data_type": "constant",
+         "value": 1.1, "std": 0.1}]
+    obs_path, _ = _validation_obs(tmp_path, resources_dir, exp1_sim_times=(2.0, 3.0),
+                                  prediction_items=items)
+    config = _benchmark_config(base_user_inputs, resources_dir, temp_output_dir,
+                               temp_generated_models_dir, obs_path)
+    _generate(config, mpi_comm)
+    if mpi_comm.Get_rank() != 0:
+        return
+    pid = CVS0DParamID.init_from_dict(config)
+    pid.set_best_param_vals(np.array([0.5, 1.0]))
+    pid.save_prediction_data()
+
+    written = sorted(f for f in os.listdir(pid.output_dir)
+                     if f.startswith('prediction_variable_') or
+                     f == validation.VALIDATION_RESULTS_FILE)
+    if os.environ.get('CA_WRITE_PREDICTION_PIN'):
+        os.makedirs(PREDICTION_PIN_DIR, exist_ok=True)
+        for name in written:
+            shutil.copy(os.path.join(pid.output_dir, name), PREDICTION_PIN_DIR)
+    assert written == sorted(os.listdir(PREDICTION_PIN_DIR))
+    for name in written:
+        got_path = os.path.join(pid.output_dir, name)
+        want_path = os.path.join(PREDICTION_PIN_DIR, name)
+        if name.endswith('.npy'):
+            got, want = np.load(got_path), np.load(want_path)
+            assert got.shape == want.shape and got.dtype == want.dtype, name
+            np.testing.assert_allclose(got, want, rtol=1e-9, atol=1e-12, err_msg=name)
+        elif name.endswith('.json'):
+            with open(got_path) as g, open(want_path) as w:
+                _assert_same_json(json.load(g), json.load(w), name)
+        else:
+            with open(got_path, 'rb') as g, open(want_path, 'rb') as w:
+                assert g.read() == w.read(), name

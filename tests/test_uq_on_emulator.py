@@ -176,7 +176,7 @@ def _config(resources_dir, output_dir, generated_models_dir, emulator_dir,
             library='emcee', **overrides):
     config = {
         'file_prefix': 'Simple_ODE_Benchmark',
-        'input_param_file': 'Simple_ODE_Benchmark_parameters.csv',
+        'input_param_file': 'Simple_ODE_Benchmark_parameters.json',
         'model_type': 'cellml',
         'solver': 'CVODE_myokit',
         'param_id_method': 'genetic_algorithm',
@@ -188,11 +188,11 @@ def _config(resources_dir, output_dir, generated_models_dir, emulator_dir,
         'do_ia': False,
         'do_sensitivity': False,
         'plot_predictions': False,
-        'solver_info': {'MaximumStep': 0.01, 'MaximumNumberOfSteps': 5000},
+        'solver_info': {'MaximumStep': 0.01},
         'param_id_obs_path': os.path.join(resources_dir,
                                           'Simple_ODE_Benchmark_obs_data.json'),
         'params_for_id_path': os.path.join(resources_dir,
-                                           'Simple_ODE_Benchmark_params_for_id.csv'),
+                                           'Simple_ODE_Benchmark_params_for_id.json'),
         'param_id_output_dir': output_dir,
         'resources_dir': resources_dir,
         'generated_models_dir': generated_models_dir,
@@ -352,10 +352,8 @@ def test_uq_on_an_emulator_finds_both_modes_of_a_bimodal_target(
     (test_UQ.py::test_mcmc_bimodal_with_validation) takes ~26 minutes, which is why it is marked
     slow and does not run on a pull request.
 
-    It could not be emulated before #421: both data_items were data_type ``prob_dist``, so
-    EmulatorTrainer refused with "the emulator predicts scalar data_item features only". Now
-    that they are constants scored against a KDE, the emulator has features to predict -- and
-    only easy ones, because the bimodality lives entirely in the *likelihood*. The
+    Both data_items are constants scored against a KDE, so the emulator has features to
+    predict -- and only easy ones, because the bimodality lives entirely in the *likelihood*. The
     parameter -> steady-state map it has to learn is as smooth as the unimodal case; the two
     modes come from the KDE cost applied afterwards. That is what makes this affordable here and
     expensive against the model.

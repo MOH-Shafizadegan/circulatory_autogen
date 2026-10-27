@@ -1,7 +1,7 @@
-name,BC_type,vessel_type,inp_vessels,out_vessels
-cap_0,pp,capillary,,capillary_GE_0
-cap_1,pp,capillary,,capillary_GE_1
-capillary_GE_0,nn,GE_capillary,cap_0,volume_0
-capillary_GE_1,nn,GE_capillary,cap_1,volume_1
-volume_0,nn,well_mixed_volume,capillary_GE_0,
-volume_1,nn,well_mixed_volume,capillary_GE_1,
+name,module_type,module_subtype,inp_instances,out_instances
+cap_0,capillary,pp,,capillary_GE_0
+cap_1,capillary,pp,,capillary_GE_1
+capillary_GE_0,GE_capillary,nn,cap_0,volume_0
+capillary_GE_1,GE_capillary,nn,cap_1,volume_1
+volume_0,well_mixed_volume,nn,capillary_GE_0,
+volume_1,well_mixed_volume,nn,capillary_GE_1,

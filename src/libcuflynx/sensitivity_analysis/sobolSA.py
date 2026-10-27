@@ -50,6 +50,7 @@ from libcuflynx.utilities.mpi_utils import get_MPI as _get_MPI
 
 MPI = _get_MPI()
 from libcuflynx.parsers.PrimitiveParsers import CSVFileParser, ObsAndParamDataParser
+from libcuflynx.sensitivity_analysis.sobol_ranking import read_sobol_indices
 import csv
 from tqdm import tqdm  # make sure tqdm is installed
 from libcuflynx.utilities.obs_data_helpers import obs_item_names, obs_item_labels
@@ -142,10 +143,7 @@ class sobol_SA():
             self.obs_and_param_parser = ObsAndParamDataParser(
                 modifier_funcs_external_path=getattr(self, 'modifier_funcs_external_path', None))
             parsed_data = self.obs_and_param_parser.parse_obs_data_json(
-                param_id_obs_path=param_id_path,
-                pre_time=pre_time,
-                sim_time=sim_time
-            )
+                param_id_obs_path=param_id_path)
             self.gt_df = parsed_data["gt_df"]
             self.protocol_info = parsed_data["protocol_info"]
             # Reported as extra outputs when sa_options.include_prediction_items is set: the
@@ -206,7 +204,7 @@ class sobol_SA():
             # self.__set_and_save_param_names()
 
         if self.param_id_info is not None:
-            self.SA_info = self.create_SA_info(self.sample_type, self.SA_info["num_samples"])
+            self.SA_info = self._create_SA_info(self.sample_type, self.SA_info["num_samples"])
     
 
     def add_user_operation_func(self, func):
@@ -219,10 +217,7 @@ class sobol_SA():
             self.obs_and_param_parser = ObsAndParamDataParser(
                 modifier_funcs_external_path=getattr(self, 'modifier_funcs_external_path', None))
         parsed_data = self.obs_and_param_parser.parse_obs_data_json(
-            obs_data_dict=obs_data_dict,
-            pre_time=self.pre_time,
-            sim_time=self.sim_time
-        )
+            obs_data_dict=obs_data_dict)
         self.gt_df = parsed_data["gt_df"]
         self.protocol_info = parsed_data["protocol_info"]
         self.prediction_info = parsed_data["prediction_info"]
@@ -247,7 +242,7 @@ class sobol_SA():
                 modifier_funcs_external_path=getattr(self, 'modifier_funcs_external_path', None))
         self.param_id_info = self.obs_and_param_parser.get_param_id_info_from_entries(params_for_id_dict)
         self.obs_and_param_parser.save_param_names(self.param_id_info, self.output_dir)
-        self.create_SA_info(self.sample_type, self.SA_info["num_samples"])
+        self._create_SA_info(self.sample_type, self.SA_info["num_samples"])
         if self.rank == 0:
             print(f'Params for id set: {self.param_id_info["param_names"]}')
 
@@ -336,10 +331,6 @@ class sobol_SA():
         return ['+'.join(n) if isinstance(n, (list, tuple)) else n
                 for n in self.SA_info["param_names"]]
 
-    def create_SA_info(self, sample_type, num_samples):
-        # Backwards compatibility alias
-        return self._create_SA_info(sample_type, num_samples)
-
 
     @property
     def sim_helper(self):
@@ -373,9 +364,10 @@ class sobol_SA():
         so an emulator trained against different bounds, observables or protocol would produce
         a complete, plausible set of indices for a different problem (#333).
         """
-        from libcuflynx.emulators.emulator_bundle import fingerprint
-        bad = {jj: dtype for jj, dtype in enumerate(self.obs_info['data_types'])
-               if dtype != 'constant'}
+        # Zero-weighted non-scalars (a recorded trace carried only to be plotted) are not in the
+        # cost, so the emulator is never asked for them. Same rule as the trainer and paramID.
+        from libcuflynx.emulators.emulator_bundle import fingerprint, weighted_non_scalar_obs
+        bad = weighted_non_scalar_obs(self.obs_info)
         if bad:
             raise ValueError(
                 f'use_emulator is set, but obs_data.json has data_type(s) '
@@ -559,7 +551,7 @@ class sobol_SA():
                     # The emulator predicts each data_item's feature directly, so the operation
                     # must not run again: it would reduce an already-reduced scalar, and
                     # max_minus_min of one value is zero.
-                    row = list(self.sim_helper.get_predicted_features())
+                    row = self._emulated_row()
                     if pred_indices:
                         row += list(self.sim_helper.get_predicted_prediction_features(pred_names))
                     local_outputs.append(row)
@@ -862,6 +854,18 @@ class sobol_SA():
         create_heatmap(S1_heatmap_data, 'First-Order ($S_1$)')
         create_heatmap(ST_heatmap_data, 'Total-Order ($S_T$)')
 
+    def _emulated_row(self):
+        """One sample's outputs from the emulator, in the order the solver path produces them.
+
+        ``get_predicted_features`` answers for every data_item (nan where the emulator has no
+        feature). The solver path reduces only ``_observable_indices()``, and the labels are
+        built from those, so the emulator row has to be the same subset: passing the full
+        vector put item k's sensitivity under the label of the k-th *reported* item, and
+        dropped every output past the number of labels.
+        """
+        predicted = np.asarray(self.sim_helper.get_predicted_features(), dtype=float)
+        return [float(predicted[j]) for j in self._observable_indices()]
+
     def _observable_indices(self):
         """The data_items this analysis reports on, by index into ``obs_info``.
 
@@ -873,14 +877,25 @@ class sobol_SA():
         reducing a real observable, and every sample pays it.
         """
         operations = self.obs_info.get('operations') or []
-        weights = self.obs_info.get('weight_const_vec')
+        # Each weight vector is indexed by position among items of its own data_type, not
+        # by data_item: map every weight back through its *_idx_to_obs_idx. Indexing
+        # weight_const_vec by data_item index reads another item's weight whenever a
+        # non-constant precedes a constant -- in a joint obs_data that reported other
+        # datasets' zero-weighted items and dropped weighted ones.
+        weighted = {}
+        for kind in ('const', 'series', 'amp', 'phase'):
+            weights = self.obs_info.get('weight_%s_vec' % kind)
+            idx_map = self.obs_info.get('%s_idx_to_obs_idx' % kind)
+            if weights is None or idx_map is None:
+                continue
+            for weight, obs_idx in zip(weights, idx_map):
+                weighted[int(obs_idx)] = bool(np.any(np.asarray(weight, dtype=float)))
         keep = []
         for index, operation in enumerate(operations):
             if operation is None:
                 continue
-            if weights is not None and index < len(weights):
-                if not np.any(np.asarray(weights[index], dtype=float)):
-                    continue
+            if not weighted.get(index, True):
+                continue
             keep.append(index)
         return keep
 
@@ -1021,26 +1036,7 @@ class sobol_SA():
             dict: { 'S1': {out_name: {param: val}}, 'ST': {out_name: {param: val}} }
         """
         file_name = f"all_outputs_n{self.num_samples}_Sobol_indices.csv"
-        file_path = os.path.join(self.output_dir, file_name)
-        
-        # Load the CSV
-        df = pd.read_csv(file_path)
-        
-        # Use the 'Parameter' column as the index for easy dict conversion
-        df.set_index('Parameter', inplace=True)
-        
-        results = {'S1': {}, 'ST': {}}
-        
-        # Iterate through columns to separate S1 and ST by output name
-        for col in df.columns:
-            if col.startswith('S1_'):
-                out_name = col.replace('S1_', '', 1)
-                results['S1'][out_name] = df[col].to_dict()
-            elif col.startswith('ST_'):
-                out_name = col.replace('ST_', '', 1)
-                results['ST'][out_name] = df[col].to_dict()
-                
-        return results
+        return read_sobol_indices(os.path.join(self.output_dir, file_name))
  
     def run(self):
         samples = self.generate_samples()

@@ -33,15 +33,21 @@ is an aortic bifurcation of `split_junction` and `arterial` vessels with nonline
 
 ```python
 from libcuflynx.scripts.convert_0d_to_1d import convert_0d_to_1d
-convert_0d_to_1d('aortic_bif', 'resources', 'aortic_bif_0d_parameters.csv', 'resources',
+convert_0d_to_1d('aortic_bif', 'resources', 'aortic_bif_0d_parameters.json', 'resources',
                  ['parent', 'daughter_1', 'daughter_2'])
 ```
 
-This writes `aortic_bif_hybrid_module_array.csv` and `aortic_bif_hybrid_parameters.csv`:
+This writes `aortic_bif_hybrid_module_array.csv` and `aortic_bif_hybrid_parameters.json`:
 - the listed vessels become `FV1D_vessel` rows, and their `K_tube_*` rows go;
 - an `FV1D_solver` row is added;
 - the boundary-condition parameters of the 0D modules now fed by the 1D vessels are marked
   `WONT_BE_USED`.
+
+The 1D solver needs to know whether each 1D vessel is an artery or a vein. A vessel whose name
+does not say (`A_…`/`…art…`/`…aort…`, or `V_…`/`…ven…`/`…vein…`) needs a global parameter
+`art_ven_type_<vessel>` (1 artery, 0 vein, `dimensionless`) in the hybrid parameters file; here
+`art_ven_type_parent`, `art_ven_type_daughter_1` and `art_ven_type_daughter_2`, all 1. The 0D
+model's file can't hold them: it refuses names its modules don't use.
 
 **3. Generate.**
 

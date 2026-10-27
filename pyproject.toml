@@ -85,6 +85,9 @@ dependencies = [
     # statsmodels.regression.linear_model.yule_walker to do it. The import is function-scope,
     # so an extra would surface as a failure at the end of a chain that had already run.
     "statsmodels>=0.12.0",
+    # Every reader validates its file against the shipped JSON Schema (libcuflynx.schemas):
+    # the schemas own the input files' structure.
+    "jsonschema>=4.0",
 ]
 
 [project.scripts]
@@ -95,22 +98,24 @@ dependencies = [
 # is table-driven off this block, so a new entry point cannot be added without being tested.
 cuflynx-generate = "libcuflynx.scripts.script_generate_with_new_architecture:main"
 cuflynx-param-id = "libcuflynx.scripts.param_id_run_script:main"
-# Declared even though the stage is not currently implemented: the module says why, and
-# `cuflynx-sequential-param-id` reports it in one line instead of the command not existing.
-cuflynx-sequential-param-id = "libcuflynx.scripts.sequential_param_id_run_script:main"
+# Calibrations and analyses run in order from a calibration_workflow.json, merged into one model.
+cuflynx-calibration-workflow = "libcuflynx.scripts.calibration_workflow_run_script:main"
+# Writing a model and its calibration up: LaTeX symbols per variable, then a methods section.
+cuflynx-variable-mapping = "libcuflynx.scripts.variable_mapping_script:main"
+cuflynx-methods-latex = "libcuflynx.scripts.methods_latex_script:main"
 cuflynx-sensitivity = "libcuflynx.scripts.sensitivity_analysis_run_script:main"
 cuflynx-identifiability = "libcuflynx.scripts.identifiability_run_script:main"
-# Not a pipeline stage: a one-off that rewrites obs_data files into the #466 vocabulary.
-# A console command rather than a note in the changelog because the rename is not purely
-# mechanical: data_item_name has to be made unique, and the tool derives a name from
-# whatever actually distinguishes the colliding items.
-cuflynx-migrate-obs-data = "libcuflynx.scripts.migrate_obs_data:main"
+# Not a pipeline stage: converts, once, files in a form libcuflynx no longer reads.
+cuflynx-upgrade = "libcuflynx.upgrade:main"
 cuflynx-train-emulator = "libcuflynx.scripts.train_emulator_run_script:main"
 cuflynx-plot = "libcuflynx.scripts.plot_param_id_script:main"
 # Writes a folder that reproduces a configuration: the model, the observations, the
 # parameter bounds, the config, and a run_pipeline.py that drives every stage its do_*
 # flags enable. CUFLynx exports the same bundle from the GUI and calls this to write it.
 cuflynx-generate-pipeline = "libcuflynx.scripts.generate_pipeline_script:main"
+# An obs_data's prediction items on a model with no calibration: traces, features and validation
+# (libcuflynx.protocol_runners.run_prediction_items).
+cuflynx-run-predictions = "libcuflynx.scripts.run_predictions_script:main"
 # Runs a generated C++ model coupled to external Python models (api transport "python").
 cuflynx-couple = "libcuflynx.coupling.runner:main"
 
@@ -120,9 +125,6 @@ include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["src"]
-# src/libcuflynx/obsolete is dead code kept in the tree for reference; it is not shipped.
-# find() matches the dotted package name it discovers, hence the namespaced spelling as well.
-exclude = ["obsolete*", "libcuflynx.obsolete*"]
 
 # Non-Python files that are read at runtime and therefore have to ship in the wheel.
 # Without them `pip install libcuflynx` imports fine and then fails at the first
@@ -130,9 +132,7 @@ exclude = ["obsolete*", "libcuflynx.obsolete*"]
 # libcuflynx/utilities/package_resources.py), never by walking up from __file__.
 # Deliberately NOT shipped: src/libcuflynx/coupler/* (C++ sources plus a Makefile for a
 # separately built 1D-0D coupler executable -- nothing in the Python reads them, and
-# building in place would mean writing into site-packages) and
-# src/libcuflynx/param_id/aadc_native/bdf_loop.cpp (source for an optional AADC extension
-# the user compiles themselves; only ever named in a log message).
+# building in place would mean writing into site-packages).
 [tool.setuptools.package-data]
 # The CellML module library and the built-in module configs (~3 MB, ~0.5 MB compressed).
 "libcuflynx.generators" = ["resources/*.cellml", "resources/*.json"]
@@ -140,8 +140,7 @@ exclude = ["obsolete*", "libcuflynx.obsolete*"]
 "libcuflynx.generators.cpp" = ["templates/*.j2"]
 # Example input for example_format_obs_data_json_file(), which is itself shipped.
 "libcuflynx.scripts" = ["example_data/*.csv"]
-# JSON Schemas of the module array and module config files (for editors, PhLynx and tests;
-# the loaders in utilities/config_schemas.py check the same rules without a schema library).
+# JSON Schemas of the input files: every reader validates its file against its schema.
 "libcuflynx.schemas" = ["*.schema.json"]
 
 [project.optional-dependencies]
@@ -200,6 +199,16 @@ emulation = [
 # list. The extra exists so `pip install "libcuflynx[cpp]"` and `[all]` resolve rather than
 # erroring on an undefined extra, and so this note has somewhere to live.
 cpp = []
+# AADC (Matlogica) AD backend -- `model_type: aadc_python` -- and aadc-ode, which the
+# `gradient_strategy: kernel` gradient of `semi_implicit_signed` replays its kernel through.
+# AADC is proprietary: binary wheels only, Python >=3.10, under the Matlogica EULA, which
+# limits it to non-commercial / academic use. That is why this extra is in neither [all] nor
+# [dev]: installing it is an explicit choice to accept those terms. Every import is lazy; without
+# aadc-ode the kernel strategy warns and falls back to the tape strategy.
+aadc = [
+    "aadc>=2.12,<3",
+    "aadc-ode>=0.6.5",
+]
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=3.0.0",
@@ -213,10 +222,6 @@ dev = [
     # those tests need tomli. They used to `pytest.importorskip` it and pass by skipping,
     # which meant a green run said nothing at all about pyproject.toml.
     "tomli; python_version < '3.11'",
-    # tests/test_json_module_arrays.py validates module arrays and module configs against the
-    # shipped JSON Schemas (src/libcuflynx/schemas). Test-only: the loaders check the same
-    # rules themselves, so it is not a runtime dependency.
-    "jsonschema>=4.0",
     # Whole extras, not a hand-picked subset of them. `[dev]` listing `mpi4py` on its own
     # was enough to collect the suite (tests/conftest.py does `from mpi4py import MPI` at
     # module scope) but not to run it: paramID's multi-rank branch imports `schwimmbad`,

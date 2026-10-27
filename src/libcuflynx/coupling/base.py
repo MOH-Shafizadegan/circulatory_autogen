@@ -6,7 +6,7 @@ class ExternalModel:
 
     The coupling runner creates it once, with keyword arguments:
 
-    * ``params``: ``{name: value}``, the module's constants (``<name>_<row>`` in the parameters
+    * ``params``: ``{name: value}``, the module's constants (``<row>/<name>`` in the parameters
       file) and global constants, from its ``variables_and_units``;
     * ``neighbours``: ``{port variable: [0D module, ...]}``, the 0D modules each of its port
       variables is connected to. A variable connected to N modules is exchanged as an array of

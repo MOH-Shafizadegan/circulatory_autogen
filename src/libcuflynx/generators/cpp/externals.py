@@ -15,7 +15,7 @@ the ``calls`` of an ``api`` block (see ``api.py`` and the FV1D entries in
 import re
 from dataclasses import dataclass, field
 
-from libcuflynx.utilities.config_schemas import is_heart_vessel_type
+from libcuflynx.generators.port_order import neighbour_port_index
 from libcuflynx.generators.cpp.api import is_api, call_whens, unit_factor, APIConfigError
 
 HOOKS = ('init', 'step_start', 'rhs_start', 'rhs', 'step_end')
@@ -82,16 +82,8 @@ def flat_variable(flat_model, component_name, variable_name):
 # Named-pipe APIs (FV 1D coupling)
 # ---------------------------------------------------------------------------------------------
 
-# The heart has several vessel ports on each side; which one a 1D vessel connects to is decided
-# by name, as the CellML generator does (CVSCellMLGenerator vessel-port matching).
-HEART_PORT_BY_NEIGHBOUR = {
-    'outlet': [(('aorta', 'aortic_root'), 1, 'u_root'), (('par',), 1, 'u_par')],
-    'inlet': [(('ivc',), 0, 'v_ivc'), (('svc',), 0, 'v_svc'), (('pvn',), 0, 'v_pvn')],
-}
-
-
 def _fv1d_neighbours(vessels_df, row, side):
-    names = row.out_vessels if side == 'outlet' else row.inp_vessels
+    names = row.out_instances if side == 'outlet' else row.inp_instances
     out = []
     for name in names:
         match = vessels_df.loc[vessels_df['name'] == name]
@@ -101,17 +93,26 @@ def _fv1d_neighbours(vessels_df, row, side):
     return out
 
 
-def _select_vessel_port(row, side, neighbour_name):
-    ports = row.exit_ports if side == 'outlet' else row.entrance_ports
+def _select_vessel_port(vessels_df, row, side, neighbour_name):
+    """The vessel_port of ``row`` that 1D vessel ``neighbour_name`` connects to: the only one, or
+    the one its position among the module's inp_instances/out_instances gives
+    (generators/port_order.py), as in the CellML model."""
+    ports = list(row.exit_ports if side == 'outlet' else row.entrance_ports)
     vessel_ports = [p for p in ports if p['port_type'] == 'vessel_port']
     if len(vessel_ports) == 1:
         return vessel_ports[0]
-    if row.name == 'heart' or str(row.module_type).startswith('heart') or is_heart_vessel_type(row.vessel_type):
-        for keys, var_pos, var_name in HEART_PORT_BY_NEIGHBOUR[side]:
-            if any(k in neighbour_name for k in keys):
-                for p in vessel_ports:
-                    if p['variables'][var_pos] == var_name:
-                        return p
+    neighbours = row.out_instances if side == 'outlet' else row.inp_instances
+    facing = ('entrance_ports', 'general_ports') if side == 'outlet' else ('exit_ports', 'general_ports')
+
+    def port_types(name):
+        match = vessels_df.loc[vessels_df['name'] == name]
+        if match.empty:
+            return []
+        return [p['port_type'] for key in facing for p in list(match.iloc[0][key] or [])]
+
+    idx = neighbour_port_index(ports, neighbours, neighbour_name, 'vessel_port', port_types)
+    if idx is not None:
+        return ports[idx]
     raise ExternalsError(
         f"Module '{row.name}' has {len(vessel_ports)} vessel ports on its {side} side, and the one "
         f"connected to 1D vessel '{neighbour_name}' can't be identified.")
@@ -166,18 +167,18 @@ def collect_named_pipe_connections(vessels_df, conn_1d_0d_info, flat_model):
         neighbour = neighbours[0]
         api = neighbour['api']
 
-        port = _select_vessel_port(tup, side, neighbour['name'])
+        port = _select_vessel_port(vessels_df, tup, side, neighbour['name'])
         flow_var, pressure_var = port['variables'][0], port['variables'][1]
-        bc_letter = tup.BC_type[0] if side == 'inlet' else tup.BC_type[1]
+        bc_letter = tup.module_subtype[0] if side == 'inlet' else tup.module_subtype[1]
         if bc_letter not in ('v', 'p'):
-            raise ExternalsError(f"Module '{row['name']}' has BC type {tup.BC_type}; its {side} must be a "
+            raise ExternalsError(f"Module '{row['name']}' has module_subtype {tup.module_subtype}; its {side} must be a "
                                  f"flow (v) or pressure (p) boundary condition to couple to a 1D vessel.")
         input_quantity = 'flow' if bc_letter == 'v' else 'pressure'
         expected = 0 if input_quantity == 'flow' else 1
         if info['cellml_bc_flow0_or_press1'] != expected:
             raise ExternalsError(f"conn_1d_0d_info[{key}] says the 0D side receives "
                                  f"{'flow' if info['cellml_bc_flow0_or_press1'] == 0 else 'pressure'}, but module "
-                                 f"'{row['name']}' BC type {tup.BC_type} receives {input_quantity} on its {side}.")
+                                 f"'{row['name']}' module_subtype {tup.module_subtype} receives {input_quantity} on its {side}.")
         in_name = flow_var if input_quantity == 'flow' else pressure_var
         out_name = pressure_var if input_quantity == 'flow' else flow_var
 
@@ -375,8 +376,8 @@ def provider_port_refs(vessels_df, prow, flat_model):
     connected to.
 
     Ports connect by port_type exactly as between CellML modules: an entrance port of the api
-    module takes the same-typed exit (or general) port of a module in its inp_vessels, an exit port
-    feeds the same-typed entrance (or general) port of a module in its out_vessels, and variables
+    module takes the same-typed exit (or general) port of a module in its inp_instances, an exit port
+    feeds the same-typed entrance (or general) port of a module in its out_instances, and variables
     pair up by position. Returns {api variable name: ModelRef}.
     """
     refs = {}
@@ -391,9 +392,9 @@ def provider_port_refs(vessels_df, prow, flat_model):
                 for port in partner[kind] if isinstance(partner[kind], list) else []:
                     yield partner['name'], port
 
-    sides = [('entrance_ports', prow['inp_vessels'], ('exit_ports', 'general_ports')),
-             ('exit_ports', prow['out_vessels'], ('entrance_ports', 'general_ports')),
-             ('general_ports', list(prow['inp_vessels']) + list(prow['out_vessels']),
+    sides = [('entrance_ports', prow['inp_instances'], ('exit_ports', 'general_ports')),
+             ('exit_ports', prow['out_instances'], ('entrance_ports', 'general_ports')),
+             ('general_ports', list(prow['inp_instances']) + list(prow['out_instances']),
               ('general_ports', 'entrance_ports', 'exit_ports'))]
     for own_kind, neighbours, partner_kinds in sides:
         for port in prow[own_kind] if isinstance(prow[own_kind], list) else []:
@@ -491,12 +492,12 @@ def python_rows(vessels_df):
 
 def _all_port_refs(vessels_df, prow, flat_model):
     '''{own port variable: [(neighbour name, ModelRef), ...]} over every CellML module connected to
-    each port of the external row (entrance ports: inp_vessels; exit ports: out_vessels; general
+    each port of the external row (entrance ports: inp_instances; exit ports: out_instances; general
     ports: both), in the order the module array lists them. Variables pair up by position.'''
     refs = {}
-    sides = [('entrance_ports', list(prow['inp_vessels']), ('exit_ports', 'general_ports')),
-             ('exit_ports', list(prow['out_vessels']), ('entrance_ports', 'general_ports')),
-             ('general_ports', list(prow['inp_vessels']) + list(prow['out_vessels']),
+    sides = [('entrance_ports', list(prow['inp_instances']), ('exit_ports', 'general_ports')),
+             ('exit_ports', list(prow['out_instances']), ('entrance_ports', 'general_ports')),
+             ('general_ports', list(prow['inp_instances']) + list(prow['out_instances']),
               ('general_ports', 'entrance_ports', 'exit_ports'))]
     for own_kind, neighbours, partner_kinds in sides:
         for port in prow[own_kind] if isinstance(prow[own_kind], list) else []:
@@ -518,7 +519,7 @@ def _all_port_refs(vessels_df, prow, flat_model):
                 raise ExternalsError(
                     f"Port '{port['port_type']}' of external module '{prow['name']}' is not connected to any "
                     f"CellML module with a matching port. Name the module(s) in its "
-                    f"{'inp_vessels' if own_kind == 'entrance_ports' else 'out_vessels' if own_kind == 'exit_ports' else 'inp/out_vessels'} "
+                    f"{'inp_instances' if own_kind == 'entrance_ports' else 'out_instances' if own_kind == 'exit_ports' else 'inp/out_instances'} "
                     f"and check they have a '{port['port_type']}' port.")
             for name, pp in found:
                 if len(pp['variables']) != len(port['variables']):

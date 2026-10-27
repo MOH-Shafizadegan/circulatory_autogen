@@ -135,7 +135,7 @@ class CVS0DCppGenerator(object):
         self.pre_time = None
         self.cpp_output_dir = None
         self.coupler_pipe_dir = None
-        self.parameters_csv = None
+        self.parameters_file = None
 
         # cardiac-cycle period and number of cycles of a coupled run (see _coupled_run_length)
         self.T0 = 1.0
@@ -159,7 +159,7 @@ class CVS0DCppGenerator(object):
         self.cpp_output_dir = inp_data_dict.get('cpp_output_dir')
         self.coupler_pipe_dir = inp_data_dict.get('coupler_pipe_dir')
         if inp_data_dict.get('input_param_file') and inp_data_dict.get('resources_dir'):
-            self.parameters_csv = os.path.join(inp_data_dict['resources_dir'], inp_data_dict['input_param_file'])
+            self.parameters_file = os.path.join(inp_data_dict['resources_dir'], inp_data_dict['input_param_file'])
         cellml_generator = CVS0DCellMLGenerator(self.model, inp_data_dict)
         cellml_generator.generate_files()
 
@@ -390,20 +390,18 @@ class CVS0DCppGenerator(object):
 
     def _global_parameter(self, name, units):
         '''A parameter's value: from the model's parameters, or, when no 0D module uses it (e.g. the
-        inflow period T of a model whose inflow is in the 1D part), from the parameters file, as
+        inflow period T of a model whose inflow is in the 1D part), from the model's parameters file, as
         the 1D model generator reads it.'''
         params = getattr(self.model, 'parameters_array', None)
         if params is not None and len(params):
             match = params[params['variable_name'] == name]
             if len(match):
                 return float(match['value'][0])
-        if self.parameters_csv and os.path.isfile(self.parameters_csv):
-            import pandas as pd
-            df = pd.read_csv(self.parameters_csv, skipinitialspace=True, dtype=str)
-            df.columns = [c.strip() for c in df.columns]
-            match = df[(df['variable_name'].str.strip() == name) & (df['units'].str.strip() == units)]
-            if len(match):
-                return float(match['value'].iloc[0])
+        if self.parameters_file and os.path.isfile(self.parameters_file):
+            from libcuflynx.utilities.parameters_file import model_parameter_rows
+            for row in model_parameter_rows(self.parameters_file):
+                if row['variable_name'] == name and str(row['units']).strip() == units:
+                    return float(row['value'])
         return None
 
     def _coupled_run_length(self):
@@ -610,8 +608,8 @@ class CVS0DCppGenerator(object):
                 os.remove(p)
 
     def _row_parameters(self, row_name, variables_and_units):
-        '''{variable: value} of an external row's constants (<var>_<row> in the parameters file)
-        and global constants (<var>), for its Python model.'''
+        '''{variable: value} of an external row's constants (<row>/<var> in the parameters file,
+        <var>_<row> in the model) and global constants (<var>), for its Python model.'''
         params = getattr(self.model, 'parameters_array', None)
         out = {}
         if params is None or not isinstance(variables_and_units, list):
@@ -623,7 +621,8 @@ class CVS0DCppGenerator(object):
             if key is None:
                 continue
             if key not in values:
-                raise CppGenerationError(f"Parameter {key} (constant {var} of external module '{row_name}') "
+                raise CppGenerationError(f"Parameter {row_name + '/' + var if kind == 'constant' else var} "
+                                         f"(constant {var} of external module '{row_name}') "
                                          f"is not in the parameters file.")
             out[var] = float(values[key])
         return out

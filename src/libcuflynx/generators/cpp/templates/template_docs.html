@@ -166,7 +166,7 @@ flowchart LR
 <div class="tablewrap"><table>
 <tr><th>File</th><th>Where (CVS-ANS)</th><th>What it contributes</th></tr>
 <tr><td>Module array</td><td><code>resources/3C_ANS_3Dheart/3C_ANS_3Dheart_module_array.csv</code></td><td>Which modules exist and how they connect. The <code>heart_3D</code> row connects the api module to the CellML heart.</td></tr>
-<tr><td>Parameters</td><td><code>resources/3C_ANS_3Dheart/3C_ANS_3Dheart_parameters.csv</code></td><td>Constant values, including the placeholder <code>u_x_ext_heart</code> pressures the C++ starts from.</td></tr>
+<tr><td>Parameters</td><td><code>resources/3C_ANS_3Dheart/3C_ANS_3Dheart_parameters.json</code></td><td>Constant values, including the placeholder <code>u_x_ext_heart</code> pressures the C++ starts from.</td></tr>
 <tr><td>Module configs</td><td><code>module_config_user/*.json</code>, <code>resources/external_modules/*.json</code>, and the built-in ones</td><td>Ports and variables per module. An <code>api</code> block describes a coupling to another program: <code>lifex_heart_3D_config.json</code> for lifex, and the FV1D entries of <code>coupling_modules_config.json</code> for the 1D solver.</td></tr>
 <tr><td>CellML modules</td><td><code>module_config_user/heart_external_pressure_modules.cellml</code>, …</td><td>The equations. The C code is generated from these.</td></tr>
 <tr><td>Solver settings</td><td>the <code>inp_data_dict</code> in <code>scripts/model_generation.py</code></td><td><code>solver_info</code> (<code>solver</code>, <code>dt_solver</code>, <code>MaximumNumberOfSteps</code>, <code>rtol</code>, <code>atol</code>), <code>dt</code>, <code>pre_time</code> and <code>sim_time</code> become constants in the C++.</td></tr>
@@ -1140,7 +1140,7 @@ add_library(circulation_api STATIC circulation_api.cpp)
 target_link_libraries(circulation_api PUBLIC model0d)
 add_executable(api_test_driver api_test_driver.cpp)
 target_link_libraries(api_test_driver PRIVATE circulation_api)</code></pre></figure></div><ul class="notes"><li>Three targets: <code>model0d_core</code> (libCellML's C), <code>model0d</code> (the C++ wrapper plus SUNDIALS) and <code>main0d</code>.</li><li>SUNDIALS is found as a CMake package first. Give <code>-DSUNDIALS_DIR=&lt;install prefix&gt;</code> if CMake doesn't find it (on this machine, <code>~/software/sundials-7.1.1</code>).</li><li><code>{% for extra in extra_targets %}</code> adds the api library (<code>circulation_api</code>) and the <code>api_test_driver</code> when a provider api is connected, as for the 3D heart.</li></ul></section><section class="example" id="ex-apih"><h3>api_provider.h.j2: the lifex Circulation class</h3><div class="pair three"><figure class="pane pane-cfg"><figcaption><span class="tag tag-cfg">Module config</span><code class="fname">lifex_heart_3D_config.json  (heart_3D_lifex, excerpt)</code></figcaption><pre><code>{
-  <span class="t-key">&quot;vessel_type&quot;</span>: <span class="t-str">&quot;heart_3D_lifex&quot;</span>,
+  <span class="t-key">&quot;module_type&quot;</span>: <span class="t-str">&quot;heart_3D_lifex&quot;</span>,
   <span class="t-key">&quot;module_format&quot;</span>: <span class="t-str">&quot;external_api&quot;</span>,
   <span class="t-key">&quot;entrance_ports&quot;</span>: [
     {

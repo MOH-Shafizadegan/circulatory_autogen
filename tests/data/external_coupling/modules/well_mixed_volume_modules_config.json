@@ -1,10 +1,10 @@
 [
   {
-    "vessel_type": "well_mixed_volume",
-    "BC_type": "nn",
-    "module_format": "cellml",
-    "module_file": "well_mixed_volume_modules.cellml",
     "module_type": "well_mixed_volume",
+    "module_subtype": "nn",
+    "module_format": "cellml",
+    "component_file": "well_mixed_volume_modules.cellml",
+    "component_type": "well_mixed_volume",
     "entrance_ports": [{"port_type": "capillary_to_flux_port", "variables": ["C_P", "flux_c"]}],
     "exit_ports": [],
     "general_ports": [],

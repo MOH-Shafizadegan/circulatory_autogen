@@ -98,7 +98,7 @@ def functions_cache_key(pid, param_names, get_all_series):
     protocol values. Those are all reachable through public setters (set_ground_truth_data,
     set_obs_info, set_protocol_info) and by direct mutation of obs_info, so without them in
     the key a flow that re-points the data -- `set_ground_truth_data(A); run();
-    set_ground_truth_data(B); run()`, staged sequential param-id, MCMC after calibration --
+    set_ground_truth_data(B); run()`, a staged re-calibration, MCMC after calibration --
     would hit the cache and silently keep optimising against the *previous* data while
     reporting a plausible converged cost. Hashing them here rather than clearing the key in
     each setter also covers in-place mutation, which no setter can intercept.
