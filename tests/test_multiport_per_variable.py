@@ -441,7 +441,7 @@ def test_list_multi_port_helpers():
     for value in ["True", True]:
         assert list_multi_port(_port("vessel_port", ["v"], value)) is None
         assert is_multi_port(_port("vessel_port", ["v"], value))
-    # the string forms keep their old meaning: "sum" is not a many-to-one flag here
+    # a raw (unnormalised) "sum" string is not a many-to-one flag: normalisation makes it a list
     assert not is_multi_port(_port("volume_port", ["q"], "sum"))
     assert not is_multi_port(_port("vessel_port", ["v"]))
     assert module_has_list_multi_port(pd.Series(
@@ -475,18 +475,34 @@ def test_malformed_list_multi_port_fails_generation(tmp_path, external_modules_d
 
 
 @pytest.mark.unit
-def test_cpp_generator_refuses_list_multi_port_with_1d_coupling(tmp_path):
+def test_cpp_generator_refuses_list_multi_port_next_to_a_1d_vessel(tmp_path):
+    """The 0D-1D coupling reads the ports of a module next to a 1D vessel from its config, so
+    such a module cannot sum or multiply; a sum elsewhere (a volume sum) is ordinary CellML and
+    gets past this check."""
     from libcuflynx.generators.CVSCppGenerator import CVS0DCppGenerator
 
-    class _Model:
-        vessels_df = pd.DataFrame([{
-            "name": "merge",
-            "entrance_ports": [_port("vessel_port", ["v_in", "u"], ["sum", "True"])],
-            "exit_ports": [], "general_ports": []}])
+    def _model(merge_neighbours):
+        class _Model:
+            vessels_df = pd.DataFrame([
+                {"name": "merge", "module_type": "flow_merge",
+                 "inp_instances": merge_neighbours, "out_instances": [],
+                 "entrance_ports": [_port("vessel_port", ["v_in", "u"], ["sum", "True"])],
+                 "exit_ports": [], "general_ports": []},
+                {"name": "FV1D_0", "module_type": "FV1D_vessel",
+                 "inp_instances": [], "out_instances": [],
+                 "entrance_ports": [], "exit_ports": [], "general_ports": []}])
+        return _Model()
 
-    with pytest.raises(NotImplementedError, match="List-form"):
-        CVS0DCppGenerator(_Model(), str(tmp_path / "gen"), "mp", couple_to_1d=True,
+    with pytest.raises(NotImplementedError, match=r"\['merge'\]: a module next to a 1D vessel"):
+        CVS0DCppGenerator(_model(["FV1D_0"]), str(tmp_path / "gen"), "mp", couple_to_1d=True,
                           cpp_generated_models_dir=str(tmp_path / "gen_cpp"))
+    try:
+        CVS0DCppGenerator(_model([]), str(tmp_path / "gen2"), "mp", couple_to_1d=True,
+                          cpp_generated_models_dir=str(tmp_path / "gen_cpp2"))
+    except NotImplementedError as e:
+        pytest.fail(f"a sum away from the 1D vessels was refused: {e}")
+    except Exception:
+        pass  # the stub model is not enough for the rest of the constructor
 
 
 # --------------------------------------------------------------------------------------------
