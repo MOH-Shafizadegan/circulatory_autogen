@@ -84,16 +84,15 @@ The one-`variables`-array rewrite of libCellML 0.7's C now keeps `voi`, `states`
 `SN_simple` did not compile. The rewrite also no longer leaves a stray `{` in `VARIABLE_INFO` when
 a kind of variable is empty.
 
-### Changed — libCellML 0.7.1 or later
+### Changed — libCellML 0.7.2 or later
 
 libCellML 0.7 generates Python and C with constants, computed constants, algebraic and external variables in separate
 arrays. `PythonGenerator` and the C++ generator join them into the one `variables` array the solvers and the C++ model
 use, so generated models behave as before: on the test models, the values (Python and C) and the generated C++
 statements are the same as with 0.6.3. 0.6.3 flattened some models with wrong units (a conversion factor's units
-replaced by their inverse), which 0.7.1 fixes (#271). 0.7.1 drops an imported unit's exponent
-(SN_simple and the coupling `k_reduce` fail with a units mismatch); the fix, cellml/libcellml#1498,
-is in no release yet, so CI builds libCellML from source (`.github/actions/libcellml-from-source`)
-until 0.7.2 is on PyPI.
+replaced by their inverse), which 0.7.1 fixes (#271). The requirement is `libcellml>=0.7.2`, the PyPI
+release: 0.7.1 drops an imported unit's exponent (SN_simple and the coupling `k_reduce` fail with a
+units mismatch), which 0.7.2 fixes (cellml/libcellml#1498).
 
 ### Changed — a `volume_port` "sum" is an ordinary multi_port sum
 

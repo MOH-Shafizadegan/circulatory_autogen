@@ -51,7 +51,7 @@ dependencies = [
     "pyyaml>=5.4.0",
     # 0.7's generated Python keeps constants, computed constants and algebraic variables in separate arrays;
     # PythonGenerator joins them into the one `variables` array the solvers use (#271).
-    "libcellml>=0.7.1",
+    "libcellml>=0.7.2",
     # Renders the C++ for model_type: cpp (libcuflynx/generators/cpp/templates).
     "jinja2>=3.0",
     "myokit>=1.39.1",
