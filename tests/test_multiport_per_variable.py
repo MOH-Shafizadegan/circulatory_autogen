@@ -845,6 +845,37 @@ def test_a_sum_term_connected_twice_is_rejected(tmp_path, external_modules_dir, 
 
 
 @pytest.mark.integration
+def test_a_multiply_term_connected_twice_is_rejected(tmp_path):
+    """A neighbour reaching a "Multiply" target twice (here through two Multiply ports of the
+    matching type, both connected by one listing) is refused like a "sum" term."""
+    uptake_variables = next(module["variables_and_units"] for module in MODULES_CONFIG
+                            if module["module_type"] == "uptake_source")
+    venous_uptake = next(module for module in MODULES_CONFIG
+                         if module["module_type"] == "venous_uptake")
+    config = MODULES_CONFIG + [
+        _module("uptake_source_multiply", "nn", "uptake_source_type", [],
+                [_port("blood_uptake_port", ["v_up"], "Multiply")] * 2,
+                uptake_variables),
+        dict(venous_uptake, module_type="venous_uptake_plain", entrance_ports=[
+            _port("vessel_port", ["v_in", "u"]), _port("blood_uptake_port", ["v_uptake"])]),
+    ]
+    modules_dir = tmp_path / "modules"
+    modules_dir.mkdir()
+    (modules_dir / "multiport_test_modules.cellml").write_text(MODULES_CELLML)
+    (modules_dir / "multiport_test_modules_config.json").write_text(json.dumps(config, indent=2))
+    rows = [("src", "nn", "flow_source", [], ["ven"]),
+            ("up", "nn", "uptake_source_multiply", [], ["ven"]),
+            ("ven", "vp", "venous_uptake_plain", ["src", "up"], ["wk"]),
+            ("wk", "nn", "windkessel", ["ven"], [])]
+    params = (_source_params("src", *MERGE_SOURCES["src_a"]) +
+              [("up/v_mean", "m3_per_s", 1.0e-6), ("up/amp", "dimensionless", 0.5),
+               ("up/omega", "per_s", 6.0)] + _windkessel_params("wk"))
+    with pytest.raises(ValueError, match='"up" variable "v_up" reaches the multi_port "Multiply" '
+                                         'variable "v_uptake" of "ven".*counted twice'):
+        _generate(tmp_path, str(modules_dir), "mp_mul_twice", rows, params)
+
+
+@pytest.mark.integration
 def test_flow_merge_converts_neighbour_units(tmp_path, external_modules_dir):
     rows = [("src_a", "nn", "flow_source", [], ["merge"]),
             ("src_mm3", "nn", "flow_source_mm3", [], ["merge"]),

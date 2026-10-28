@@ -7,7 +7,9 @@ next release; add to that section as you land a change.
 
 ### Changed — an unconnected multi_port "sum" is a boundary condition; a term counted twice is refused
 
-Decided by Finbar Argus, 2026-10-28.
+Decided by Finbar Argus: the duplicate refusal and the boundary-condition rule on 2026-10-28;
+keeping the error for an unconnected `"sum"` that is not a `boundary_condition` confirmed on
+2026-10-29.
 
 - A `"sum"` variable with no module connected through its port is an ordinary unconnected
   boundary condition: a constant whose value must be in the parameters file

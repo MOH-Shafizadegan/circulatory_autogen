@@ -20,9 +20,9 @@ The list form gives one entry per port variable, aligned with the port's ``varia
     {"port_type": "vessel_port", "variables": ["v_in", "u"], "multi_port": ["sum", "True"]}
 
 * ``"sum"`` -- this module's variable (an input) is the sum, over every module connected
-  through this port, of the neighbour's corresponding port variable. It is a
-  ``boundary_condition``: with nothing connected, its value comes from the parameters file.
-  A neighbour connected twice to the same sum is an error.
+  through this port, of the neighbour's corresponding port variable. With nothing connected,
+  it must be a ``boundary_condition``, whose value comes from the parameters file; any other
+  parameter type is then a ValueError. A neighbour connected twice to the same sum is an error.
 * ``"True"`` -- this module's variable is mapped to the corresponding variable of every
   connected neighbour (normally an output: one source, many sinks).
 * ``"multiply"`` -- as a whole-port ``"Multiply"``, for this variable: its neighbour's variable
