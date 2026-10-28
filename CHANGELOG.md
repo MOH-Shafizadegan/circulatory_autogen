@@ -641,12 +641,13 @@ workflow works in any repository. A model is a CA module array, or a module of a
 ### Changed! — `model_type: cpp` is generated from libCellML's C output and Jinja2 templates
 
 The C++ generator is rewritten (`libcuflynx/generators/cpp/`). The model equations are
-libCellML's C code, written unmodified (`model0d_core.c/.h`); the `Model0d` class, the solvers,
-`main0d` and a `CMakeLists.txt` are rendered from templates. Build with CMake (add
-`-DSUNDIALS_DIR=<prefix>` if SUNDIALS isn't found; versions 5-7 work). Solvers are CVODE and the
-fixed-step RK4/Heun/midpoint/explEul; **PETSC is no longer supported** and is refused with an
-error. Generated models no longer get the `solver1d/Make_files` copied next to them (they built
-the old C++), and the coupler builds with CMake. FV_1d coupled output is identical to before.
+libCellML's C code (`model0d_core.c/.h`), with its non-state variables in one `variables` array
+and named indices; the `Model0d` class, the solvers, `main0d` and a `CMakeLists.txt` are rendered
+from templates. Build with CMake (add `-DSUNDIALS_DIR=<prefix>` if SUNDIALS isn't found; versions
+5-7 work). Solvers are CVODE and the fixed-step RK4/Heun/midpoint/explEul; **PETSC is no longer
+supported** and is refused when `user_inputs.yaml` is validated. Generated models no longer get
+the `solver1d/Make_files` copied next to them (they built the old C++), and the coupler builds
+with CMake. FV_1d coupled output is identical to before.
 
 ### Added — `api` blocks: couplings to other models described in module configs
 

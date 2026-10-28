@@ -41,13 +41,6 @@ void Model0d::set_ode_solver(std::string ODEsolver)
     CVodeSStolerances(solver, reltol, abstol);
     nstOld = 0;
     tOld = voi;
-{% elif solver == 'PETSC' %}
-    // PETSc is not supported by the template generator yet; generate_cpp() refuses it. This body
-    // records the settings it would use.
-    double reltol = {{ reltol }};
-    double abstol = {{ abstol }};
-    double dtSolver = {{ dt_solver }};
-    (void)reltol; (void)abstol; (void)dtSolver;
 {% else %}
     // Fixed-step explicit schemes (explEul / Heun / midpoint / RK4) use the work arrays
     // allocated in the constructor and the Runge-Kutta 4 weights wRK4.

@@ -134,7 +134,8 @@ SOLVER_SCHEMA = {
     'solvers_by_model_type': {
         'cellml': ['CVODE_opencor', 'CVODE_myokit'],
         'python': ['solve_ivp'],
-        'cpp': ['CVODE', 'RK4', 'PETSC'],
+        # What the C++ generator (generators/cpp) emits; it reads this list as its SUPPORTED_SOLVERS.
+        'cpp': ['CVODE', 'RK4', 'explEul', 'Heun', 'midpoint'],
         'casadi_python': ['casadi_integrator'],
         'aadc_python': ['aadc_semi_implicit'],
         # The one way to bring your own Python model: the user supplies a solver CLASS (an FE
@@ -150,7 +151,9 @@ SOLVER_SCHEMA = {
         'solve_ivp': ['RK45', 'RK23', 'DOP853', 'Radau', 'BDF', 'LSODA', 'forward_euler'],
         'CVODE': ['CVODE'],
         'RK4': ['RK4'],
-        'PETSC': ['PETSC'],
+        'explEul': ['explEul'],
+        'Heun': ['Heun'],
+        'midpoint': ['midpoint'],
         # 'semi_implicit_euler' is a fixed-step damped scheme implemented in the
         # CasADi helper (not a SUNDIALS plugin); used for stiff models whose cvodes
         # adjoint-sensitivity gradient fails (e.g. 3compartment).
@@ -267,12 +270,14 @@ SOLVER_SCHEMA['stiff_suitable_methods'] = {
     'solve_ivp': ['Radau', 'BDF', 'LSODA'],
     'casadi_integrator': ['cvodes', 'idas', 'bdf', 'semi_implicit_euler'],
     'aadc_semi_implicit': ['semi_implicit', 'semi_implicit_signed', 'implicit_newton'],
-    # Explicitly empty rather than absent: the cpp RK4 solver offers only a fixed-step explicit
-    # method, and PETSC's plugin choice is not yet assessed against a stiff model. A consumer
-    # must be able to tell "assessed, nothing qualifies" from "not in the table at all", so
-    # every solver in methods_by_solver has an entry here (enforced by the schema tests).
+    # Explicitly empty rather than absent: the cpp fixed-step solvers offer only an explicit
+    # method. A consumer must be able to tell "assessed, nothing qualifies" from "not in the
+    # table at all", so every solver in methods_by_solver has an entry here (enforced by the
+    # schema tests).
     'RK4': [],
-    'PETSC': [],
+    'explEul': [],
+    'Heun': [],
+    'midpoint': [],
     # Not empty, and not an assessment either: 'external' is a placeholder for "whatever scheme
     # the user's class implements", so CA cannot say whether it is stiff-safe -- only the author
     # can. An empty list would make a remove-only method filter (CUFLynx's) strip the solver's
@@ -319,8 +324,8 @@ _CVODE_FAMILY_SOLVER_INFO = [
 # Derived, so the key hints below and the model_type menu name the same set of solvers.
 _CPP_SOLVERS = frozenset(SOLVER_SCHEMA['solvers_by_model_type']['cpp'])
 
-# The cpp solvers (CVODE/RK4/PETSC) are not run through a SimulationHelper at all: their
-# solver_info is baked into the emitted C++ by the cpp branch of
+# The cpp solvers (CVODE and the fixed-step RK4/explEul/Heun/midpoint) are not run through a
+# SimulationHelper at all: their solver_info is baked into the emitted C++ by the cpp branch of
 # script_generate_with_new_architecture, which forwards these values to the C++ generator (generators/cpp) (plus the
 # framework key `dt_solver`, which becomes the solver step).
 #
@@ -376,9 +381,7 @@ _SOLVE_IVP_SOLVER_INFO = [
 SOLVER_INFO_FIELDS = {
     'CVODE_opencor': _CVODE_FAMILY_SOLVER_INFO,
     'CVODE_myokit': _MYOKIT_SOLVER_INFO,
-    'CVODE': _CPP_SOLVER_INFO,
-    'RK4': _CPP_SOLVER_INFO,
-    'PETSC': _CPP_SOLVER_INFO,
+    **{solver: _CPP_SOLVER_INFO for solver in SOLVER_SCHEMA['solvers_by_model_type']['cpp']},
     'solve_ivp': _SOLVE_IVP_SOLVER_INFO,
     # Deliberately one free-form field and no integrator knobs. CA does not integrate an
     # external model, so rtol/max_step/... would be settings nothing reads -- and what an
@@ -2536,9 +2539,6 @@ class YamlFileParser(object):
             elif solver_name.startswith('CVODE'):
                 inp_data_dict['solver_info']['solver'] = 'CVODE'
                 solver_name = 'CVODE'
-            elif solver_name.startswith('PETSC'):
-                inp_data_dict['solver_info']['solver'] = 'PETSC'
-                solver_name = 'PETSC'
 
         solver_info = dict(inp_data_dict['solver_info'])
         if 'solver' not in solver_info:
@@ -2565,17 +2565,15 @@ class YamlFileParser(object):
             solver_method = inp_data_dict['solver_info']['method']
         else:
             if inp_data_dict.get('model_type') == 'cpp':
-                if solver_name.startswith('CVODE'):
-                    solver_method = 'CVODE'
+                # each cpp solver is its own one method; a prefix (RK4_cpp) names it too
+                solver_method = next(
+                    (s for s in valid_cpp_solvers if solver_name.startswith(s)), None)
+                if solver_method is not None:
                     inp_data_dict['solver_info']['method'] = solver_method
-                elif solver_name.startswith('RK4'):
-                    solver_method = 'RK4'
-                    inp_data_dict['solver_info']['method'] = solver_method
-                elif solver_name.startswith('PETSC'):
-                    solver_method = 'PETSC'
-                    inp_data_dict['solver_info']['method'] = solver_method # TODO Bea: add specific solver to be used within PETSC (CN / BDF1 / BDF2 / ...)
                 else:
-                    print(f'solver set {solver_name} not compatible with model_type cpp : change this in the user_inputs.yaml file')
+                    print(f'solver {solver_name} not compatible with model_type cpp; use one of '
+                          f'{valid_cpp_solvers} in the user_inputs.yaml file')
+                    exit()
             elif solver_name in valid_external_solvers:
                 # There is no method to choose: the external class owns its scheme. The
                 # placeholder keeps solver_info the same shape as every other model_type's.
@@ -2624,7 +2622,7 @@ class YamlFileParser(object):
             if inp_data_dict.get('model_type') not in ['python', None]:
                 print(f'solve_ivp method {solver_method} requires model_type to be "python"')
                 print('Use CVODE_opencor or CVODE_myokit for CellML models')
-                print('Use CVODE or RK4 or PETSC for Cpp models')
+                print(f'Use {valid_cpp_solvers} for Cpp models')
                 exit()
 
         if solver_name in valid_cellml_solvers and solver_method not in valid_cellml_methods:
@@ -2670,7 +2668,7 @@ class YamlFileParser(object):
             if inp_data_dict.get('model_type') not in ['casadi_python', 'aadc_python', None]:
                 print(f'CasADi solver {solver_method} requires model_type to be "casadi_python"')
                 print('Use CVODE_opencor or CVODE_myokit for CellML models')
-                print('Use CVODE or RK4 or PETSC for Cpp models')
+                print(f'Use {valid_cpp_solvers} for Cpp models')
                 exit()
 
         try:
