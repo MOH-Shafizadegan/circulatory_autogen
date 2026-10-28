@@ -11,6 +11,10 @@ A CellML solver for models made of many weakly connected parts, such as a module
 (#573). `get_simulation_helper(..., solver='BE_batched_c')` takes the same CellML file and protocols
 as `CVODE_myokit`.
 
+- **When to choose it.** `CVODE_myokit` stays the general-purpose default. `BE_batched_c` and
+  `CVODES_batched_c` are good when you have many perturbations through time, because CVODE would keep
+  stopping and restarting its adaptive time steps. They are opt-in: they run only when named in the config.
+  The solver section of `tutorial/docs/parameter-identification.md` says so.
 - **Blocks.** `generators/kernel_ir.py` reads libCellML's analysis into a language-neutral form and
   splits the states into blocks that do not depend on one another. Blocks with the same equations
   share one kernel, so 64 identical cells compile one kernel.
@@ -726,6 +730,10 @@ from templates. Build with CMake (add `-DSUNDIALS_DIR=<prefix>` if SUNDIALS isn'
 supported** and is refused when `user_inputs.yaml` is validated. Generated models no longer get
 the `solver1d/Make_files` copied next to them (they built the old C++), and the coupler builds
 with CMake. FV_1d coupled output is identical to before.
+
+A model coupled to 1D can have a volume sum over its 1D vessels: the 1D solver sends their volume,
+which is a term of the volume sum, and it needs no value in the parameters file (the old generator
+stopped with `KeyError: 'bc_inlet0_or_outlet1'`). A value the 1D solver sends never needs one.
 
 ### Added — `api` blocks: couplings to other models described in module configs
 

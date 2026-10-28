@@ -174,6 +174,12 @@ published table as indicative, not exact.
 
 ## Batched CellML solvers
 
+**When to choose them.** `CVODE_myokit` is the more general-purpose solver. `BE_batched_c` and `CVODES_batched_c`
+are good when you have many perturbations through time, because CVODE would have to keep stopping and restarting
+its adaptive time steps at each one; the batched solvers restart only the blocks whose inputs changed. They are
+opt-in: they run only when named in the config (`solver: BE_batched_c` or `solver: CVODES_batched_c`). See the
+*Choosing a batched solver* note in `tutorial/docs/parameter-identification.md`.
+
 `batched_solver_scaling.py` times the solvers of a CellML model made of many unconnected parts. The model is a
 module array of N copies of AdaptOrDeity's fermenter cell (`resources/fermenter_colony`: 23 states per cell, one
 block each), N = 2, 4, ..., 512. Every cell runs the same protocol: membrane glucose 0.1 mM for 60 s, 50 mM for
