@@ -241,7 +241,7 @@ def _cpp_solver_init(solver, reltol=1e-7, abstol=1e-9):
     return gen._build_solver_init_function()
 
 
-@pytest.mark.parametrize('solver', ['CVODE', 'PETSC'])
+@pytest.mark.parametrize('solver', ['CVODE'])
 def test_cpp_generator_emits_the_configured_tolerances(solver):
     """The two tolerance literals in the emitted C++ carried a standing
     'TODO get this from user_inputs.yaml too'; a cpp user could only change the accuracy of a run
@@ -255,7 +255,7 @@ def test_cpp_generator_emits_the_configured_tolerances(solver):
     assert 'TODO get this from user_inputs' not in emitted
 
 
-@pytest.mark.parametrize('solver', ['CVODE', 'PETSC'])
+@pytest.mark.parametrize('solver', ['CVODE'])
 def test_cpp_generator_defaults_reproduce_the_previous_output(solver):
     """A config that sets neither tolerance must generate exactly what it did before, so wiring
     the settings up does not silently change anybody's existing model."""

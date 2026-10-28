@@ -1,8 +1,9 @@
 # C++ generation templates (`model_type: cpp`)
 
 These Jinja2 templates render the C++ that wraps a generated model. `template_docs.html` in this folder is an illustrated version of this README: open it in a browser to see each template beside the C++ it produced, with diagrams of the generation pipeline and of what runs when. The model equations are
-never in a template. libCellML writes them as C (`model0d_core.c/.h`), and they are left
-unmodified. The templates add everything around the equations:
+never in a template. libCellML writes them as C (`model0d_core.c/.h`), which the generator
+rewrites only so that the non-state variables share one `variables` array and the array indices
+are named. The templates add everything around the equations:
 
 - the `Model0d` class, including the solvers and output files;
 - the code that supplies the values of external variables;
@@ -33,7 +34,7 @@ Files written, to `cpp_generated_models_dir` (or the model folder):
 
 | File | From |
 |---|---|
-| `model0d_core.c`, `model0d_core.h` | libCellML (unmodified) |
+| `model0d_core.c`, `model0d_core.h` | libCellML, with one `variables` array and named indices |
 | `model0d.h` | `model0d.h.j2` |
 | `model0d.cpp` | `model0d.cpp.j2`, which includes `solver_init.j2`, `pipes.j2` and `io.j2` |
 | `main0d.cpp` | `main0d.cpp.j2` |
@@ -153,7 +154,6 @@ The body of `set_ode_solver()`. `CVS0DCppGenerator._build_solver_init_function()
   - creates the BDF solver, a dense matrix and a dense linear solver;
   - applies `MaximumNumberOfSteps`, `dt_solver` as the maximum step, and `rtol`/`atol`.
 - **Explicit schemes** only set the RK4 weights. A CVODE build still runs the explicit schemes when `ODEsolver` asks for one.
-- **PETSC:** records the settings only; `generate_cpp()` refuses PETSC.
 
 ### `pipes.j2`
 `openPipes()`, `closePipes()`, `pipeWrite()` and `pipeRead()` for named-pipe apis.

@@ -1,9 +1,10 @@
 '''
 C++ generation for model_type: cpp, from libCellML's C output and Jinja2 templates.
 
-The libCellML-generated C code (the model equations) is written out unmodified. Everything else
--- the ``Model0d`` class, the solvers, output, the driver, the CMake build, and the code that fills
-external variables -- comes from the templates in ``templates/``. External variables are declared
+The model equations are libCellML's C code, rewritten so that the constants, computed constants,
+algebraic and external variables share one ``variables`` array, and (``human_readable``) so that
+every array index is a named enum. Everything else -- the ``Model0d`` class, the solvers,
+output, the driver, the CMake build, and the code that fills external variables -- comes from the templates in ``templates/``. External variables are declared
 in data: delays through a module's ``delay_info``, and couplings to other models through ``api``
 blocks in the module configs (see ``api.py``).
 '''
@@ -23,6 +24,7 @@ from libcuflynx.generators.multi_port import module_has_list_multi_port
 from libcuflynx.generators.cpp import externals as ext
 from libcuflynx.generators.cpp.api import CAPI_VERSION, python_model_path, unit_factor
 from libcuflynx.generators.naming import build_symbols
+from libcuflynx.parsers.PrimitiveParsers import SOLVER_SCHEMA
 
 try:
     import libcellml
@@ -34,7 +36,8 @@ except ImportError as e:  # pragma: no cover
     LIBCELLML_available = False
 
 TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), 'templates')
-SUPPORTED_SOLVERS = ('CVODE', 'RK4', 'explEul', 'Heun', 'midpoint')
+# The cpp solvers user_inputs validation accepts, so the two cannot disagree.
+SUPPORTED_SOLVERS = tuple(SOLVER_SCHEMA['solvers_by_model_type']['cpp'])
 
 CORE_NAME = 'model0d_core'
 
@@ -79,7 +82,7 @@ class CVS0DCppGenerator(object):
     Generates the C++ for a 0D model (model_type: cpp), optionally coupled to other models.
 
     Output, in cpp_generated_models_dir:
-      model0d_core.c/.h   libCellML C code for the model equations (unmodified)
+      model0d_core.c/.h   libCellML C code for the model equations, one variables array
       model0d.h/.cpp      the Model0d class: solver, output, external variables
       main0d.cpp          driver, standalone or launched by the 1D-0D coupler
       CMakeLists.txt      builds libmodel0d and main0d
