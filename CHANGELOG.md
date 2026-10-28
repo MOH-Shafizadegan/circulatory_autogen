@@ -11,6 +11,10 @@ A CellML solver for models made of many weakly connected parts, such as a module
 (#573). `get_simulation_helper(..., solver='BE_batched_c')` takes the same CellML file and protocols
 as `CVODE_myokit`.
 
+- **When to choose it.** `CVODE_myokit` stays the general-purpose default. `BE_batched_c` and
+  `CVODES_batched_c` are good when you have many perturbations through time, because CVODE would keep
+  stopping and restarting its adaptive time steps. They are opt-in: they run only when named in the config.
+  The solver section of `tutorial/docs/parameter-identification.md` says so.
 - **Blocks.** `generators/kernel_ir.py` reads libCellML's analysis into a language-neutral form and
   splits the states into blocks that do not depend on one another. Blocks with the same equations
   share one kernel, so 64 identical cells compile one kernel.

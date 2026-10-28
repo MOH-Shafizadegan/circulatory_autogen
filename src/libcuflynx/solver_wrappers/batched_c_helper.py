@@ -1,6 +1,12 @@
 """
 BE_batched_c: CellML models integrated by generated C, block by block, on several threads.
 
+When to choose it: CVODE_myokit is the more general-purpose solver. BE_batched_c and CVODES_batched_c are good
+when you have many perturbations through time (inputs that change at many points in a run), because CVODE would
+have to keep stopping and restarting its adaptive time steps; here only the blocks whose inputs changed restart.
+Both are opt-in: they run only when ``solver: BE_batched_c`` or ``solver: CVODES_batched_c`` is named in the
+config (``solver_info``); nothing selects them by default.
+
 The model is split into blocks of states that do not depend on one another (each cell of a module array of
 unconnected cells, say; a circulation is one block). Each block's rates and exact Jacobian are generated as C
 from libCellML's analysis (:mod:`libcuflynx.generators.kernel_ir`, :mod:`libcuflynx.generators.cpp.batched`),

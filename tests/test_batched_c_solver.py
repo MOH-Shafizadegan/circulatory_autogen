@@ -295,6 +295,28 @@ def test_be_batched_c_is_a_cellml_solver_in_the_schema():
     assert defaults['MaximumNumberOfSteps'] == batched_c_helper.DEFAULT_MAX_STEPS
 
 
+@pytest.mark.unit
+def test_the_batched_solvers_are_opt_in_and_the_docs_say_when_to_choose_them():
+    """Nothing selects a batched solver unless the config names it, and the solver docs say when
+    to choose one over CVODE_myokit."""
+    import pathlib
+    import yaml
+    from libcuflynx.parsers.PrimitiveParsers import SOLVER_SCHEMA
+    from libcuflynx.solver_wrappers import batched_c_helper
+    batched = {'BE_batched_c', 'CVODES_batched_c'}
+    assert SOLVER_SCHEMA['default_solver_by_model_type']['cellml'] == 'CVODE_myokit'
+    assert not batched & set(SOLVER_SCHEMA['default_solver_by_model_type'].values())
+    assert not batched & {v for a in SOLVER_SCHEMA['solver_aliases_by_model_type'].values() for v in a.values()}
+    root = pathlib.Path(__file__).resolve().parents[1]
+    with open(root / 'user_run_files' / 'user_inputs.yaml') as f:
+        assert yaml.safe_load(f)['solver'] == 'CVODE_myokit'
+    for text in (batched_c_helper.__doc__, (root / 'tutorial' / 'docs' / 'parameter-identification.md').read_text(),
+                 (root / 'benchmarks' / 'README.md').read_text()):
+        flat = ' '.join(text.split())
+        assert 'many perturbations through time' in flat
+        assert 'opt-in' in flat
+
+
 @needs_c
 @pytest.mark.solver
 def test_a_built_model_is_loaded_from_the_cache_until_its_cellml_changes(tmp_path):
