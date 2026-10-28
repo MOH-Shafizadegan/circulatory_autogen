@@ -147,19 +147,12 @@ The authoritative lists are `[project.dependencies]` and `[project.optional-depe
 
 - Autogeneration: `pandas`, `pyyaml`, `rdflib`, `libcellml`, `pint`, etc.
 
-    !!! warning "libCellML is pinned below 0.7.0"
-        The requirement is `libcellml>=0.6.3,<0.7.0`. libCellML 0.7.0 renamed part of the API
-        (`Analyser.model()` became `Analyser.analyserModel()`, and `Generator.implementationCode()`
-        now takes the model and profile as arguments) and also changed generated-Python output and
-        unit flattening. The renames are handled by shims in
-        `src/libcuflynx/utilities/libcellml_helper_funcs.py`, but the code-generation and unit changes are a
-        real migration that has not been done yet, so the pin stays until it is.
-
-        **If you already have libCellML 0.7.0 installed**, `pip install -e ".[dev]"` will silently
-        *downgrade* it to the newest 0.6.x. That is intended — but if libCellML came from conda or
-        a system package rather than pip, the resolver may instead fail with a version conflict
-        that does not obviously point here. Installing into a fresh virtual environment avoids
-        both. Lifting the pin is tracked in issue #271.
+    !!! note "libCellML 0.7.2 or later"
+        The requirement is `libcellml>=0.7.2`, installed from PyPI. 0.7.1 drops an imported
+        unit's exponent, so models such as SN_simple fail with a units mismatch under it.
+        If libCellML came from conda or a system package rather than pip, an older version there
+        can make the resolver fail with a version conflict; installing into a fresh virtual
+        environment avoids that.
 - Parameter identification: `mpi4py`, `nevergrad` (CMA-ES), `emcee`, `numdifftools`, and related scientific stack.
 - Sensitivity analysis: `SALib`, `seaborn`.
 - **Development**: the `dev` extra (e.g. `pytest`, `pytest-mpi`).
