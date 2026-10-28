@@ -25,6 +25,7 @@ from libcuflynx.generators.cpp import externals as ext
 from libcuflynx.generators.cpp.api import CAPI_VERSION, python_model_path, unit_factor
 from libcuflynx.generators.naming import build_symbols
 from libcuflynx.parsers.PrimitiveParsers import SOLVER_SCHEMA
+from libcuflynx.utilities.parameters_file import UNSET_VALUE
 
 try:
     import libcellml
@@ -215,6 +216,9 @@ class CVS0DCppGenerator(object):
                     spec.initial = self._initial_value(spec.ref.variable)
                 externals.append(spec)
         self._check_unique_externals(externals)
+        for spec in pipe_externals:
+            # the 1D solver sends these before the first step, so they need no parameter value
+            self._clear_unset_initial_values(spec.ref.variable)
 
         analyser = Analyser()
         for spec in externals:
@@ -341,6 +345,21 @@ class CVS0DCppGenerator(object):
                     pass
             todo += [v.equivalentVariable(i) for i in range(v.equivalentVariableCount())]
         return 0.0
+
+    @staticmethod
+    def _clear_unset_initial_values(variable):
+        '''Remove the unset-parameter placeholder (EMPTY_MUST_BE_FILLED) from the initial value of
+        a variable and of every variable connected to it.'''
+        seen, todo = set(), [variable]
+        while todo:
+            v = todo.pop()
+            key = (v.parent().name() if v.parent() is not None else '', v.name())
+            if key in seen:
+                continue
+            seen.add(key)
+            if v.initialValue() == UNSET_VALUE:
+                v.removeInitialValue()
+            todo += [v.equivalentVariable(i) for i in range(v.equivalentVariableCount())]
 
     @staticmethod
     def _check_unique_externals(externals):
