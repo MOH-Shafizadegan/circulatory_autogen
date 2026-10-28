@@ -731,6 +731,10 @@ supported** and is refused when `user_inputs.yaml` is validated. Generated model
 the `solver1d/Make_files` copied next to them (they built the old C++), and the coupler builds
 with CMake. FV_1d coupled output is identical to before.
 
+A model coupled to 1D can have a volume sum over its 1D vessels: the 1D solver sends their volume,
+which is a term of the volume sum, and it needs no value in the parameters file (the old generator
+stopped with `KeyError: 'bc_inlet0_or_outlet1'`). A value the 1D solver sends never needs one.
+
 ### Added — `api` blocks: couplings to other models described in module configs
 
 A module config entry can carry an `api` block. `role: consumer` describes calls the generated

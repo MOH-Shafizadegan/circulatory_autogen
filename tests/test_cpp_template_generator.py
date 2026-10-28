@@ -352,6 +352,44 @@ def test_coupled_fv1d_generation_fills_connection_info(user_inputs_dir, resource
 
 
 @pytest.mark.integration
+def test_coupled_fv1d_model_with_a_volume_sum_generates(user_inputs_dir, resources_dir, tmp_path):
+    """A volume_sum over 1D vessels: the 1D split replaces them with an FV1D_volume_sum row
+    (volume_sum_1D) whose q_sum the 1D solver sends through the volume pipe. q_sum is a term of the
+    multiport sum and an external variable, so it needs no value in the parameters file."""
+    from libcuflynx.scripts.script_generate_with_new_architecture import generate_with_new_architecture
+    cpp_dir = tmp_path / 'cpp'
+    inp = _generation_inputs(user_inputs_dir, resources_dir, tmp_path, 'aortic_bif_hybrid_V1', 'CVODE',
+                             couple_to_1d=True, create_main_0d=True, generate_1d=True, solver_1d_type='py',
+                             cpp_generated_models_dir=str(cpp_dir),
+                             cpp_1d_model_config_path=str(tmp_path / '1d' / 'run000' / 'input.ini'),
+                             pre_time=0.0, sim_time=1.1, coupler_pipe_dir=str(tmp_path / 'pipes'))
+    array = tmp_path / 'resources' / 'aortic_bif_hybrid_V1_module_array.csv'
+    rows = []
+    for line in array.read_text().splitlines():
+        fields = line.split(',')
+        if fields[2] == 'FV1D_vessel':
+            fields[4] = (fields[4].strip() + ' volume_sum').strip()
+        rows.append(','.join(fields))
+    rows.append('volume_sum,nn,volume_sum,parent daughter_1 daughter_2,')
+    array.write_text('\n'.join(rows) + '\n')
+    assert 'q_sum' not in (tmp_path / 'resources' / 'aortic_bif_hybrid_V1_parameters.json').read_text()
+
+    assert generate_with_new_architecture(False, inp)
+    with open(cpp_dir / 'aortic_bif_hybrid_V1_coupler1d0d.json') as f:
+        info = json.load(f)
+    volume = [entry for entry in info.values() if entry.get('port_volume_sum') == 1]
+    assert len(volume) == 1
+    core = (cpp_dir / 'model0d_core.c').read_text()
+    names = re.findall(r'\{"(\w+)", "\w*", "\w+", \w+\}', core[core.index('VARIABLE_INFO[]'):])
+    assert volume[0]['cellml_idx'] == names.index('q_sum_volume_sum_1D')
+    assert '{"q_sum_volume_sum_1D", "m3", "parameters", EXTERNAL}' in core
+    assert 'variables[V_multiport_sum_volume_sum_q_q] = variables[V_parameters_q_sum_volume_sum_1d];' in core
+    source = (cpp_dir / 'model0d.cpp').read_text()
+    assert 'parent_to_zero_vol' in source
+    assert 'setExternal(V_parameters_q_sum_volume_sum_1d, msg[0]);' in source
+
+
+@pytest.mark.integration
 @pytest.mark.slow
 def test_coupled_fv1d_simulation_runs(user_inputs_dir, resources_dir, tmp_path):
     """End to end: generate aortic_bif_hybrid_V1 (CVODE), build main0d and the coupler with CMake,
