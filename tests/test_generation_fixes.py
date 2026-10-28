@@ -3,10 +3,12 @@ Regression tests for generation bugs:
 
 - #526: ``model_type: python`` code calls libCellML helpers (``eq_func``, ``or_func``,
   ``min``, ``sec``, ...) that the generated utilities never defined.
-- #525: a ``sum`` multi-port (e.g. ``volume_sum``) with no inputs raised ``IndexError``.
+- #525: a ``sum`` multi-port (e.g. ``volume_sum``) with no inputs raised ``IndexError``; it is a
+  boundary condition, so it takes its value from the parameters file.
 - #529: the constant pressure / flow BCs lacked their port variable in ``variables_and_units``.
 - #524: generic junctions left out neighbours whose module_subtype starts with ``nn`` (e.g. constant BCs).
 """
+import json
 import math
 import os
 import textwrap
@@ -27,9 +29,10 @@ def _read_resource(filename):
 
 
 def _generate(tmp_path, prefix, module_array, parameters, model_type='cellml',
-              external_modules_dir=None):
+              external_modules_dir=None, succeeds=True):
     """Write ``{prefix}_module_array.csv`` / ``_parameters.json`` (``parameters`` laid out as
-    CSV rows) and generate the model.
+    CSV rows, or the text of a parameters file) and generate the model; ``succeeds`` is what
+    generation must return.
 
     Returns the directory the model was generated into.
     """
@@ -50,7 +53,7 @@ def _generate(tmp_path, prefix, module_array, parameters, model_type='cellml',
     }
     if model_type == 'python':
         config['solver_info'] = {'method': 'RK45', 'max_step': 0.01}
-    assert generate_with_new_architecture(False, config)
+    assert generate_with_new_architecture(False, config) is succeeds
     return tmp_path / 'generated_models' / prefix
 
 
@@ -306,29 +309,48 @@ def test_casadi_helpers_accept_symbolic_arguments():
 
 
 # ---------------------------------------------------------------------------------------
-# #525: an empty 'sum' multi-port is 0
+# #525: an unconnected 'sum' multi-port is a boundary condition
 # ---------------------------------------------------------------------------------------
 
-@pytest.mark.integration
-def test_empty_sum_multi_port_is_zero(tmp_path, capsys):
-    """#525: a volume_sum with nothing connected generates, is mapped to its vessel, and is
-    0, with a warning naming the vessel. It used to raise ``IndexError``."""
+def _empty_sum_inputs(q=None):
+    """3compartment with a second volume_sum, ``extra_sum``, that nothing connects to; its q is
+    given the value ``q`` in the parameters file, unless None."""
     module_array = _read_resource('3compartment_module_array.csv').rstrip('\n') + \
         '\nextra_sum, nn, volume_sum, , \n'
-    generated_dir = _generate(tmp_path, 'empty_sum', module_array,
-                              _read_resource('3compartment_parameters.json'))
-    warnings = [line for line in capsys.readouterr().out.splitlines() if 'WARNING' in line]
-    assert any('extra_sum' in line for line in warnings), warnings
+    parameters = json.loads(_read_resource('3compartment_parameters.json'))
+    if q is not None:
+        parameters['extra_sum'] = {
+            'q': {'value': q, 'units': 'm3', 'data_reference': 'test'}}
+    return module_array, json.dumps(parameters)
+
+
+@pytest.mark.integration
+def test_unconnected_sum_takes_its_value_from_the_parameters(tmp_path):
+    """#525: a volume_sum with nothing connected is a boundary condition: its q is a constant
+    whose value comes from the parameters file, and no sum component is written for it."""
+    module_array, parameters = _empty_sum_inputs(q=0.004)
+    generated_dir = _generate(tmp_path, 'empty_sum', module_array, parameters)
 
     model_text = (generated_dir / 'empty_sum.cellml').read_text()
-    assert '<component name="multiport_sum_extra_sum_q">' in model_text
+    assert 'multiport_sum_extra_sum_q' not in model_text
+    assert '<component name="multiport_sum_volume_sum_q">' in model_text
 
-    # Myokit merges connected variables, so read the sums where they are computed.
     _, res = _run(generated_dir / 'empty_sum.cellml',
-                  ['multiport_sum_extra_sum_q/q', 'multiport_sum_volume_sum_q/q'], sim_time=0.1)
-    np.testing.assert_array_equal(res['multiport_sum_extra_sum_q/q'], 0.0)
+                  ['extra_sum/q', 'multiport_sum_volume_sum_q/q'], sim_time=0.1)
+    np.testing.assert_array_equal(res['extra_sum/q'], 0.004)
     # The populated sum is untouched.
     assert np.all(res['multiport_sum_volume_sum_q/q'] > 0.0)
+
+
+@pytest.mark.integration
+def test_unconnected_sum_without_a_value_is_a_missing_boundary_condition(tmp_path, capsys):
+    """#525: with no value for the unconnected volume_sum's q, generation fails with the report
+    every unset boundary condition gets."""
+    module_array, parameters = _empty_sum_inputs()
+    capsys.readouterr()
+    _generate(tmp_path, 'empty_sum', module_array, parameters, succeeds=False)
+    out = capsys.readouterr().out
+    assert 'extra_sum/q: a boundary condition of "extra_sum" that no connected module' in out
 
 
 # ---------------------------------------------------------------------------------------

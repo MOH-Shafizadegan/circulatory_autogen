@@ -666,8 +666,9 @@ class CVS0DCellMLGenerator(object):
                                                 entrance_general_ports_connected, wf)  # entrance_ports_connected is a modified
             # in this function
 
-        # a list-form multi_port "sum" variable with no neighbour through its port is zero
-        self.__register_unconnected_multiport_sums(module_df)
+        # a "sum" variable with no neighbour is a boundary condition like any other: the check
+        # below makes it a constant that needs a parameter value
+        self.__check_unconnected_multiport_sums(module_df)
         self.__check_bc_only_groups()
 
         # check whether the BC variables have been set with a matched module, if so, remove them from 
@@ -1307,12 +1308,22 @@ class CVS0DCellMLGenerator(object):
     def __add_multiport_sum_term(self, module, variable, neighbour, neighbour_variable, factor=None,
                                  kind=MULTI_PORT_SUM):
         """Add ``neighbour_variable`` of ``neighbour`` (times ``factor``, if given) as a term of
-        ``module``'s ``variable``: a "sum" term, or, for ``kind=MULTI_PORT_MULTIPLY``, its only term."""
-        entry = self.__register_multiport_sum(module, variable, kind=kind)
+        ``module``'s ``variable``: a "sum" term, or, for ``kind=MULTI_PORT_MULTIPLY``, its only term.
+
+        Raises ValueError if the term is already there: the two modules are connected twice
+        through ports carrying the same variable, which would count it twice.
+        """
         if is_blank_variable(neighbour_variable):
             return
+        entry = self.__register_multiport_sum(module, variable, kind=kind)
         if any(term[:2] == (neighbour, neighbour_variable) for term in entry['terms']):
-            return
+            raise ValueError(
+                f'"{neighbour}" variable "{neighbour_variable}" reaches the multi_port "{kind}" '
+                f'variable "{variable}" of "{module}" through two connections between "{module}" '
+                f'and "{neighbour}", so it would be counted twice. Connect the two modules '
+                f'through only one port carrying "{neighbour_variable}": list each in the '
+                f'other\'s inp_instances/out_instances once, and do not give either two ports of '
+                f'the same port_type that both connect it.')
         if kind == MULTI_PORT_MULTIPLY and entry['terms']:
             other, other_variable = entry['terms'][0][:2]
             raise ValueError(
@@ -1335,24 +1346,32 @@ class CVS0DCellMLGenerator(object):
                     f'cannot be converted to {entry["units"]}. {e}') from e
         entry['terms'].append((neighbour, neighbour_variable, neighbour_units, factor))
 
-    def __register_unconnected_multiport_sums(self, module_df):
-        """Register a zero sum (with a warning) for list-form "sum" variables with no neighbour."""
+    def __check_unconnected_multiport_sums(self, module_df):
+        """Raise ValueError for a "sum" variable with no neighbour that is not a
+        boundary_condition. An unconnected boundary_condition "sum" is left to the boundary
+        condition check, which makes it a constant that takes its value from the parameters."""
         for module_row_idx in range(len(module_df)):
             module_row = module_df.iloc[module_row_idx]
             if module_row["module_format"] != 'cellml':
                 continue
             module = module_row["name"]
+            kinds = {row[0]: row[3] for row in module_row["variables_and_units"]}
             for port in module_row["entrance_ports"] + module_row["general_ports"] + module_row["exit_ports"]:
                 entries = list_multi_port(port)
                 if entries is None:
                     continue
                 for variable, entry in zip(port['variables'], entries):
-                    if entry != MULTI_PORT_SUM:
+                    if entry != MULTI_PORT_SUM or (module, variable) in self._multiport_sums:
                         continue
-                    if not self.__register_multiport_sum(module, variable)['terms']:
-                        print(f'WARNING: "{module}" variable "{variable}" is a multi_port "sum" over '
-                              f'port "{port["port_type"]}", but no module is connected through that '
-                              f'port. It is set to 0.')
+                    if kinds.get(variable) != 'boundary_condition':
+                        raise ValueError(
+                            f'"{module}" variable "{variable}" is a multi_port "sum" over port '
+                            f'"{port["port_type"]}", but no module is connected through that '
+                            f'port, and it is a "{kinds.get(variable)}" rather than a '
+                            f'"boundary_condition", so nothing gives it a value. Connect a '
+                            f'module through the port, or make "{variable}" a '
+                            f'boundary_condition in the module config so that it takes its '
+                            f'value from the parameters file.')
 
     def __write_multiport_sum_comps(self, wf):
         """Write one algebraic component per multi_port "sum" variable and "Multiply" target.
@@ -1413,9 +1432,7 @@ class CVS0DCellMLGenerator(object):
                     constants = ''.join(f'<cn cellml:units="dimensionless">{number!r}</cn>'
                                         for number in (factor, scale) if number is not None)
                     term_strs.append(f'<apply><times/>{constants}<ci>{term_name}</ci></apply>')
-            if len(term_strs) == 0:
-                wf.write(f'       <cn cellml:units="{units}">0</cn>\n')
-            elif len(term_strs) == 1:
+            if len(term_strs) == 1:
                 wf.write(f'       {term_strs[0]}\n')
             else:
                 wf.write('       <apply>\n')

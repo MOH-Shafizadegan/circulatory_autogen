@@ -5,6 +5,23 @@ next release; add to that section as you land a change.
 
 ## Unreleased
 
+### Changed — an unconnected multi_port "sum" is a boundary condition; a term counted twice is refused
+
+Decided by Finbar Argus, 2026-10-28.
+
+- A `"sum"` variable with no module connected through its port is an ordinary unconnected
+  boundary condition: a constant whose value must be in the parameters file
+  (`<module>/<variable>`), and generation fails with the missing-parameters report when it is not.
+  It used to be 0 with a warning and needed no value; a model that relied on that needs the value
+  (0, to keep the same model) added to its parameters file. No sum component is written for it.
+  A `"sum"` variable that is not a `boundary_condition` with nothing connected is an error, since
+  nothing would give it a value. The built-in `volume_sum`'s `q` is now a `boundary_condition`.
+- A neighbour variable that reaches a `"sum"` (or a `"Multiply"` target) through two connections
+  between the same two modules is a `ValueError` naming both modules and both variables: it would be
+  counted twice. It used to be dropped silently. This happens when a module is listed twice in
+  another's `out_instances` through a multi_port, or when either module has two ports of the
+  matching `port_type` carrying the variable.
+
 ### Changed — a `volume_port` "sum" is an ordinary multi_port sum
 
 No `port_type` has a meaning of its own. A whole-port `"sum"` (any case) on any port, a `volume_port`
