@@ -819,8 +819,8 @@ sequenceDiagram
     CVodeSStolerances(solver, reltol, abstol);
     nstOld = <span class="t-num">0</span>;
     tOld = voi;
-<span class="t-jj">{% <b>elif</b> solver == &#x27;PETSC&#x27; %}</span>
-    <span class="t-com">/* … 15 more lines */</span></code></pre></figure><figure class="pane pane-gen"><figcaption><span class="tag tag-gen">Generated C++</span><code class="fname">model0d.cpp  (set_ode_solver)</code></figcaption><pre><code><span class="t-kw">void</span> Model0d::set_ode_solver(std::string ODEsolver)
+<span class="t-jj">{% <b>else</b> %}</span>
+    <span class="t-com">/* … 8 more lines */</span></code></pre></figure><figure class="pane pane-gen"><figcaption><span class="tag tag-gen">Generated C++</span><code class="fname">model0d.cpp  (set_ode_solver)</code></figcaption><pre><code><span class="t-kw">void</span> Model0d::set_ode_solver(std::string ODEsolver)
 {
     solver_0d = ODEsolver;
     <span class="t-kw">if</span> (solver_0d != <span class="t-str">&quot;CVODE&quot;</span>) {

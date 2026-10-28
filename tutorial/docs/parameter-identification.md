@@ -716,7 +716,7 @@ Before doing calibration, a solver for the model needs to be chosen
     - CellML (`model_type: cellml`): `CVODE_myokit` (Myokit, the default) or `CVODE_opencor` (OpenCOR). `CVODE` is read as `CVODE_myokit`.
     - Python (`model_type: python`): `solve_ivp` with `solver_info.method` set to `RK45`, `BDF`, etc.
     - CasADi Python (`model_type: casadi_python`): `casadi_integrator` with `solver_info.method` set to `cvodes`, `idas`, `collocation`, `rk`, `semi_implicit_euler`, or `bdf`.
-    - C++ (`model_type: cpp`): `CVODE`, `RK4`, or `PETSC`.
+    - C++ (`model_type: cpp`): `CVODE`, or the fixed-step `RK4`, `Heun`, `midpoint` or `explEul`.
 - **solver_info** defines settings for the chosen solver:
     - **dt_solver**: solver time step (for CVODE this sets `MaximumStep` when provided)
     - **MaximumStep**: maximum step size (`CVODE_myokit`, `CVODE_opencor`)
