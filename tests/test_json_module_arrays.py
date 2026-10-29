@@ -832,7 +832,7 @@ def test_the_1d_generator_reads_the_merged_parameters(tmp_path):
     supermodule's default_parameters never reached it ("Parameter l_FV1D_0 not found"). It
     now reads the model's merged parameters."""
     from types import SimpleNamespace
-    from libcuflynx.generators.CVSCppGenerator import CVS1DPythonGenerator
+    from libcuflynx.generators.Python1DGenerator import CVS1DPythonGenerator
     from libcuflynx.parsers.ModelParsers import merge_default_parameters
     from libcuflynx.parsers.PrimitiveParsers import CSVFileParser
     params = tmp_path / 'm_parameters.json'
@@ -1114,3 +1114,26 @@ def test_resources_module_arrays_and_module_configs_validate_against_the_json_sc
                                            if k != 'submodule_versions'}])
     assert not module_validator.is_valid([dict(FLOWPAIR_ENTRY, submodule_versions=[
         {'module_type': 'gain', 'module_subtype': 'nn', 'name': 'g'}])])
+
+
+@pytest.mark.unit
+def test_an_api_block_needs_name_role_and_transport_in_the_code_and_the_schema():
+    jsonschema = pytest.importorskip('jsonschema')
+    from libcuflynx.generators.cpp.api import APIConfigError, validate_api_block
+    from libcuflynx.schemas import MODULE_CONFIG_SCHEMA, load_schema
+    from libcuflynx.utilities.package_resources import builtin_modules_dir
+    validator = jsonschema.Draft202012Validator(load_schema(MODULE_CONFIG_SCHEMA))
+    with open(os.path.join(str(builtin_modules_dir()), 'coupling_modules_config.json')) as f:
+        entries = json.load(f)
+    entry = next(e for e in entries if isinstance(e.get('api'), dict))
+    validate_api_block(entry['api'])
+    assert validator.is_valid([entry])
+    for key in ('name', 'role', 'transport'):
+        broken = dict(entry, api={k: v for k, v in entry['api'].items() if k != key})
+        with pytest.raises(APIConfigError, match=key):
+            validate_api_block(broken['api'])
+        assert not validator.is_valid([broken]), key
+    broken = dict(entry, api=dict(entry['api'], role='server'))
+    with pytest.raises(APIConfigError, match='role'):
+        validate_api_block(broken['api'])
+    assert not validator.is_valid([broken])

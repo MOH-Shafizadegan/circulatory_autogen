@@ -495,7 +495,7 @@ def test_cpp_generator_refuses_list_multi_port_next_to_a_1d_vessel(tmp_path):
     """The 0D-1D coupling reads the ports of a module next to a 1D vessel from its config, so
     such a module cannot sum or multiply; a sum elsewhere (a volume sum) is ordinary CellML and
     gets past this check."""
-    from libcuflynx.generators.CVSCppGenerator import CVS0DCppGenerator
+    from libcuflynx.generators.cpp.generator import CVS0DCppGenerator
 
     def _model(merge_neighbours):
         class _Model:
