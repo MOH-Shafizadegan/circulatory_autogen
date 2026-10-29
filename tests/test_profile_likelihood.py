@@ -3,7 +3,6 @@ Tests for profile likelihood functionality.
   
 These tests verify that profile likelihood analysis works correctly for various models.  
 """  
-import csv  
 import os  
 import json  
 import tempfile  
@@ -12,10 +11,9 @@ import pytest
 import numpy as np  
 from mpi4py import MPI  
   
-from src.libcuflynx.identifiabilty_analysis.ProfileLikelihood import ProfileLikelihood  
-from src.libcuflynx.scripts.param_id_run_script import run_param_id  
-from src.libcuflynx.scripts.script_generate_with_new_architecture import generate_with_new_architecture  
-from src.libcuflynx.parsers.PrimitiveParsers import CSVFileParser  
+from libcuflynx.identifiabilty_analysis.ProfileLikelihood import ProfileLikelihood  
+from libcuflynx.scripts.param_id_run_script import run_param_id  
+from libcuflynx.scripts.script_generate_with_new_architecture import generate_with_new_architecture  
   
   
 @pytest.fixture(scope="function")  
@@ -27,7 +25,7 @@ def mpi_comm():
   
 def _ensure_cellml_model_generated(config, mpi_comm):  
     """Ensure generated CellML exists before run_param_id (mirrors test_param_id.py)."""  
-    if config.get("model_type") != "cellml_only":  
+    if config.get("model_type") != "cellml":  
         return  
     rank = mpi_comm.Get_rank()  
     if rank == 0:  
@@ -99,110 +97,85 @@ def test_profile_likelihood_no_best_params():
     with pytest.raises(ValueError, match="Best parameter values must be set first"):  
         profile._run()  
   
-@pytest.mark.integration  
-@pytest.mark.slow  
-@pytest.mark.mpi  
-def test_profile_likelihood_3compartment_succeeds(  
-        base_user_inputs, resources_dir, temp_output_dir, temp_generated_models_dir, mpi_comm):  
-    rank = mpi_comm.Get_rank()  
-  
-    # Dedicated params_for_id CSV for this test, written once on rank 0.  
-    params_for_id_path = os.path.join(  
-        temp_output_dir, "3compartment_profile_likelihood_params_for_id.csv"  
-    )  
-    if rank == 0:  
-        with open(params_for_id_path, "w", newline="") as f:  
-            writer = csv.writer(f)  
-            writer.writerow(  
-                ["vessel_name", "param_name", "param_type", "min", "max", "name_for_plotting"]  
-            )  
-            writer.writerow(["aortic_root", "C", "const", "1e-9", "5e-8", "C_{ao}"])  
-            writer.writerow(["global", "q_lv_init", "const", "200e-6", "1500e-6", "q_{sbv}"])  
-    mpi_comm.Barrier()  
-  
-    config = base_user_inputs.copy()  
-    config.update({  
-        'file_prefix': '3compartment',  
-        'input_param_file': '3compartment_parameters.csv',  
-        'params_for_id_file': params_for_id_path,   # <-- explicit, no reconstruction needed  
-        'model_type': 'cellml_only',  
-        'solver': 'CVODE_myokit',  
-        'param_id_method': 'genetic_algorithm',  
-        'pre_time': 20,  
-        'sim_time': 2,  
-        'dt': 0.01,  
-        'DEBUG': True,  
-        'plot_predictions': False,  
-        'do_ia': False,  
-        'solver_info': {'MaximumStep': 0.001, 'MaximumNumberOfSteps': 5000},  
-        'param_id_obs_path': os.path.join(resources_dir, '3compartment_obs_data.json'),  
-        'param_id_output_dir': temp_output_dir,  
-        'generated_models_dir': temp_generated_models_dir,  
-        'optimiser_options': {  
-            'num_calls_to_function': 100,  
-            'max_patience': 10,  
-            'cost_convergence': 1e-3,  
-        },  
-    })  
-  
-    _ensure_cellml_model_generated(config, mpi_comm)  
-    run_param_id(config)  
-  
-    actual_output_dir = os.path.join(  
-        temp_output_dir,  
-        f"{config['param_id_method']}_{config['file_prefix']}_3compartment_obs_data"  
-    )  
-  
-    if rank == 0:  
-        csv_parser = CSVFileParser()  
-        param_id_name_and_vals, _ = csv_parser.get_param_id_params_as_lists_of_tuples(  
-            actual_output_dir  
-        )  
-        best_param_vals = np.array([val for name, val in param_id_name_and_vals])  
-  
-        from src.libcuflynx.param_id.paramID import CVS0DParamID  
-  
-        param_id = CVS0DParamID(  
-            model_path=config['model_path'],  
-            model_type=config['model_type'],  
-            param_id_method=config['param_id_method'],  
-            mcmc_instead=False,  
-            file_name_prefix=config['file_prefix'],  
-            params_for_id_path=config['params_for_id_path'],  
-            param_id_obs_path=config['param_id_obs_path'],  
-            sim_time=config['sim_time'],  
-            pre_time=config['pre_time'],  
-            solver_info=config['solver_info'],  
-            dt=config['dt'],  
-            optimiser_options=config['optimiser_options'],  
-            DEBUG=config['DEBUG'],  
-            param_id_output_dir=temp_output_dir,  
-            resources_dir=config['resources_dir']  
-        )  
-  
-        profile = ProfileLikelihood(  
-            param_id=param_id.param_id,  
-            param_id_info=param_id.param_id_info,  
-            output_dir=temp_output_dir,  
-            num_points=5,  
-            range_factor=0.1,  
-            optimiser_options={'num_calls_to_function': 50}  
-        )  
-        profile.set_best_param_vals(best_param_vals)  
-        profile._run()  
-  
-        results_dir = os.path.join(temp_output_dir, 'profile_likelihood')  
-        assert os.path.exists(results_dir), "Profile likelihood results directory should exist"  
-        summary_file = os.path.join(results_dir, 'summary.json')  
-        assert os.path.exists(summary_file), "Summary file should exist"  
-        with open(summary_file, 'r') as f:  
-            summary = json.load(f)  
-        assert 'num_params' in summary and 'num_points' in summary  
-        assert summary['num_points'] == 5
-        assert len(os.listdir(results_dir)) > 0, "Parameter result files should exist"  
-  
-    mpi_comm.Barrier()  
-  
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.mpi
+def test_profile_likelihood_3compartment_succeeds(
+        base_user_inputs, resources_dir, temp_output_dir, temp_generated_models_dir, mpi_comm):
+    """Calibrate, then profile both parameters through ``do_ia`` on every rank."""
+    rank = mpi_comm.Get_rank()
+
+    # Two-parameter params_for_id, written once on rank 0.
+    params_for_id_path = os.path.join(
+        temp_output_dir, "3compartment_profile_likelihood_params_for_id.json"
+    )
+    if rank == 0:
+        with open(params_for_id_path, "w") as f:
+            json.dump({"version": 1, "params": [
+                {"targets": ["aortic_root/C"], "min": 1e-9, "max": 5e-8,
+                 "param_type": "const", "name_for_plotting": "C_{ao}"},
+                {"targets": ["global/q_lv_init"], "min": 200e-6, "max": 1500e-6,
+                 "param_type": "const", "name_for_plotting": "q_{sbv}"},
+            ]}, f)
+    mpi_comm.Barrier()
+
+    num_points = 3
+    config = base_user_inputs.copy()
+    config.update({
+        'file_prefix': '3compartment',
+        'input_param_file': '3compartment_parameters.json',
+        'params_for_id_file': params_for_id_path,
+        'model_type': 'cellml',
+        'solver': 'CVODE_myokit',
+        'param_id_method': 'genetic_algorithm',
+        'pre_time': 20,
+        'sim_time': 2,
+        'dt': 0.01,
+        'DEBUG': True,
+        'plot_predictions': False,
+        'do_uq': False,
+        'do_ia': True,
+        # Bounded: 2 parameters x 3 points, each a short GA re-fit.
+        'ia_options': {'method': 'profile_likelihood', 'num_points': num_points,
+                       'range_factor': 0.1},
+        'solver_info': {'MaximumStep': 0.001},
+        'param_id_obs_path': os.path.join(resources_dir, '3compartment_obs_data.json'),
+        'param_id_output_dir': temp_output_dir,
+        'generated_models_dir': temp_generated_models_dir,
+        'debug_optimiser_options': {'num_calls_to_function': 60, 'max_patience': 500,
+                                    'cost_type': 'gaussian_MLE'},
+    })
+
+    _ensure_cellml_model_generated(config, mpi_comm)
+    result = run_param_id(config)
+
+    # The profiles leave the calibration as they found it.
+    inner = result['param_id'].param_id
+    assert [names for names in inner.param_id_info['param_names']] == \
+        [['aortic_root/C'], ['global/q_lv_init']]
+    assert inner.num_params == 2
+
+    if rank == 0:
+        results_dir = os.path.join(temp_output_dir, 'profile_likelihood')
+        with open(os.path.join(results_dir, 'summary.json')) as f:
+            summary = json.load(f)
+        assert summary['num_params'] == 2
+        assert summary['num_points'] == num_points
+        mins = [1e-9, 200e-6]
+        maxs = [5e-8, 1500e-6]
+        for param_idx in range(2):
+            json_files = [f for f in os.listdir(results_dir)
+                          if f.startswith(f'param_{param_idx}_') and f.endswith('.json')]
+            assert len(json_files) == 1
+            with open(os.path.join(results_dir, json_files[0])) as f:
+                profile = json.load(f)
+            values = np.array(profile['param_values'])
+            assert len(values) == num_points
+            assert np.all(values >= mins[param_idx]) and np.all(values <= maxs[param_idx])
+            assert np.all(np.isfinite(profile['costs']))
+
+    mpi_comm.Barrier()
+
 @pytest.mark.unit  
 def test_profile_likelihood_save_results():  
     """Test saving profile likelihood results."""  

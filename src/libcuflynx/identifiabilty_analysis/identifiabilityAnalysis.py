@@ -54,9 +54,8 @@ class IdentifiabilityAnalysis():
     """Identifiability analysis for a 0D model.
 
     Quantifies how well calibrated parameters can be identified around a best
-    fit. Currently the Laplace approximation is implemented (computing a
-    covariance matrix from the Hessian of the cost); profile likelihood is
-    planned. Requires an existing inner ``param_id`` object (typically
+    fit, by the Laplace approximation (a covariance matrix from the Hessian of
+    the cost) or by profile likelihood (see ``ProfileLikelihood``). Requires an existing inner ``param_id`` object (typically
     ``CVS0DParamID.param_id``); build conveniently with
     [`init_from_dict`][identifiabilty_analysis.identifiabilityAnalysis.IdentifiabilityAnalysis.init_from_dict].
 
@@ -131,7 +130,7 @@ class IdentifiabilityAnalysis():
 
         Args:
             ia_options: Options dict; ``method`` selects ``'Laplace'`` or
-                ``'profile_likelihood'`` (the latter is not yet implemented).
+                ``'profile_likelihood'``.
         """
         if ia_options['method'] == 'profile_likelihood':
             self.run_profile_likelihood(ia_options)
