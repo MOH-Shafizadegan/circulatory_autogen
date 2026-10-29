@@ -137,3 +137,76 @@ def test_the_use_time_check_agrees_with_the_trainer():
             trainer_refused = True
 
         assert trainer_refused == bool(shared), (types, weights)
+
+
+def _sobol_with(info):
+    """A SobolSA with only what _configure_emulator reads, and a helper whose bundle accepts."""
+    from libcuflynx.sensitivity_analysis.sobolSA import sobol_SA as SobolSA
+
+    calls = []
+    bundle = type('B', (), {'check_matches': lambda self, fp: calls.append('matches'),
+                            'check_quality': lambda self, r2: calls.append('quality')})()
+    helper = type('H', (), {'bundle': bundle,
+                            'set_obs_map': lambda self, *a, **k: calls.append('map')})()
+    info = dict(info, const_idx_to_obs_idx=[0], operations=[None] * len(info['data_types']))
+    # A real instance without __init__, so every method _configure_emulator calls exists.
+    sa = SobolSA.__new__(SobolSA)
+    sa.__dict__.update({'obs_info': info, 'param_id_info': None, 'protocol_info': None,
+                        'model_path': None, 'emulator_settings': {},
+                        'include_prediction_items': False})
+    return SobolSA, sa, helper, calls
+
+
+def test_sobol_on_an_emulator_accepts_a_zero_weighted_series(monkeypatch):
+    """Sobol had its own copy of the scalar-only rule, without the weight exemption, so an
+    obs_data that trained an emulator could not then be analysed on it."""
+    import libcuflynx.emulators.emulator_bundle as eb
+    monkeypatch.setattr(eb, 'fingerprint', lambda *a: None)
+    SobolSA, sa, helper, calls = _sobol_with(_obs_info(['constant', 'series'], [0.0], [1]))
+    SobolSA._configure_emulator(sa, helper)
+    assert calls == ['matches', 'quality', 'map']
+
+
+def test_sobol_on_an_emulator_still_refuses_a_weighted_series(monkeypatch):
+    import libcuflynx.emulators.emulator_bundle as eb
+    monkeypatch.setattr(eb, 'fingerprint', lambda *a: None)
+    SobolSA, sa, helper, _ = _sobol_with(_obs_info(['constant', 'series'], [1.0], [1]))
+    with pytest.raises(ValueError, match=r'\[1\]'):
+        SobolSA._configure_emulator(sa, helper)
+
+
+def test_sobol_reports_weighted_items_by_their_own_index():
+    """weight_const_vec is indexed among constants only. With a series first, reading it
+    by data_item index reported the zero-weighted constant and dropped the weighted one."""
+    from libcuflynx.sensitivity_analysis.sobolSA import sobol_SA
+
+    info = {
+        'operations': ['mean', 'max', 'min'],          # series, constant, constant
+        'data_types': ['series', 'constant', 'constant'],
+        'weight_series_vec': np.array([0.0]),
+        'series_idx_to_obs_idx': [0],
+        'weight_const_vec': np.array([0.0, 1.0]),
+        'const_idx_to_obs_idx': [1, 2],
+    }
+    sa = type('S', (), {'obs_info': info})()
+    assert sobol_SA._observable_indices(sa) == [2]
+
+
+def test_an_emulated_sample_has_the_reported_items_only_and_in_their_order():
+    """The emulator answers for every data_item; the SA reports a subset. The row must be
+    that subset, or each output sits under another item's label."""
+    from libcuflynx.sensitivity_analysis.sobolSA import sobol_SA
+
+    info = {
+        'operations': ['mean', 'max', 'min', 'max'],
+        'data_types': ['series', 'constant', 'constant', 'constant'],
+        'weight_series_vec': np.array([0.0]),
+        'series_idx_to_obs_idx': [0],
+        'weight_const_vec': np.array([1.0, 0.0, 1.0]),
+        'const_idx_to_obs_idx': [1, 2, 3],
+    }
+    helper = type('H', (), {'get_predicted_features':
+                            lambda self: np.array([np.nan, 10.0, 20.0, 30.0])})()
+    sa = type('S', (), {'obs_info': info, 'sim_helper': helper})()
+    sa._observable_indices = lambda: sobol_SA._observable_indices(sa)
+    assert sobol_SA._emulated_row(sa) == [10.0, 30.0]

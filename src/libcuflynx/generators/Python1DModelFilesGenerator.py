@@ -34,7 +34,7 @@ def generate1DPythonModelFiles(df_vess, df_params, vess_file, nodes_file, names_
     nRow = df_vess.shape[0]
     nCol = df_vess.shape[1]
 
-    print("1D vessel array file")
+    print("1D module array file")
     print(type(df_vess))
     print('****')
     print(df_vess.dtypes)
@@ -80,15 +80,26 @@ def generate1DPythonModelFiles(df_vess, df_params, vess_file, nodes_file, names_
     for i in range(nV):
         nameV = vess[i]['name']
 
-        #XXX TODO improve this code below to differentiate between arterial and venous vessels, 
-        # assuming that we do not have a 'vessel_type' in the CA vessel array file that can tell us this information
-        if nameV.startswith(("A_","a_")) or any(sub in nameV for sub in ("art", "Art", "aort", "Aort")):
+        # The module array has no artery/vein column, so an explicit parameter
+        # art_ven_type_<vessel> (1 = artery, 0 = vein) takes precedence over guessing from the name.
+        nameP = "art_ven_type_"+nameV
+        idxParam = df_params.index[df_params["variable_name"] == nameP].tolist()
+        if len(idxParam)==1:
+            vess[i]['type'] = int(float(df_params.at[idxParam[0],"value"]))
+            if vess[i]['type'] not in (0, 1):
+                sys.exit(f"Parameter {nameP} must be 1 (artery) or 0 (vein), got {vess[i]['type']}.")
+        elif len(idxParam)>1:
+            sys.exit(f"Multiple matches for parameter {nameP} found in parameters dataframe.")
+        elif nameV.startswith(("A_","a_")) or any(sub in nameV for sub in ("art", "Art", "aort", "Aort")):
             vess[i]['type'] = 1 # artery
         elif nameV.startswith(("V_","v_")) or any(sub in nameV for sub in ("ven", "Ven", "vein", "Vein")):
             vess[i]['type'] = 0 # vein
         else:
-            print(f"WARNING: art/ven type couldn't be determined for vessel {nameV}. Add it manually.")
-            
+            # An undetermined type (-1) used to be written to the vessel file, and the 1D solver
+            # then stopped with "undetermined art/ven type" at run time.
+            sys.exit(f"Artery/vein type couldn't be determined for 1D vessel {nameV}: add parameter "
+                     f"global/{nameP} (1 = artery, 0 = vein, units dimensionless) to the parameters file.")
+
 
         nameP = "l_"+nameV
         idxParam = df_params.index[df_params["variable_name"] == nameP].tolist()
@@ -212,8 +223,8 @@ def generate1DPythonModelFiles(df_vess, df_params, vess_file, nodes_file, names_
                     conn1d0d_found = True
                     break
             
-            inp_vess = df_vess.at[i,'inp_vessels']
-            out_vess = df_vess.at[i,'out_vessels']
+            inp_vess = df_vess.at[i,'inp_instances']
+            out_vess = df_vess.at[i,'out_instances']
 
             if conn1d0d_found:
                 for j in range(len(inp_vess)):
@@ -222,7 +233,7 @@ def generate1DPythonModelFiles(df_vess, df_params, vess_file, nodes_file, names_
                     for k in range(nV):
                         if vess[k]['name']==nameV2:
                             print(f"Another 1D vessel found in hybrid connection: {nameV2}")
-                            if nameV in df_vess.at[k,'out_vessels']:
+                            if nameV in df_vess.at[k,'out_instances']:
                                 vess[k]['n2'] = iN
                                 iV2 = vess[k]['id']
                                 nodes[iN]['vess_list'].append(iV2)
@@ -266,8 +277,8 @@ def generate1DPythonModelFiles(df_vess, df_params, vess_file, nodes_file, names_
                             search_vess = inp_vess[j]
                             for k in range(nV):
                                 nameV2 = df_vess.at[k]['name'] # vess[k]['name']
-                                inp_vess2 = df_vess.at[k,'inp_vessels']
-                                out_vess2 = df_vess.at[k,'out_vessels']
+                                inp_vess2 = df_vess.at[k,'inp_instances']
+                                out_vess2 = df_vess.at[k,'out_instances']
                                 if nameV2 == search_vess: 
                                     for h in range(len(nameVJ_list)):
                                         if (nameVJ_list[h]!=nameV2 and nameVJ_list[h] in inp_vess2):
@@ -277,8 +288,8 @@ def generate1DPythonModelFiles(df_vess, df_params, vess_file, nodes_file, names_
                                                 nameV3 = inp_vess2[p]
                                                 iV3 = [kk for kk in range(nV) if vess[kk]['name']==nameV3][0]
                                                 if nameV3 not in nameVJ_list:
-                                                    inp_vess3 = df_vess.at[iV3,'inp_vessels']
-                                                    out_vess3 = df_vess.at[iV3,'out_vessels']
+                                                    inp_vess3 = df_vess.at[iV3,'inp_instances']
+                                                    out_vess3 = df_vess.at[iV3,'out_instances']
                                                     if any(x in nameVJ_list for x in inp_vess3):
                                                         vess[iV3]['n1'] = iN
                                                     elif any(x in nameVJ_list for x in out_vess3):
@@ -296,8 +307,8 @@ def generate1DPythonModelFiles(df_vess, df_params, vess_file, nodes_file, names_
                                                 nameV3 = out_vess2[p]
                                                 iV3 = [kk for kk in range(nV) if vess[kk]['name']==nameV3][0]
                                                 if nameV3 not in nameVJ_list:
-                                                    inp_vess3 = df_vess.at[iV3,'inp_vessels']
-                                                    out_vess3 = df_vess.at[iV3,'out_vessels']
+                                                    inp_vess3 = df_vess.at[iV3,'inp_instances']
+                                                    out_vess3 = df_vess.at[iV3,'out_instances']
                                                     if any(x in nameVJ_list for x in inp_vess3):
                                                         vess[iV3]['n1'] = iN
                                                     elif any(x in nameVJ_list for x in out_vess3):
@@ -331,8 +342,8 @@ def generate1DPythonModelFiles(df_vess, df_params, vess_file, nodes_file, names_
                     conn1d0d_found = True
                     break
 
-            inp_vess = df_vess.at[i,'inp_vessels']
-            out_vess = df_vess.at[i,'out_vessels']
+            inp_vess = df_vess.at[i,'inp_instances']
+            out_vess = df_vess.at[i,'out_instances']
 
             if conn1d0d_found:
                 for j in range(len(out_vess)):
@@ -341,7 +352,7 @@ def generate1DPythonModelFiles(df_vess, df_params, vess_file, nodes_file, names_
                     for k in range(nV):
                         if vess[k]['name']==nameV2:
                             print(f"Another 1D vessel found in hybrid connection: {nameV2}")
-                            if nameV in df_vess.at[k,'inp_vessels']:
+                            if nameV in df_vess.at[k,'inp_instances']:
                                 vess[k]['n1'] = iN
                                 iV2 = vess[k]['id']
                                 nodes[iN]['vess_list'].append(iV2)
@@ -385,8 +396,8 @@ def generate1DPythonModelFiles(df_vess, df_params, vess_file, nodes_file, names_
                             search_vess = out_vess[j]
                             for k in range(nV):
                                 nameV2 = vess[k]['name']
-                                inp_vess2 = df_vess.at[k,'inp_vessels']
-                                out_vess2 = df_vess.at[k,'out_vessels']
+                                inp_vess2 = df_vess.at[k,'inp_instances']
+                                out_vess2 = df_vess.at[k,'out_instances']
                                 if nameV2 == search_vess: 
                                     for h in range(len(nameVJ_list)):
                                         if (nameVJ_list[h]!=nameV2 and nameVJ_list[h] in inp_vess2):
@@ -396,8 +407,8 @@ def generate1DPythonModelFiles(df_vess, df_params, vess_file, nodes_file, names_
                                                 nameV3 = inp_vess2[p]
                                                 iV3 = [kk for kk in range(nV) if vess[kk]['name']==nameV3][0]
                                                 if nameV3 not in nameVJ_list:
-                                                    inp_vess3 = df_vess.at[iV3,'inp_vessels']
-                                                    out_vess3 = df_vess.at[iV3,'out_vessels']
+                                                    inp_vess3 = df_vess.at[iV3,'inp_instances']
+                                                    out_vess3 = df_vess.at[iV3,'out_instances']
                                                     if any(x in nameVJ_list for x in inp_vess3):
                                                         vess[iV3]['n1'] = iN
                                                     elif any(x in nameVJ_list for x in out_vess3):
@@ -415,8 +426,8 @@ def generate1DPythonModelFiles(df_vess, df_params, vess_file, nodes_file, names_
                                                 nameV3 = out_vess2[p]
                                                 iV3 = [kk for kk in range(nV) if vess[kk]['name']==nameV3][0]
                                                 if nameV3 not in nameVJ_list:
-                                                    inp_vess3 = df_vess.at[iV3,'inp_vessels']
-                                                    out_vess3 = df_vess.at[iV3,'out_vessels']
+                                                    inp_vess3 = df_vess.at[iV3,'inp_instances']
+                                                    out_vess3 = df_vess.at[iV3,'out_instances']
                                                     if any(x in nameVJ_list for x in inp_vess3):
                                                         vess[iV3]['n1'] = iN
                                                     elif any(x in nameVJ_list for x in out_vess3):

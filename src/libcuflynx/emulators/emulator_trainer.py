@@ -22,6 +22,7 @@ from scipy.stats import qmc
 
 from libcuflynx.emulators.emulator_bundle import (METADATA_FILE, TRAINING_DATA_FILE, EmulatorBundle,
                                        EmulatorQualityError, EmulatorReuseError, fingerprint)
+from libcuflynx.param_id import prediction_features
 
 AUTOEMULATE_MISSING_MESSAGE = (
     'autoemulate is not installed. Install it with `pip install '
@@ -121,10 +122,20 @@ class EmulatorTrainer:
                 'emulator. Build it with use_emulator: false so training runs the real solver.')
         self.pid = param_id
         self.settings = dict(emulator_settings or {})
+        # The parsed config, when built through init_from_dict, so a trained emulator can be
+        # declared in the study manifest. A trainer built directly has no study to record in.
+        self.study_inp = None
         self.comm = comm if comm is not None else _discover_comm()
         self.rank = self.comm.Get_rank() if self.comm is not None else 0
         self.num_procs = self.comm.Get_size() if self.comm is not None else 1
         self._check_observables_are_scalar()
+        # Prediction items with an operation, as extra outputs (include_prediction_items).
+        # Resolved once here so the warning naming the items left out is given once.
+        self.prediction_indices = []
+        if prediction_features.include_prediction_items(self.settings):
+            self.prediction_indices = prediction_features.prediction_feature_indices(
+                getattr(param_id, 'prediction_info', None),
+                getattr(param_id, 'operation_funcs_dict', None), context='the emulator features')
 
     # ------------------------------------------------------------------ construction
 
@@ -144,6 +155,7 @@ class EmulatorTrainer:
             engine.set_params_for_id(inp_data_dict['params_for_id'])
         trainer = cls(engine.param_id, inp_data_dict.get('emulator_settings') or {}, comm=comm)
         trainer.output_dir = resolve_emulator_dir(inp_data_dict)
+        trainer.study_inp = dict(inp_data_dict)
         return trainer
 
     def _check_observables_are_scalar(self):
@@ -181,10 +193,43 @@ class EmulatorTrainer:
         return bool(self._setting('reuse_samples', False))
 
     @property
-    def feature_labels(self):
-        """The emulator's outputs, named exactly as the run that will use it names them."""
+    def data_feature_labels(self):
+        """The data_item features, named exactly as the run that will use them names them."""
         from libcuflynx.param_id.paramID import emulated_feature_labels
         return emulated_feature_labels(self.pid.obs_info)
+
+    @property
+    def prediction_feature_labels(self):
+        """The prediction features (``include_prediction_items``), by data_item_name."""
+        return prediction_features.prediction_feature_names(
+            getattr(self.pid, 'prediction_info', None), self.prediction_indices)
+
+    @property
+    def feature_labels(self):
+        """The emulator's outputs: the data_item features, then any prediction features."""
+        return self.data_feature_labels + self.prediction_feature_labels
+
+    def _fingerprint(self):
+        """The fingerprint the bundle is stored with; ``prediction_sha256`` only when it has
+        prediction features, so an emulator trained without them keeps the old fingerprint."""
+        return fingerprint(self.pid.param_id_info, self.pid.obs_info, self.pid.protocol_info,
+                           self.pid.model_path,
+                           prediction_info=getattr(self.pid, 'prediction_info', None),
+                           prediction_indices=self.prediction_indices)
+
+    def _features_at(self, theta):
+        """The training targets at ``theta``: data_item features, then prediction features,
+        from one simulation."""
+        from libcuflynx.param_id.fd_backend import observable_features
+
+        if not self.prediction_indices:
+            return observable_features(self.pid, theta)
+        data, predicted = prediction_features.simulate_features(
+            self.pid, theta, self.pid.prediction_info, self.prediction_indices)
+        if data is None or predicted is None:
+            return None
+        return np.concatenate([np.asarray(data, dtype=float),
+                               np.asarray(predicted, dtype=float)])
 
     # ------------------------------------------------------------------ stages
 
@@ -304,15 +349,11 @@ class EmulatorTrainer:
         imputed: an imputed training target is a fabricated observation, and the emulator
         would learn it as fact.
         """
-        # Imported here rather than at module scope: this module is reachable from
-        # solver_wrappers, which every CA run imports, and fd_backend pulls in the parsers.
-        from libcuflynx.param_id.fd_backend import observable_features
-
         n_samples = len(design)
         start, end = _block_for_rank(n_samples, self.rank, self.num_procs)
         local_rows = []
         for local_idx, theta in enumerate(design[start:end]):
-            features = observable_features(self.pid, theta)
+            features = self._features_at(theta)
             if features is None or not np.all(np.isfinite(features)):
                 print(f'[emulator rank {self.rank}] sample {start + local_idx} failed; dropping it')
                 continue
@@ -426,6 +467,14 @@ class EmulatorTrainer:
         if models is not None:
             kwargs['models'] = models
 
+        tuning = self._tuning_metric(y_scale, y_train)
+        if tuning is not None:
+            # Both the hyperparameter search and the choice between model families read
+            # this. evaluation_metrics keeps r2 alongside it so the familiar number is
+            # still printed and still stored -- only what is *selected on* changes.
+            kwargs['tuning_metric'] = tuning
+            kwargs['evaluation_metrics'] = [tuning, 'r2', 'rmse']
+
         # Imported here, not at module scope: internal_emulators asks this module
         # for the emulator list when it builds its two_phase_<name> helpers, so a
         # top-level import either way closes the cycle.
@@ -452,7 +501,8 @@ class EmulatorTrainer:
                       f'{counts["smooth"]} smooth')
             model, result = fit_multi_phase(
                 x_train, y_train, x_test, y_test, base_name,
-                _load_autoemulate(), kwargs, kinds)
+                _load_autoemulate(), kwargs, kinds,
+                settings=self._phase_settings(seed, tuning))
             validation = _validation_report(model, x_test, y_test, x_scale, y_scale)
             return (model, validation, multi_phase_name(base_name), x_scale, y_scale)
 
@@ -468,7 +518,8 @@ class EmulatorTrainer:
             kwargs.pop('models', None)
             model, result = fit_two_phase(
                 x_train, y_train, x_test, y_test, base_name,
-                _load_autoemulate(), kwargs)
+                _load_autoemulate(), kwargs,
+                settings=self._phase_settings(seed, tuning))
             validation = _validation_report(model, x_test, y_test, x_scale, y_scale)
             return (model, validation, two_phase_name(base_name), x_scale, y_scale)
 
@@ -476,6 +527,67 @@ class EmulatorTrainer:
         result = emulation.best_result()
         validation = _validation_report(result.model, x_test, y_test, x_scale, y_scale)
         return (result.model, validation, _result_model_name(result), x_scale, y_scale)
+
+    def _phase_settings(self, seed, tuning=None):
+        """Settings the classifier halves need, which autoemulate must not receive.
+
+        Kept out of ``kwargs``: that dict is splatted into ``AutoEmulate(...)``, and an
+        unknown keyword there is a TypeError rather than a warning. These go down the
+        separate ``settings`` argument the phased fitters take.
+
+        ``feature_weights`` is the cost metric's per-feature multiplier when there is
+        one, so that a boundary's threshold is calibrated against the error the *cost*
+        would see rather than against raw squared error -- an error in a tight-sigma
+        observable should move the threshold more than the same error in a loose one.
+        """
+        return {
+            'classifier_n_iter': int(self._setting('classifier_n_iter', 4) or 1),
+            'n_splits': int(self._setting('n_splits', 5)),
+            'random_seed': int(seed),
+            'feature_weights': getattr(tuning, 'weights', None),
+        }
+
+    def _tuning_metric(self, y_scale, y_train):
+        """The metric autoemulate should select on, or None to leave it at R2.
+
+        ``emulator_settings.tuning_metric`` -- ``r2`` (the default, so no existing run
+        changes) or ``cost``, which measures each feature's error in units of its own
+        obs_data sigma and weights it the way the cost does. See
+        ``emulators/cost_metric.py`` for why R2 is the wrong currency for an object
+        whose only job is to drive a cost.
+
+        Anything that stops the cost metric being built -- an obs_info without
+        per-constant sigmas, every feature unweighted -- degrades to R2 with a reason
+        printed, rather than failing a training run that would otherwise have worked.
+        """
+        choice = str(self._setting('tuning_metric', 'r2') or 'r2').strip().lower()
+        if choice in ('r2', 'default', ''):
+            return None
+        if choice not in ('cost', 'cost_weighted_error'):
+            raise ValueError(
+                f"emulator_settings.tuning_metric is {choice!r}; expected 'r2' or "
+                f"'cost'. autoemulate's own names (rmse, mse, mae, crps, msll) are "
+                f"not accepted here because none of them is in cost units either.")
+
+        from libcuflynx.emulators.cost_metric import build_metric  # noqa: PLC0415
+
+        metric, notes = build_metric(self.pid, y_scale, y_train=y_train)
+        if metric is None:
+            if self.rank == 0:
+                print(f'[emulator] tuning_metric: cost was asked for but cannot be '
+                      f'built ({"; ".join(notes)}); selecting on R2 instead')
+            return None
+        if notes and self.rank == 0:
+            labels = self.feature_labels
+            named = ', '.join(str(labels[i]) if i < len(labels) else f'feature {i}'
+                              for i in notes[:4])
+            more = '' if len(notes) <= 4 else f' and {len(notes) - 4} more'
+            print(f'[emulator] tuning_metric: cost, in sigma units. '
+                  f'{len(notes)} feature(s) declare no sigma and are weighted by their '
+                  f'design spread instead ({named}{more}).')
+        elif self.rank == 0:
+            print('[emulator] tuning_metric: cost, in sigma units')
+        return metric
 
     def output_directory(self):
         """Where this trainer's bundle is written, and read back from when reusing samples."""
@@ -570,12 +682,12 @@ class EmulatorTrainer:
                 f'to simulate and save a design, after which reuse works.')
         try:
             bundle.check_matches(
-                fingerprint(self.pid.param_id_info, self.pid.obs_info, self.pid.protocol_info,
-                            self.pid.model_path),
+                self._fingerprint(),
                 # str() to match how train() writes them, or an equal set of labels of a
                 # different type would read as a changed parameter list.
                 param_entry_labels=[str(label) for label in _param_labels(self.pid)],
-                feature_labels=self.feature_labels)
+                feature_labels=self.data_feature_labels,
+                prediction_feature_labels=self.prediction_feature_labels)
         except EmulatorQualityError as error:
             raise EmulatorQualityError(
                 f'{error} emulator_settings.reuse_samples cannot be used here: the samples in '
@@ -692,15 +804,20 @@ class EmulatorTrainer:
             # told it was "the configured min_r2". The emulator now carries its own
             # configuration; see _use_time_setting in param_id/paramID.py.
             'settings': _jsonable_settings(self.settings),
-            'fingerprint': fingerprint(self.pid.param_id_info, self.pid.obs_info,
-                                       self.pid.protocol_info, self.pid.model_path),
+            'fingerprint': self._fingerprint(),
             'provenance': _provenance(self.pid),
         }
+        if self.prediction_indices:
+            # Which of feature_labels are prediction features (they are the last ones).
+            meta['prediction_feature_labels'] = self.prediction_feature_labels
         bundle = EmulatorBundle(model, meta, x_train=x, y_train=y,
                                 validation=validation)
         output_dir = self.output_directory()
         bundle.save(output_dir)
         print(f'[emulator] saved to {output_dir}')
+        if self.study_inp is not None:
+            from libcuflynx.utilities import cuflynx_study
+            cuflynx_study.update_study(self.study_inp, emulator=output_dir)
         for label, score in zip(bundle.feature_labels, meta['feature_r2']):
             print(f'    held-out R2 {score:8.4f}   {label}')
         return bundle
@@ -831,6 +948,10 @@ def _jsonable_settings(settings):
     """
     out = {}
     for key, value in (settings or {}).items():
+        if key == prediction_features.INCLUDE_PREDICTION_ITEMS and not value:
+            # off is the default, and leaving it out keeps a bundle trained without it
+            # identical to one trained before the setting existed
+            continue
         if isinstance(value, (bool, int, float, str)) or value is None:
             out[str(key)] = value
         elif isinstance(value, (list, tuple)):

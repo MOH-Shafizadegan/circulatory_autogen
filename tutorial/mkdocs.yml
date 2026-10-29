@@ -35,11 +35,19 @@ nav:
   - Model Generation and Simulation: model-generation-simulation.md
   - Designing a model: design-model.md
   - External Python Solvers: external-python-solvers.md
+  - Coupling to External Models:
+      - Overview: external-coupling/index.md
+      - Couple your own Python model: external-coupling/python-models.md
+      - "FEniCS: tissue O2 and capillaries": external-coupling/fenics-tissue-o2.md
+      - "FEniCS: NE around a varicosity": external-coupling/fenics-ne-varicosity.md
+      - 1D finite-volume coupling: external-coupling/fv-1d.md
+      - Troubleshooting: external-coupling/troubleshooting.md
   - Importing other model formats: model-formats.md
   - Parameter Identification: parameter-identification.md
   - Sensitivity Analysis: sensitivity-analysis.md
   - Identifiability Analysis: identifiability-analysis.md
   - Emulators (Surrogate Models): emulators.md
+  - Writing up a model and its calibration: methods-latex.md
   - "Example: 3Compartment Model": example-3compartment-model.md
   - Running on the HPC: running-on-hpc.md
   - Other Useful Features: other-features.md

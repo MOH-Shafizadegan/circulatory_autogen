@@ -31,11 +31,11 @@ Example script showing how to build an `obs_data.json` using the helper class
 
 ### read_and_insert_parameters.py
 
-Updates a `parameters.csv` file with values from a JSON input file.
+Sets every parameter of one parameters file (nested JSON) in another, in place: `read_and_insert_parameters.py parameters_to_add.json` updates the file `input_param_file` names, and `read_and_insert_parameters.py parameters.json parameters_to_add.json` the one given.
 
 ### convert_0d_to_1d.py
 
-Utility for converting a 0D vessel array into a 1D representation (useful when preparing 1D-0D coupled models).
+Utility for converting a 0D module array into a 1D representation (useful when preparing 1D-0D coupled models).
 
 ### run_multiple_param_id.py
 

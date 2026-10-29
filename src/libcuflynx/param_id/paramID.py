@@ -23,13 +23,15 @@ from libcuflynx.utilities import paperPlotSetup
 from libcuflynx.utilities import stat_distributions
 from libcuflynx.utilities import diagnostics
 from libcuflynx.utilities import utility_funcs
+from libcuflynx.utilities import cuflynx_study
 import traceback
 from libcuflynx.utilities.utility_funcs import Normalise_class
 from libcuflynx.utilities.paths import default_param_id_output_dir, default_resources_dir
 paperPlotSetup.Setup_Plot(3)
 from libcuflynx.solver_wrappers import get_simulation_helper
 from libcuflynx.protocol_runners.protocol_executor import ProtocolExecutor
-from libcuflynx.parsers.PrimitiveParsers import scriptFunctionParser
+from libcuflynx.parsers.PrimitiveParsers import scriptFunctionParser, cost_experiment_idxs
+from libcuflynx.param_id import validation
 # Not `from mpi4py import MPI`: that import initialises MPI and registers an
 # atexit MPI_Finalize, and with no launcher present that finalise is what aborts
 # on macOS when a NIC goes away (#396). get_MPI hands back the real
@@ -135,25 +137,6 @@ except ImportError:                                          # pragma: no cover 
     from numpy import trapz as integrate_trapezoid
 
 
-def _resolve_UQ_options(UQ_options, mcmc_options):
-    """Accept the deprecated ``mcmc_options=`` kwarg wherever ``UQ_options=`` is now taken.
-
-    MCMC is one method of uncertainty quantification rather than the whole of it, so the options
-    moved to ``UQ_options`` with a ``method`` key. Callers passing the old name keep working and
-    are told once. Passing both is refused: the two can disagree, and picking a winner would
-    silently discard one from a caller who believes it is in effect.
-    """
-    if mcmc_options is None:
-        return UQ_options
-    if UQ_options is not None:
-        raise ValueError(
-            "pass either UQ_options or the deprecated mcmc_options, not both -- they are the "
-            "same setting and their values can disagree.")
-    print("WARNING: the 'mcmc_options' argument is deprecated; use 'UQ_options' instead "
-          "(MCMC is now selected with UQ_options={'method': 'mcmc', ...}).")
-    return mcmc_options
-
-
 def ensure_mle_cost_type_for_bayesian_inner(inner, inp_data_dict):
     """
     Make sure every observable uses an ``@is_MLE`` cost (required for ``ln L = -cost`` in
@@ -171,10 +154,8 @@ def ensure_mle_cost_type_for_bayesian_inner(inner, inp_data_dict):
     outlier component and went back to paying hundreds of nats for a wrong branch. Both are
     MLE costs; neither needed replacing.
 
-    The consequence for the legacy spelling: a ``cost_type`` named in ``UQ_options`` no
-    longer forces a cost onto observables that already name a valid one. It is the fallback
-    for those that do not, which is what the key is for now that ``cost_type`` lives per
-    data_item.
+    A ``cost_type`` named in ``UQ_options`` is the fallback for observables that do not name
+    an MLE cost of their own.
     """
     if inner is None or getattr(inner, "obs_info", None) is None:
         return
@@ -183,13 +164,9 @@ def ensure_mle_cost_type_for_bayesian_inner(inner, inp_data_dict):
     option_dicts = []
     if inp_data_dict.get("DEBUG"):
         option_dicts.append(inp_data_dict.get("debug_optimiser_options") or {})
-        option_dicts.append(inp_data_dict.get("debug_UQ_options")
-                            or inp_data_dict.get("debug_mcmc_options") or {})
+        option_dicts.append(inp_data_dict.get("debug_UQ_options") or {})
     option_dicts.append(inp_data_dict.get("optimiser_options") or {})
-    # The legacy spelling is still read here: parse_user_inputs_file normalises it, but this is
-    # also reachable with a hand-built dict that never went through the parser.
-    option_dicts.append(inp_data_dict.get("UQ_options")
-                        or inp_data_dict.get("mcmc_options") or {})
+    option_dicts.append(inp_data_dict.get("UQ_options") or {})
     for src in option_dicts:
         if not isinstance(src, dict):
             continue
@@ -211,9 +188,6 @@ def ensure_mle_cost_type_for_bayesian_inner(inner, inp_data_dict):
     inner.obs_info["cost_type"] = resolved
     inner.cost_type = resolved
 
-
-# Re-exported for backwards compatibility; the canonical definition is in param_id.aadc_backend.
-TAPE_CONSISTENT_AADC_METHODS = aadc_backend.TAPE_CONSISTENT_METHODS
 
 # The CasADi symbolic cost/gradient/observable machinery lives in param_id.casadi_backend; the
 # methods below delegate to it. require_casadi/as_casadi_column are re-bound to their previous
@@ -260,7 +234,7 @@ class CVS0DParamID():
         mcmc_instead: If True, build an MCMC sampler instead of an optimiser.
         file_name_prefix: Model name prefix; ties together the resource files
             and names the output case directory.
-        params_for_id_path: Optional path to a ``{prefix}_params_for_id.csv``.
+        params_for_id_path: Optional path to a ``{prefix}_params_for_id.json``.
             Alternatively call
             [`set_params_for_id`][param_id.paramID.CVS0DParamID.set_params_for_id].
         param_id_obs_path: Optional path to an ``obs_data.json``. Alternatively
@@ -272,8 +246,7 @@ class CVS0DParamID():
         solver_info: Solver config dict (defaults to ``{"solver": "CVODE_myokit"}``).
         UQ_options: Options dict for uncertainty quantification (used when
             ``mcmc_instead=True``): ``method`` (only ``'mcmc'`` so far), ``library``,
-            ``num_steps``, ``num_walkers``, ``burn_in``. ``mcmc_options`` is accepted as a
-            deprecated alias.
+            ``num_steps``, ``num_walkers``, ``burn_in``.
         optimiser_options: Options dict for the optimiser (e.g. ``cost_convergence``,
             ``max_patience``, ``num_calls_to_function``, ``cost_type``). Sensible
             defaults are used if omitted.
@@ -296,8 +269,9 @@ class CVS0DParamID():
                  do_ad=False, DEBUG=False,
                  param_id_output_dir=None, resources_dir=None, one_rank=False,
                  operation_funcs_external_path=None, cost_funcs_external_path=None,
-                 modifier_funcs_external_path=None, mcmc_options=None,
-                 use_emulator=False, emulator_dir=None, emulator_settings=None):
+                 modifier_funcs_external_path=None,
+                 use_emulator=False, emulator_dir=None, emulator_settings=None,
+                 study_name=None, write_cuflynx_study=True, user_inputs_path=None):
         self.model_path = model_path
         self.param_id_method = param_id_method
         self.mcmc_instead = mcmc_instead
@@ -319,7 +293,7 @@ class CVS0DParamID():
         self.rank = self.comm.Get_rank()
         self.num_procs = self.comm.Get_size()
 
-        self.UQ_options = _resolve_UQ_options(UQ_options, mcmc_options)
+        self.UQ_options = UQ_options
         if solver_info is None:
             self.solver_info = {"solver": "CVODE_myokit"}
         else:
@@ -351,8 +325,23 @@ class CVS0DParamID():
             # Archive the input files (timestamped) used for this run so the user can
             # later check exactly what params_for_id / obs_data produced these outputs.
             self._archive_input_files(params_for_id_path, param_id_obs_path)
+            # Describe the study for CUFLynx: model, inputs, funcs and solver settings now; the
+            # run directory itself once it holds results (run / run_UQ), so a study is never
+            # opened on an empty run -- emulator training builds one of these and runs nothing.
+            self._study_inp = cuflynx_study.study_inputs(
+                param_id_output_dir=self.param_id_output_dir, study_name=study_name,
+                file_prefix=file_name_prefix, write_cuflynx_study=write_cuflynx_study,
+                user_inputs_path=user_inputs_path, model_path=model_path,
+                param_id_obs_path=param_id_obs_path, params_for_id_path=params_for_id_path,
+                operation_funcs_external_path=operation_funcs_external_path,
+                cost_funcs_external_path=cost_funcs_external_path,
+                modifier_funcs_external_path=modifier_funcs_external_path,
+                solver_info=self.solver_info, dt=dt, pre_time=pre_time, sim_time=sim_time,
+                use_emulator=self.use_emulator, emulator_dir=emulator_dir)
+            cuflynx_study.update_study(self._study_inp)
         else:
             self.output_dir = None
+            self._study_inp = None
         
         if resources_dir is None:
             self.resources_dir = default_resources_dir()
@@ -374,6 +363,7 @@ class CVS0DParamID():
         self.protocol_info = None
         self.obs_info = None
         self.prediction_info = None
+        self.prediction_plots = []
         self.params_for_id_path = params_for_id_path
         self.optimiser_options = optimiser_options
         self.obs_and_param_parser = ObsAndParamDataParser(
@@ -382,14 +372,13 @@ class CVS0DParamID():
             # self.__set_obs_names_and_df(param_id_obs_path, sim_time=sim_time, pre_time=pre_time)
             parsed_data = self.obs_and_param_parser.parse_obs_data_json(
                 param_id_obs_path=param_id_obs_path,
-                pre_time=pre_time,
-                sim_time=sim_time,
                 model_type=model_type,
                 method=(solver_info or {}).get('method'),
             )
             self.gt_df = parsed_data["gt_df"]
             self.protocol_info = parsed_data["protocol_info"]
             self.prediction_info = parsed_data["prediction_info"]
+            self.prediction_plots = parsed_data["prediction_plots"]
 
             self.obs_info = self.obs_and_param_parser.process_obs_info(gt_df=self.gt_df, output_dir=self.output_dir, dt=self.dt)
             self.protocol_info = self.obs_and_param_parser.process_protocol_and_weights(
@@ -506,6 +495,7 @@ class CVS0DParamID():
             'one_rank', 'do_ad',
             'operation_funcs_external_path', 'cost_funcs_external_path',
             'modifier_funcs_external_path', 'use_emulator', 'emulator_settings',
+            'study_name', 'write_cuflynx_study', 'user_inputs_path',
         ]
         kwargs = {key: inp_data_dict[key] for key in arg_options if key in inp_data_dict}
 
@@ -559,40 +549,71 @@ class CVS0DParamID():
         [`output_dir`][param_id.paramID.CVS0DParamID].
 
         Raises:
-            ValueError: If observation data or parameters for id are not set.
+            ValueError: If observation data or parameters for id are not set, or the obs_data
+                has no data_items.
         """
+        self._require_data_items('calibration')
         self._check_info_available()
-        self.param_id.run()
+        with self._run_recorded(self.param_id_method):
+            self.param_id.run()
 
-        # Some execution paths (or older optimiser flows) can finish without writing
-        # the per-experiment full output dumps. Ensure they exist for downstream
-        # tooling (e.g. post-processing, debug comparisons, external plotting).
-        try:
-            if getattr(self, "rank", 0) == 0:
-                output_dir = getattr(self.param_id, "output_dir", None)
-                protocol_info = getattr(self.param_id, "protocol_info", None)
-                best_param_vals = getattr(self.param_id, "best_param_vals", None)
-
-                if output_dir and protocol_info and best_param_vals is not None:
-                    expected0 = os.path.join(
-                        output_dir, "all_outputs_with_best_param_vals_exp_0.npz"
-                    )
-                    if not os.path.exists(expected0):
-                        print(
-                            "[param_id] all_outputs_with_best_param_vals_exp_*.npz "
-                            "not found; generating per-experiment output dumps now."
-                        )
-                        self.param_id.save_all_outputs_per_experiment(
-                            best_param_vals, suffix=""
-                        )
-        except Exception as e:
-            # Don't fail an otherwise-successful optimisation because of optional artifacts.
+            # Some execution paths (or older optimiser flows) can finish without writing
+            # the per-experiment full output dumps. Ensure they exist for downstream
+            # tooling (e.g. post-processing, debug comparisons, external plotting).
             try:
-                print(f"[param_id] WARNING: failed to write all-outputs npz dumps: {e}")
-            except Exception:
-                pass
+                if getattr(self, "rank", 0) == 0:
+                    output_dir = getattr(self.param_id, "output_dir", None)
+                    protocol_info = getattr(self.param_id, "protocol_info", None)
+                    best_param_vals = getattr(self.param_id, "best_param_vals", None)
 
-    def run_UQ(self, UQ_options=None, mcmc_options=None):
+                    if output_dir and protocol_info and best_param_vals is not None:
+                        # the first experiment the cost uses: a validation-only experiment is
+                        # not simulated in calibration and has no dump
+                        first = (cost_experiment_idxs(protocol_info) or [0])[0]
+                        expected0 = os.path.join(
+                            output_dir, f"all_outputs_with_best_param_vals_exp_{first}.npz"
+                        )
+                        if not os.path.exists(expected0):
+                            print(
+                                "[param_id] all_outputs_with_best_param_vals_exp_*.npz "
+                                "not found; generating per-experiment output dumps now."
+                            )
+                            self.param_id.save_all_outputs_per_experiment(
+                                best_param_vals, suffix=""
+                            )
+            except Exception as e:
+                # Don't fail an otherwise-successful optimisation because of optional artifacts.
+                try:
+                    print(f"[param_id] WARNING: failed to write all-outputs npz dumps: {e}")
+                except Exception:
+                    pass
+
+    @contextlib.contextmanager
+    def _run_recorded(self, method):
+        """Declare this run directory in the study manifest when the run starts
+        (``status: running``), so a run that is cut short is there with what it wrote each
+        iteration, and mark it ``finished``, ``stopped`` (interrupted) or ``failed`` at the
+        end. A killed process leaves it ``running``."""
+        self._record_run_in_study(method, 'running')
+        try:
+            yield
+        except KeyboardInterrupt:
+            self._record_run_in_study(method, 'stopped')
+            raise
+        except BaseException:
+            self._record_run_in_study(method, 'failed')
+            raise
+        self._record_run_in_study(method, 'finished')
+
+    def _record_run_in_study(self, method, status):
+        """This run directory's entry in the study manifest, with ``status``."""
+        if getattr(self, 'rank', 0) == 0 and getattr(self, '_study_inp', None) \
+                and self.output_dir:
+            cuflynx_study.update_study(self._study_inp, 'runs',
+                                       {'dir': self.output_dir, 'method': method,
+                                        'status': status})
+
+    def run_UQ(self, UQ_options=None):
         """Run uncertainty quantification (MCMC) on **this** object.
 
         Callable whether or not the instance was built with ``mcmc_instead=True``:
@@ -603,9 +624,8 @@ class CVS0DParamID():
           compiled instead of building a second CVS0DParamID for it (CUFLynx #217).
 
         ``UQ_options`` overrides the options the object was built with; omit it to keep them.
-        ``mcmc_options`` is a deprecated alias.
         """
-        UQ_options = _resolve_UQ_options(UQ_options, mcmc_options)
+        self._require_data_items('uncertainty quantification')
         global mcmc_object
         if not self.mcmc_instead:
             if getattr(self, 'param_id', None) is None:
@@ -617,12 +637,24 @@ class CVS0DParamID():
                 UQ_options if UQ_options is not None else getattr(self, 'UQ_options', None))
         elif UQ_options is not None:
             mcmc_object._init_mcmc(UQ_options, DEBUG=self.DEBUG)
-        mcmc_object.run()
+        with self._run_recorded('mcmc'):
+            mcmc_object.run()
 
-    def run_mcmc(self):
-        """Deprecated alias of :meth:`run_UQ`, kept so existing scripts keep working."""
-        return self.run_UQ()
-    
+    def _require_data_items(self, what):
+        """Refuse to calibrate (or sample a posterior) against an obs_data with no data_items.
+
+        Prediction items are never fitted, so without a data_item the cost is empty and the
+        optimiser would report whatever parameters it started from as a fit. Checked before
+        anything is simulated. Sensitivity analysis, saving predictions and emulator training
+        are not calibrations and do not call this.
+        """
+        gt_df = getattr(self, 'gt_df', None)
+        if gt_df is not None and len(gt_df) == 0:
+            raise ValueError(
+                f'The obs_data has no data_items, so there is nothing for {what} to fit: '
+                f'prediction_items are held out and never fitted. Add at least one data_item '
+                f'to the obs_data file.')
+
     def _check_info_available(self):
         #new check, need ensure 'operands' or 'operation_kwargs' exist
         def is_nan(x):
@@ -772,13 +804,12 @@ class CVS0DParamID():
             print(f'Setting ground truth data: {obs_data_dict}')
         parsed_data = self.obs_and_param_parser.parse_obs_data_json(
             obs_data_dict=obs_data_dict,
-            pre_time=self.pre_time,
-            sim_time=self.sim_time,
             model_type=self.model_type,
         )
         self.gt_df = parsed_data["gt_df"]
         self.protocol_info = parsed_data["protocol_info"]
         self.prediction_info = parsed_data["prediction_info"]
+        self.prediction_plots = parsed_data["prediction_plots"]
 
         self.obs_info = self.obs_and_param_parser.process_obs_info(gt_df=self.gt_df, output_dir=self.output_dir, dt=self.dt)
         self.protocol_info = self.obs_and_param_parser.process_protocol_and_weights(
@@ -798,7 +829,7 @@ class CVS0DParamID():
         Args:
             params_for_id_dict: List of entries of the form
                 ``{vessel_name, param_name, min, max, name_for_plotting}`` (the
-                in-memory equivalent of ``{prefix}_params_for_id.csv``).
+                in-memory equivalent of a ``{prefix}_params_for_id.json`` file's entries).
                 ``vessel_name`` may be a single name or a list of names to share
                 one calibrated parameter across many vessels.
         """
@@ -809,6 +840,13 @@ class CVS0DParamID():
         self.param_id.set_param_id_info(self.param_id_info)
         if self.rank == 0:
             print(f'Params for id set: {self.param_id_info["param_names"]}')
+
+    def set_joint_priors(self, joint_priors):
+        """Add priors over several parameters at once; see `ParamID.set_joint_priors`."""
+        if self.mcmc_instead:
+            mcmc_object.set_joint_priors(joint_priors)
+        else:
+            self.param_id.set_joint_priors(joint_priors)
 
     def set_best_param_vals(self, best_param_vals):
         """Manually supply the best-fit parameter vector (e.g. from a previous run).
@@ -1543,25 +1581,50 @@ class CVS0DParamID():
     def run_single_sensitivity(self, do_triples_and_quads):
         self.param_id.run_single_sensitivity(self.output_dir, do_triples_and_quads)
 
-    def __get_prediction_data(self):
-        # Currently this function saves all prediction variables for all experiments
-        # only for the best_param_vals
+    def _best_fit(self):
+        """The best-fit parameter values, read from best_param_vals.npy if not in memory."""
+        if self.param_id.best_param_vals is None:
+            self.param_id.best_param_vals = np.load(
+                os.path.join(self.output_dir, 'best_param_vals.npy'))
+        return self.param_id.best_param_vals
 
-        if self.rank !=0:
-            return
+    def _prediction_result(self):
+        """The prediction items at the best fit (``protocol_runners.predict_on``)."""
+        from libcuflynx.protocol_runners.predictions import predict_on
+        best = self._best_fit()
+        info = self.param_id.param_id_info
+        return predict_on(self.param_id._protocol_executor, self.protocol_info,
+                          self.prediction_info, self.param_id.operation_funcs_dict,
+                          id_param_names=info['param_names'],
+                          id_param_vals=expand_modifier_param_vals(info, best))
 
-        time_and_pred_per_exp_list = []
-        for exp_idx in self.prediction_info['experiment_idxs']:
-            self.param_id.simulate_once(reset=False, only_one_exp=exp_idx)
-            tSim = self.param_id.sim_helper.tSim - self.param_id.pre_time
-            pred_qnames = [str(ops[0]) for ops in obs_operand_lists(self.prediction_info)]
-            pred_names = [name for II, name in enumerate(pred_qnames) if
-                                  self.prediction_info['experiment_idxs'][II] == exp_idx]
-            pred_output = np.array(self.param_id.sim_helper.get_results(pred_names))
-                    
-            time_and_pred_per_exp_list.append(np.concatenate((tSim.reshape(1, -1), 
-                                                         pred_output[:, 0, :])))
-        return time_and_pred_per_exp_list
+    def _data_item_feature_values(self, plots):
+        """``{data_item_name: value}`` at the best fit for the data_items in ``plots``' groups,
+        through the cost path (each item evaluated over its own segment)."""
+        from libcuflynx.param_id import prediction_plots
+        groups = prediction_plots.item_groups(self.gt_df, self.prediction_info)
+        labels = {plot[key] for plot in plots for key in ('x', 'y')
+                  if isinstance(plot.get(key), str)}
+        rows = self.gt_df.to_dict('records') if self.gt_df is not None else []
+        wanted = sorted({item['index'] for label in labels for item in groups.get(label, [])
+                         if item['source'] == 'data_items'})
+        if not wanted:
+            return {}
+        segments = {i: (int(rows[i]['experiment_idx']), int(rows[i]['subexperiment_idx']))
+                    for i in wanted}
+        _, operands, _ = self.param_id.get_cost_obs_and_pred_from_params(
+            self._best_fit(), exp_idxs=sorted({e for e, _ in segments.values()}))
+        num_sub = self.protocol_info['num_sub_per_exp']
+        const_idxs = self.obs_info['const_idx_to_obs_idx']
+        values = {}
+        for i, (exp_idx, sub_idx) in segments.items():
+            if i not in const_idxs:
+                continue  # not a scalar; plot_prediction_plots says so
+            with self.param_id.evaluating_segment(exp_idx, sub_idx):
+                obs_dict = self.param_id.get_obs_output_dict(
+                    operands[int(np.sum(num_sub[:exp_idx])) + sub_idx])
+            values[str(rows[i]['data_item_name'])] = float(obs_dict['const'][const_idxs.index(i)])
+        return values
 
     def save_prediction_data(self):
         if self.rank !=0:
@@ -1570,30 +1633,79 @@ class CVS0DParamID():
             print('Prediction variables are not saved when use_emulator is set: they are '
                   'traces, and the emulator predicts the scalar observable features only.')
             return
-        if obs_operand_lists(self.prediction_info):
+        operand_lists = obs_operand_lists(self.prediction_info)
+        features = {}
+        if operand_lists:
+            from libcuflynx.param_id import prediction_features
             print('Saving prediction data')
-            time_and_pred_per_exp_list = self.__get_prediction_data()
+            result = self._prediction_result()
+            features = result.features
+            num_items = len(operand_lists)
+            segments = prediction_features.feature_segments(
+                self.prediction_info, list(range(num_items)), self.protocol_info)
+            last = [sub == prediction_features.feature_subexperiment(self.protocol_info, exp)
+                    for exp, sub in segments]
 
-            #save the prediction output
-            for exp_idx in range(len(time_and_pred_per_exp_list)):
-                time_and_pred = time_and_pred_per_exp_list[exp_idx]
-                np.save(os.path.join(self.output_dir, f'prediction_variable_data_exp_{exp_idx}'), 
-                        time_and_pred)
-                
+            def first_operand(k):
+                return result.segments[segments[k]][str(operand_lists[k][0])]
+
+            # An item recorded over its experiment's last sub-experiment gets a file, numbered
+            # in item order: rows [time, the first operand of each such item of that
+            # experiment], time from the end of the experiment's warm-up.
+            legacy = [k for k in range(num_items) if last[k]]
+            for file_idx, k in enumerate(legacy):
+                same = [j for j in legacy if segments[j] == segments[k]]
+                time = result.segments[segments[k]]['time']
+                np.save(os.path.join(self.output_dir, f'prediction_variable_data_exp_{file_idx}'),
+                        np.concatenate((time.reshape(1, -1),
+                                        np.array([first_operand(j) for j in same]))))
+
+            # Items that name another sub-experiment: a file per segment, time from its start.
+            for exp_idx, sub_idx in sorted({segments[k] for k in range(num_items)
+                                            if not last[k]}):
+                in_segment = [k for k in range(num_items)
+                              if not last[k] and segments[k] == (exp_idx, sub_idx)]
+                n = len(first_operand(in_segment[0]))
+                rows = [np.arange(n) * self.param_id.dt] + [first_operand(k) for k in in_segment]
+                np.save(os.path.join(self.output_dir,
+                                     f'prediction_variable_data_exp_{exp_idx}_sub_{sub_idx}'),
+                        np.vstack(rows))
+
             # also save the prediction variable names to csv
             with open(os.path.join(self.output_dir, 'prediction_variable_names.csv'), 'w') as wf:
-                # One qname per line -- the operand list holds one entry per prediction
-                # item, so this writes exactly what it always did.
-                for ops in obs_operand_lists(self.prediction_info):
+                # One qname per line: each prediction item's first operand.
+                for ops in operand_lists:
                     wf.write(str(ops[0]) + '\n')
-            
+
             print('prediction data saved')
+
+            # held-out data carried by prediction items (a value): the best fit against it,
+            # over each item's own segment, with every one of its operands.
+            path = validation.write_validation_results(result.validation, self.output_dir)
+            if path:
+                print(f'validation of {len(result.validation["items"])} held-out prediction '
+                      f'item(s) saved in {path}')
+
 
         else:
             print(f'prediction variables have not been defined, if you want to save predicition variables,',
                   f'create a prediction_items entry in the obs_data.json file')
 
-        return
+        if self.prediction_plots:
+            from libcuflynx.param_id import prediction_plots
+            model_values = dict(features)
+            model_values.update(self._data_item_feature_values(self.prediction_plots))
+            info = self.param_id.param_id_info
+            time_courses = prediction_plots.record_time_courses(
+                self.param_id._protocol_executor, self.protocol_info, self.prediction_plots,
+                id_param_names=info['param_names'],
+                id_param_vals=expand_modifier_param_vals(info, self._best_fit()))
+            for path in prediction_plots.plot_prediction_plots(
+                    self.prediction_plots, self.gt_df, self.prediction_info, self.protocol_info,
+                    model_values, self.output_dir, funcs=self.param_id.operation_funcs_dict,
+                    units=prediction_plots.group_units(self.gt_df, self.prediction_info),
+                    time_courses=time_courses):
+                print(f'prediction plot saved in {path}')
 
     def set_bayesian_parameters(self, n_calls, n_initial_points, acq_func, random_state, acq_func_kwargs={}):
         """Configure the Bayesian optimiser.
@@ -1861,6 +1973,9 @@ class ParamID():
         self.param_id_method = param_id_method
         self.output_dir = None
         self.model_type = model_type
+        # Priors over several parameters at once, on top of params_for_id's per-parameter
+        # ones: [(indices, logpdf)]. See set_joint_priors.
+        self.joint_priors = []
 
         # Emulator mode (#333). `solver` still names the truth solver -- the one the emulator
         # was trained against, and the one to compare it with -- so this is its own flag.
@@ -1961,6 +2076,11 @@ class ParamID():
         else:
             self.n_steps = None
 
+        # Before the offline warm-up: it binds the traced inputs, which the warm-up holds at
+        # their first value, and the rebuild it does would discard the warm-up's state.
+        if self.protocol_info is not None:
+            self.sim_helper.set_protocol_info(self.protocol_info)
+
         offline_pre_time = None
         if self.protocol_info is not None:
             offline_pre_time = self.protocol_info.get('offline_pre_time')
@@ -1987,9 +2107,6 @@ class ParamID():
             # what issue #328 is about.
             offline_pre_time = float(offline_pre_time)
             self.sim_helper.run_offline_pre_and_set_default_state(offline_pre_time)
-
-        if self.protocol_info is not None:
-            self.sim_helper.set_protocol_info(self.protocol_info)
 
         # initialise
         self.param_init = None
@@ -2030,6 +2147,7 @@ class ParamID():
             )
         # Fail fast on a stale obs_data.json rather than part-way through an optimisation (#304).
         validate_operation_kwargs(self.obs_info, self.operation_funcs_dict)
+        validate_operation_kwargs(self.prediction_info, self.operation_funcs_dict)
         validate_cost_kwargs(self.obs_info, self.cost_funcs_dict, self.cost_type)
         self.DEBUG = DEBUG
 
@@ -2227,6 +2345,8 @@ class ParamID():
 
     def set_prediction_info(self, prediction_info):
         self.prediction_info = normalise_prediction_info(prediction_info)
+        # A prediction item with an operation is checked like a data_item's (#304).
+        validate_operation_kwargs(self.prediction_info, self.operation_funcs_dict)
     
     def set_obs_info(self, obs_info):
         # Before cost_type is read and before the kwargs validators run, so all three
@@ -2298,8 +2418,9 @@ class ParamID():
                 "(output_dir or protocol_info missing)"
             )
             return
-        num_experiments = int(self.protocol_info.get("num_experiments", 0) or 0)
-        for exp_idx in range(num_experiments):
+        # The experiments the calibration fits. A prediction/validation-only one has no data to
+        # plot against; its traces are saved by save_prediction_data instead.
+        for exp_idx in cost_experiment_idxs(self.protocol_info):
             try:
                 self.simulate_once(
                     param_vals, reset=True, only_one_exp=exp_idx
@@ -2462,17 +2583,26 @@ class ParamID():
         return
     
     def get_cost_obs_and_pred_from_params(self, param_vals, reset=True, 
-                                          only_one_exp=-1, pred_names=None, do_ad=False):
+                                          only_one_exp=-1, pred_names=None, do_ad=False,
+                                          exp_idxs=None):
         # Every cost evaluation funnels through here -- get_cost_from_params and
         # get_cost_and_obs_from_params both delegate -- so this is the one place that can count
         # them without each optimiser keeping its own tally (#344).
         self.num_cost_evals = getattr(self, 'num_cost_evals', 0) + 1
 
         # loop through subexperiments
-        if only_one_exp == -1:
+        cost_exps = cost_experiment_idxs(self.protocol_info)
+        if exp_idxs is not None:
+            # An explicit set -- the cost's experiments plus a validation-only one a prediction
+            # feature needs. The cost is still summed over the cost's experiments only.
+            reset = True
+            exp_idxs_to_run = sorted({int(e) for e in exp_idxs})
+        elif only_one_exp == -1:
             # unless the user wants to just one experiment, reset must be true
             reset = True
-            exp_idxs_to_run = list(range(self.protocol_info["num_experiments"]))
+            # Only the experiments a data_item belongs to: an experiment used only by
+            # prediction items is not part of the cost, so it is not simulated here.
+            exp_idxs_to_run = cost_exps
         else:
             exp_idxs_to_run = [only_one_exp]
 
@@ -2538,8 +2668,10 @@ class ParamID():
         # order, so a reference is backward-only. Declared as a block rather than by assigning
         # the attribute here: `evaluating_segment` gives a *standalone* caller its own fresh
         # table, and it can only tell the two apart if this walk says which it is.
+        cost_exps_run = exp_idxs_to_run if exp_idxs is None else \
+            [e for e in exp_idxs_to_run if e in cost_exps]
         with self.accumulating_temp_results():
-            for exp_idx in exp_idxs_to_run:
+            for exp_idx in cost_exps_run:
                 for this_sub_idx in range(num_sub_per_exp[exp_idx]):
                     subexp_count = int(np.sum([num_sub for num_sub in
                                                num_sub_per_exp[:exp_idx]]) + this_sub_idx)
@@ -2698,7 +2830,44 @@ class ParamID():
                     f"Valid priors are: {', '.join(sorted(PARAM_PRIOR_TYPES))}."
                 )
 
+        for indices, logpdf in getattr(self, 'joint_priors', None) or []:
+            term = logpdf(np.asarray(param_vals, dtype=float)[indices])
+            if not np.isfinite(term):
+                return -np.inf
+            lnprior += term
+
         return lnprior
+
+    def set_joint_priors(self, joint_priors):
+        """Add log densities over several parameters to the log prior.
+
+        ``joint_priors`` is a list of ``(names, logpdf)``: ``names`` are generated-model
+        parameter names (``param_names_for_gen``, e.g. ``g_leak_mod_i_leak_Na``), one per
+        calibrated parameter the density is over, and ``logpdf(values)`` takes those
+        parameters' values, in that order, and returns a log density (-inf outside its
+        support). It is added to the per-parameter priors, whose bounds checks still apply --
+        so a parameter with a joint prior is usually given a ``uniform`` row in params_for_id.
+
+        Used by calibration workflows to make an earlier step's stored posterior the prior of
+        a later one (``libcuflynx.calibration_workflow``). Like every prior, it only affects
+        the log posterior: MCMC, and optimisers run with objective_function 'likelihood'.
+        """
+        resolved = []
+        names_for_gen = self.param_id_info['param_names_for_gen']
+        for names, logpdf in joint_priors or []:
+            indices = []
+            for name in names:
+                matches = [idx for idx, gen in enumerate(names_for_gen)
+                           if name in (gen if isinstance(gen, (list, tuple)) else [gen])]
+                if not matches:
+                    raise ValueError(
+                        f"joint prior over '{name}', which is not a calibrated parameter "
+                        f"(calibrated: {[list(g) if isinstance(g, (list, tuple)) else g for g in names_for_gen]}).")
+                indices.append(matches[0])
+            if len(set(indices)) != len(indices):
+                raise ValueError(f"joint prior names {list(names)} repeat a parameter.")
+            resolved.append((np.asarray(indices, dtype=int), logpdf))
+        self.joint_priors = resolved
 
     def get_lnlikelihood_lnprior_from_params(self, param_vals, reset=True):
         lnprior = self.get_lnprior_from_params(param_vals)
@@ -2944,11 +3113,9 @@ class ParamID():
                     if updated_weight_const_vec[obs_idx] != 0:
                         cost_func = cost_funcs_dict[self.cost_type[obs_idx]]
                         # A cost that scores against a distribution builds its density from
-                        # numbers (scipy's gaussian_kde, a mixture) and cannot take a symbol.
-                        # Before #421 these items were data_type prob_dist and were refused
-                        # below with amp/phase; now they are constants, so refuse them here --
-                        # otherwise the symbolic cost silently picks up the nan standing in for
-                        # the `value` such an item deliberately does not have.
+                        # numbers (scipy's gaussian_kde, a mixture) and cannot take a symbol;
+                        # without this refusal the symbolic cost would pick up the nan standing
+                        # in for the `value` such an item does not have.
                         if ground_truth_param_name(cost_func) == 'prob_dist_params':
                             raise NotImplementedError(
                                 f"cost_type '{self.cost_type[obs_idx]}' scores against a "
@@ -3121,9 +3288,8 @@ class ParamID():
         """What this observable is compared against: a number, or a distribution.
 
         Chosen from the cost func's signature rather than from the data_item's type. A scalar
-        scored against a KDE of measured samples is still a scalar -- ``prob_dist`` used to be a
-        fourth data_type for this, which put those observables in a parallel vector and hid them
-        from everything that works on scalar features, the emulator included (issue #421).
+        scored against a KDE of measured samples is still a scalar, so it is indexed like every
+        other scalar feature (the emulator and FD sensitivities see it).
 
         ``prob_dist_params`` is read by ``obs_idx``, the data_item row, the way ``cost_type`` and
         the weight vectors are; ``ground_truth_const`` keeps its own compacted ``const_idx``.
@@ -3676,7 +3842,7 @@ A caller that steps through the segments in order does so inside
         ``gradient_sources()`` and the Laplace ``gradient_source`` -- the arm's own name, so a
         front-end can offer it, disable it, and report back which one ran:
 
-        * ``None`` / ``'auto'`` / ``'analytic'`` (default) -- the analytic arm for this
+        * ``None`` / ``'auto'`` (default) -- the analytic arm for this
           backend, raising when there is none. Deliberately still not a silent fall back to
           FD: a result quietly computed a different way, at a different cost and accuracy,
           is not the same result.
@@ -3701,7 +3867,7 @@ A caller that steps through the segments in order does so inside
         if self.emulates_features:
             # Over an emulator, FD is the only honest arm: the analytic ones differentiate the
             # real model, which is not the function being evaluated. It is also free here.
-            if method not in ('', 'ANALYTIC', 'AUTO', 'FD'):
+            if method not in ('', 'AUTO', 'FD'):
                 raise ValueError(
                     f"gradient_method '{gradient_method}' differentiates the real model, but "
                     f"this run evaluates an emulator (use_emulator: true). Only 'FD' is "
@@ -3712,12 +3878,12 @@ A caller that steps through the segments in order does so inside
         if method == 'FD':
             kwargs = {} if fd_rel_step is None else {'h': float(fd_rel_step)}
             return fd_backend.observable_feature_sensitivities(self, param_vals, **kwargs)
-        if method not in ('', 'ANALYTIC', 'AUTO', 'AD', 'FSA'):
+        if method not in ('', 'AUTO', 'AD', 'FSA'):
             raise ValueError(
                 f"unknown gradient_method '{gradient_method}' for local sensitivity analysis. "
                 "Valid values are 'AD' (exact CasADi jacobian, casadi_python), 'FSA' (Myokit "
                 "CVODES forward sensitivities, cellml + CVODE_myokit + do_ad), 'FD' "
-                "(central finite differences, any backend), or None/'auto'/'analytic' (this "
+                "(central finite differences, any backend), or None/'auto' (this "
                 "backend's analytic arm).")
 
         solver_info = getattr(self, 'solver_info', None)
@@ -3877,10 +4043,11 @@ A caller that steps through the segments in order does so inside
             print(f'WARNING: best cost {best_cost} is not close to cost check {cost_check}')
             print(f'Something is wrong with the cost calculation')
 
-            if os.path.exists(os.path.join(self.output_dir, f'all_outputs_with_best_param_vals_exp_0.npz')):
+            first = (cost_experiment_idxs(self.protocol_info) or [0])[0]
+            if os.path.exists(os.path.join(self.output_dir, f'all_outputs_with_best_param_vals_exp_{first}.npz')):
                 print('calculating some debug metrics for this issue')
 
-                for exp_idx in range(self.protocol_info["num_experiments"]):
+                for exp_idx in cost_experiment_idxs(self.protocol_info):
                     print(f'running simulation for experiment {exp_idx} to compare best fit and this run outputs')
                     best_fit_outputs = np.load(os.path.join(self.output_dir, f'all_outputs_with_best_param_vals_exp_{exp_idx}.npz'))
                     _, _ = self.get_cost_and_obs_from_params(self.best_param_vals, reset=True, only_one_exp=exp_idx)
@@ -3909,6 +4076,9 @@ A caller that steps through the segments in order does so inside
             
         print(f'final obs values :')
         for idx, obs_dict in enumerate(obs_dicts):
+            if obs_dict is None:
+                # a prediction/validation-only experiment: not simulated for the cost
+                continue
             print(f'subexperiment {idx+1}:')
             # TODO make the printing of the obs_dict more informative
             print(obs_dict['const'])
@@ -4057,17 +4227,17 @@ class MCMC(ParamID):
 
     def __init__(self, model_path,
                  obs_info, param_id_info, protocol_info, prediction_info, solver_info,
-                 dt=0.01, UQ_options=None, DEBUG=False, model_type=None, mcmc_options=None,
+                 dt=0.01, UQ_options=None, DEBUG=False, model_type=None,
                  use_emulator=False, emulator_dir=None, emulator_settings=None):
         super().__init__(model_path, "MCMC",
                 obs_info, param_id_info, protocol_info, prediction_info, solver_info,
                 dt=dt, DEBUG=DEBUG, model_type=model_type,
                 use_emulator=use_emulator, emulator_dir=emulator_dir,
                 emulator_settings=emulator_settings)
-        self._init_mcmc(_resolve_UQ_options(UQ_options, mcmc_options), DEBUG=DEBUG)
+        self._init_mcmc(UQ_options, DEBUG=DEBUG)
 
     @classmethod
-    def from_param_id(cls, engine, UQ_options=None, mcmc_options=None):
+    def from_param_id(cls, engine, UQ_options=None):
         """Adopt an already-built ``ParamID`` instead of constructing a second one.
 
         Building an engine compiles the model. Because ``mcmc_instead`` selects the inner
@@ -4087,8 +4257,7 @@ class MCMC(ParamID):
         obj = cls.__new__(cls)
         obj.__dict__.update(engine.__dict__)
         obj.param_id_method = "MCMC"
-        obj._init_mcmc(_resolve_UQ_options(UQ_options, mcmc_options),
-                       DEBUG=getattr(engine, 'DEBUG', False))
+        obj._init_mcmc(UQ_options, DEBUG=getattr(engine, 'DEBUG', False))
         return obj
 
     def _init_mcmc(self, UQ_options, DEBUG=False):
@@ -4662,18 +4831,6 @@ class MCMC(ParamID):
         # idxs of output are [exp_idx][sim_idx, pred_idx, time_idx]
         return pred_arrays_per_exp_list
 
-#: The names these two classes had until they were renamed. Neither ever had anything to
-#: do with OpenCOR: they are the parameter-identification and MCMC engines, and they run
-#: against myokit/CVODE, casadi and trained emulators as readily as against OpenCOR. The
-#: name came from the one backend that existed when they were written.
-#:
-#: Kept because they are imported by name from outside this repository -- CUFLynx reaches
-#: for ``OpencorParamID`` through its ca_import shim -- and a rename that breaks a
-#: downstream import on upgrade is a rename that gets reverted. They are aliases, not
-#: subclasses, so isinstance and pickling behave identically.
-OpencorParamID = ParamID
-OpencorMCMC = MCMC
-
 
 class MCMC_plotter:
     """
@@ -4684,7 +4841,7 @@ class MCMC_plotter:
                  params_for_id_path=None, num_calls_to_function=1000,
                  param_id_obs_path=None, sim_time=2.0, pre_time=20.0, 
                  solver_info=None, 
-                 dt=0.01, UQ_options=None, mcmc_options=None,
+                 dt=0.01, UQ_options=None,
                  param_id_output_dir=None, resources_dir=None,
                  DEBUG=False):
 
@@ -4730,7 +4887,7 @@ class MCMC_plotter:
         self.best_param_vals = None
         self.best_param_names = None
 
-        self.UQ_options = _resolve_UQ_options(UQ_options, mcmc_options)
+        self.UQ_options = UQ_options
 
         # thresholds for identifiability TODO optimise these
         self.threshold_param_importance = 0.1

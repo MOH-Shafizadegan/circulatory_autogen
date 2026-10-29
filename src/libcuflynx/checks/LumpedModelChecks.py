@@ -6,6 +6,8 @@ Created on 01/11/2021
 
 from abc import ABC, abstractmethod
 
+from libcuflynx.generators.multi_port import validate_list_multi_port
+
 class AbstractLumpedCheck(ABC):
     '''
     Abstract class of a check condition
@@ -61,8 +63,8 @@ class LumpedBCVesselCheck(AbstractLumpedCheck):
         model_0D.vessels_df.apply(self.execute_for_row, args=(model_0D, ), axis=1)
 
     def execute_for_row(self, vessel_row, model_0D):
-        if (vessel_row["vessel_type"], vessel_row["BC_type"]) not in model_0D.possible_vessel_BC_types:
-            print(f'vessel_type, BC_type combo of ({vessel_row["vessel_type"]}, {vessel_row["BC_type"]}) '
+        if (vessel_row["module_type"], vessel_row["module_subtype"]) not in model_0D.possible_module_type_subtypes:
+            print(f'module_type, module_subtype combo of ({vessel_row["module_type"]}, {vessel_row["module_subtype"]}) '
                   f'is not allowed for vessel {vessel_row["name"]}')
             exit()
 
@@ -102,8 +104,13 @@ class LumpedPortVariableCheck(AbstractLumpedCheck):
                     continue
                 if port_variable not in variables_list:
                     print(f'the port variable {port_variable} '
-                        f'is not a variable for vessel type: {vessel_row["vessel_type"]}, BC_type: {vessel_row["BC_type"]}')
+                        f'is not a variable for vessel type: {vessel_row["module_type"]}, module_subtype: {vessel_row["module_subtype"]}')
                     exit()
+        # a list-form multi_port must have one "sum"/"True" entry per port variable
+        for port in vessel_row["entrance_ports"] + vessel_row["exit_ports"] + vessel_row["general_ports"]:
+            validate_list_multi_port(
+                port, f'module "{vessel_row["name"]}" (module_type: {vessel_row["module_type"]}, '
+                      f'module_subtype: {vessel_row["module_subtype"]})')
 
 #    Example of usage
 #    Contructs a multiple check with only a LumpedBCVesselCheck 

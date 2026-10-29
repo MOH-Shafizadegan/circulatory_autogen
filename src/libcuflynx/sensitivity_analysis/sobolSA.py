@@ -50,9 +50,15 @@ from libcuflynx.utilities.mpi_utils import get_MPI as _get_MPI
 
 MPI = _get_MPI()
 from libcuflynx.parsers.PrimitiveParsers import CSVFileParser, ObsAndParamDataParser
+from libcuflynx.sensitivity_analysis.sobol_ranking import read_sobol_indices
 import csv
 from tqdm import tqdm  # make sure tqdm is installed
 from libcuflynx.utilities.obs_data_helpers import obs_item_names, obs_item_labels
+from libcuflynx.param_id import prediction_features
+
+#: The file naming every Sobol output column, written only with include_prediction_items so
+#: a reader (CUFLynx) can tell a prediction feature from a data_item feature.
+SOBOL_OUTPUT_FEATURES_FILE = 'sobol_output_features.json'
 
 class sobol_SA():
 
@@ -105,6 +111,10 @@ class sobol_SA():
         self.solver_info = solver_info
         self.SA_info = SA_info
         self.sample_type = self.SA_info["sample_type"]
+        # Prediction items with an operation as extra outputs (sa_options.include_prediction_items).
+        self.include_prediction_items = prediction_features.include_prediction_items(SA_info)
+        self._prediction_indices_cache = None
+        self.prediction_info = None
         self.num_params = None
         self.protocol_info = None
         self.dt = dt
@@ -133,18 +143,17 @@ class sobol_SA():
             self.obs_and_param_parser = ObsAndParamDataParser(
                 modifier_funcs_external_path=getattr(self, 'modifier_funcs_external_path', None))
             parsed_data = self.obs_and_param_parser.parse_obs_data_json(
-                param_id_obs_path=param_id_path,
-                pre_time=pre_time,
-                sim_time=sim_time
-            )
+                param_id_obs_path=param_id_path)
             self.gt_df = parsed_data["gt_df"]
             self.protocol_info = parsed_data["protocol_info"]
-            # TODO should we include prediction info in SA?
+            # Reported as extra outputs when sa_options.include_prediction_items is set: the
+            # prediction items with an operation (see _prediction_indices).
             self.prediction_info = parsed_data["prediction_info"]
 
             self.obs_info = self.obs_and_param_parser.process_obs_info(gt_df=self.gt_df, output_dir=self.output_dir, dt=self.dt)
             # Fail fast on a stale obs_data.json rather than part-way through the SA sweep (#304).
             validate_operation_kwargs(self.obs_info, self.operation_funcs_dict)
+            validate_operation_kwargs(self.prediction_info, self.operation_funcs_dict)
             self.protocol_info = self.obs_and_param_parser.process_protocol_and_weights(
                 gt_df=self.gt_df,
                 protocol_info=self.protocol_info,
@@ -195,7 +204,7 @@ class sobol_SA():
             # self.__set_and_save_param_names()
 
         if self.param_id_info is not None:
-            self.SA_info = self.create_SA_info(self.sample_type, self.SA_info["num_samples"])
+            self.SA_info = self._create_SA_info(self.sample_type, self.SA_info["num_samples"])
     
 
     def add_user_operation_func(self, func):
@@ -208,16 +217,15 @@ class sobol_SA():
             self.obs_and_param_parser = ObsAndParamDataParser(
                 modifier_funcs_external_path=getattr(self, 'modifier_funcs_external_path', None))
         parsed_data = self.obs_and_param_parser.parse_obs_data_json(
-            obs_data_dict=obs_data_dict,
-            pre_time=self.pre_time,
-            sim_time=self.sim_time
-        )
+            obs_data_dict=obs_data_dict)
         self.gt_df = parsed_data["gt_df"]
         self.protocol_info = parsed_data["protocol_info"]
         self.prediction_info = parsed_data["prediction_info"]
+        self._prediction_indices_cache = None
 
         self.obs_info = self.obs_and_param_parser.process_obs_info(gt_df=self.gt_df, output_dir=self.output_dir, dt=self.dt)
         validate_operation_kwargs(self.obs_info, self.operation_funcs_dict)
+        validate_operation_kwargs(self.prediction_info, self.operation_funcs_dict)
         self.protocol_info = self.obs_and_param_parser.process_protocol_and_weights(
             gt_df=self.gt_df,
             protocol_info=self.protocol_info,
@@ -234,13 +242,45 @@ class sobol_SA():
                 modifier_funcs_external_path=getattr(self, 'modifier_funcs_external_path', None))
         self.param_id_info = self.obs_and_param_parser.get_param_id_info_from_entries(params_for_id_dict)
         self.obs_and_param_parser.save_param_names(self.param_id_info, self.output_dir)
-        self.create_SA_info(self.sample_type, self.SA_info["num_samples"])
+        self._create_SA_info(self.sample_type, self.SA_info["num_samples"])
         if self.rank == 0:
             print(f'Params for id set: {self.param_id_info["param_names"]}')
 
     def set_sa_options(self, sa_options):
         self.SA_info = self._create_SA_info(sa_options['sample_type'], sa_options['num_samples'])
         self.set_output_dir(sa_options['output_dir'])
+        self.include_prediction_items = prediction_features.include_prediction_items(sa_options)
+        self._prediction_indices_cache = None
+
+    # ------------------------------------------------------------ prediction features
+
+    def _prediction_indices(self):
+        """The prediction items reported as extra outputs: none unless
+        ``sa_options.include_prediction_items``, and then those with an operation. The others
+        are named in a warning, once."""
+        if not self.include_prediction_items:
+            return []
+        if self._prediction_indices_cache is None:
+            self._prediction_indices_cache = prediction_features.prediction_feature_indices(
+                self.prediction_info, self.operation_funcs_dict,
+                context='the sensitivity analysis')
+        return list(self._prediction_indices_cache)
+
+    def _prediction_names(self):
+        return prediction_features.prediction_feature_names(
+            self.prediction_info, self._prediction_indices())
+
+    def _prediction_labels(self):
+        """``"<data_item_name> (Exp<e>, Sub<s>)"`` per prediction feature: the Sobol column
+        form, with the sub-experiment the operation is reduced over."""
+        return prediction_features.labels_with_segments(
+            self.prediction_info, self._prediction_indices(), self.protocol_info)
+
+    def _prediction_plot_names(self):
+        segments = prediction_features.feature_segments(
+            self.prediction_info, self._prediction_indices(), self.protocol_info)
+        return [rf"{name} - experiment{exp}, subexperiment{sub}"
+                for name, (exp, sub) in zip(self._prediction_names(), segments)]
 
     def _create_SA_info(self, sample_type, num_samples):
         
@@ -291,10 +331,6 @@ class sobol_SA():
         return ['+'.join(n) if isinstance(n, (list, tuple)) else n
                 for n in self.SA_info["param_names"]]
 
-    def create_SA_info(self, sample_type, num_samples):
-        # Backwards compatibility alias
-        return self._create_SA_info(sample_type, num_samples)
-
 
     @property
     def sim_helper(self):
@@ -328,9 +364,10 @@ class sobol_SA():
         so an emulator trained against different bounds, observables or protocol would produce
         a complete, plausible set of indices for a different problem (#333).
         """
-        from libcuflynx.emulators.emulator_bundle import fingerprint
-        bad = {jj: dtype for jj, dtype in enumerate(self.obs_info['data_types'])
-               if dtype != 'constant'}
+        # Zero-weighted non-scalars (a recorded trace carried only to be plotted) are not in the
+        # cost, so the emulator is never asked for them. Same rule as the trainer and paramID.
+        from libcuflynx.emulators.emulator_bundle import fingerprint, weighted_non_scalar_obs
+        bad = weighted_non_scalar_obs(self.obs_info)
         if bad:
             raise ValueError(
                 f'use_emulator is set, but obs_data.json has data_type(s) '
@@ -339,6 +376,16 @@ class sobol_SA():
         helper.bundle.check_matches(
             fingerprint(self.param_id_info, self.obs_info, self.protocol_info, self.model_path))
         helper.bundle.check_quality(self.emulator_settings.get('min_r2', 0.9))
+        indices = self._prediction_indices()
+        if indices:
+            # The emulator must have been trained with include_prediction_items, for these
+            # same prediction items; otherwise say to retrain rather than answer about others.
+            prediction_features.check_emulator_has_features(
+                helper.bundle, self._prediction_names(),
+                fingerprint(self.param_id_info, self.obs_info, self.protocol_info,
+                            self.model_path, prediction_info=self.prediction_info,
+                            prediction_indices=indices),
+                min_r2=self.emulator_settings.get('min_r2', 0.9))
         helper.set_obs_map(self.obs_info['const_idx_to_obs_idx'],
                            num_obs=len(self.obs_info['operations']))
 
@@ -456,6 +503,25 @@ class sobol_SA():
         # Create a single progress bar for rank 0 only to avoid noisy output from all ranks
         emulates_features = bool(getattr(self.sim_helper, 'emulates_features', False))
 
+        # Prediction features (include_prediction_items): their operands are recorded in the
+        # same protocol run, after the data_items' -- except over an emulator, which predicts
+        # the features themselves and only answers for the data_item operands.
+        pred_indices = self._prediction_indices()
+        pred_names = self._prediction_names()
+        result_variables = self.obs_info["operands"]
+        if pred_indices and not emulates_features:
+            result_variables = list(self.obs_info["operands"]) + \
+                prediction_features.result_variables(self.prediction_info, pred_indices)
+        # Only the experiments the data_items use, plus -- for the prediction features -- any
+        # validation-only experiment one is measured in (None: every experiment, as before).
+        from libcuflynx.parsers.PrimitiveParsers import cost_experiment_idxs
+        run_exps = set(cost_experiment_idxs(self.protocol_info))
+        if pred_indices and not emulates_features:
+            run_exps |= set(prediction_features.feature_experiments(
+                self.prediction_info, pred_indices, self.protocol_info))
+        num_experiments = len(self.protocol_info['sim_times'])
+        exp_indices = None if run_exps == set(range(num_experiments)) else sorted(run_exps)
+
         with tqdm(total=len(local_samples), desc=f"Rank {self.rank}", position=self.rank, leave=True, disable=self.rank != 0) as pbar:
             for param_vals in local_samples:
 
@@ -472,7 +538,8 @@ class sobol_SA():
                     self.protocol_info,
                     id_param_names=self.param_id_info["param_names"],
                     id_param_vals=expand_modifier_param_vals(self.param_id_info, param_vals),
-                    result_variables=self.obs_info["operands"],
+                    result_variables=result_variables,
+                    exp_indices=exp_indices,
                     continue_on_failure=True,
                 )
                 if not _success:
@@ -484,7 +551,10 @@ class sobol_SA():
                     # The emulator predicts each data_item's feature directly, so the operation
                     # must not run again: it would reduce an already-reduced scalar, and
                     # max_minus_min of one value is zero.
-                    local_outputs.append(list(self.sim_helper.get_predicted_features()))
+                    row = self._emulated_row()
+                    if pred_indices:
+                        row += list(self.sim_helper.get_predicted_prediction_features(pred_names))
+                    local_outputs.append(row)
                     pbar.update(1)
                     continue
 
@@ -522,6 +592,15 @@ class sobol_SA():
                         # TODO: come up with a better way to impute missing features
                         # Append the mean of the current features (ignoring None) -> reduces variance and bias induces toward zero
                         features.append(np.mean(local_outputs))
+
+                if pred_indices:
+                    predicted = prediction_features.features_from_segments(
+                        self.prediction_info, pred_indices, self.operation_funcs_dict,
+                        self.protocol_info, operands_outputs_dict,
+                        offset=len(self.obs_info["operands"]))
+                    # a failed segment is imputed as the data_items' are, above
+                    features.extend(value if np.isfinite(value) else np.mean(local_outputs)
+                                    for value in predicted)
 
                 local_outputs.append(features)
                 pbar.update(1)
@@ -605,7 +684,7 @@ class sobol_SA():
         for i in range(n_outputs):
             S1 = S1_all[i]
             ST = ST_all[i]
-            output_name = rf"{obs_item_labels(self.obs_info)[i]} - experiment{self.obs_info['experiment_idxs'][i]}, subexperiment{self.obs_info['subexperiment_idxs'][i]}"
+            output_name = self._plot_output_name(i, n_outputs)
             # output_name = self.obs_info["item_names_for_plotting"][i] if hasattr(self, "obs_info") else f"Output_{i}"
 
             # Set figure width adaptively based on number of parameters (xticks)
@@ -639,7 +718,7 @@ class sobol_SA():
         n_outputs = S2_all.shape[0]
         for i in range(n_outputs):
             S2 = S2_all[i]
-            output_name = rf"{obs_item_labels(self.obs_info)[i]} - experiment{self.obs_info['experiment_idxs'][i]}, subexperiment{self.obs_info['subexperiment_idxs'][i]}"
+            output_name = self._plot_output_name(i, n_outputs)
 
             # plt.figure(figsize=(6, 5))
             fig_width = max(6, 1.0 * len(self._param_labels()))
@@ -652,6 +731,15 @@ class sobol_SA():
             plt.savefig(os.path.join(self.output_dir, filename))
             plt.clf()
             plt.close()
+
+    def _plot_output_name(self, i, n_outputs):
+        """The plot title / file stem of output ``i``: a data_item's, or -- for the last
+        outputs, with include_prediction_items -- a prediction feature's data_item_name."""
+        pred_names = self._prediction_plot_names()
+        first_pred = n_outputs - len(pred_names)
+        if pred_names and i >= first_pred:
+            return pred_names[i - first_pred]
+        return rf"{obs_item_labels(self.obs_info)[i]} - experiment{self.obs_info['experiment_idxs'][i]}, subexperiment{self.obs_info['subexperiment_idxs'][i]}"
 
     def get_sobol_output_labels(self, num_labels):
         """
@@ -690,8 +778,10 @@ class sobol_SA():
             def generate_label(i):
                 return f"feature_{i}"
 
-        output_labels = [generate_label(i) for i in range(end_range)]
-            
+        pred_labels = self._prediction_labels()
+        num_data = end_range - len(pred_labels)
+        output_labels = [generate_label(i) for i in range(num_data)] + pred_labels
+
         return output_labels
     
     def plot_sobol_heatmap(self, S1_all, ST_all):
@@ -764,6 +854,18 @@ class sobol_SA():
         create_heatmap(S1_heatmap_data, 'First-Order ($S_1$)')
         create_heatmap(ST_heatmap_data, 'Total-Order ($S_T$)')
 
+    def _emulated_row(self):
+        """One sample's outputs from the emulator, in the order the solver path produces them.
+
+        ``get_predicted_features`` answers for every data_item (nan where the emulator has no
+        feature). The solver path reduces only ``_observable_indices()``, and the labels are
+        built from those, so the emulator row has to be the same subset: passing the full
+        vector put item k's sensitivity under the label of the k-th *reported* item, and
+        dropped every output past the number of labels.
+        """
+        predicted = np.asarray(self.sim_helper.get_predicted_features(), dtype=float)
+        return [float(predicted[j]) for j in self._observable_indices()]
+
     def _observable_indices(self):
         """The data_items this analysis reports on, by index into ``obs_info``.
 
@@ -775,14 +877,25 @@ class sobol_SA():
         reducing a real observable, and every sample pays it.
         """
         operations = self.obs_info.get('operations') or []
-        weights = self.obs_info.get('weight_const_vec')
+        # Each weight vector is indexed by position among items of its own data_type, not
+        # by data_item: map every weight back through its *_idx_to_obs_idx. Indexing
+        # weight_const_vec by data_item index reads another item's weight whenever a
+        # non-constant precedes a constant -- in a joint obs_data that reported other
+        # datasets' zero-weighted items and dropped weighted ones.
+        weighted = {}
+        for kind in ('const', 'series', 'amp', 'phase'):
+            weights = self.obs_info.get('weight_%s_vec' % kind)
+            idx_map = self.obs_info.get('%s_idx_to_obs_idx' % kind)
+            if weights is None or idx_map is None:
+                continue
+            for weight, obs_idx in zip(weights, idx_map):
+                weighted[int(obs_idx)] = bool(np.any(np.asarray(weight, dtype=float)))
         keep = []
         for index, operation in enumerate(operations):
             if operation is None:
                 continue
-            if weights is not None and index < len(weights):
-                if not np.any(np.asarray(weights[index], dtype=float)):
-                    continue
+            if not weighted.get(index, True):
+                continue
             keep.append(index)
         return keep
 
@@ -840,15 +953,29 @@ class sobol_SA():
         # beside it. Building these from range(len(names)) instead would shift every
         # column by one for each item the loop skipped.
         reported = self._observable_indices()
-        base_labels, base_ops = [], []
-        for i in reported[:n_outputs]:
+        # Prediction features (include_prediction_items) are the last outputs, labelled by
+        # their data_item_name in the same "(Exp, Sub)" form.
+        pred_labels = self._prediction_labels()
+        n_data_outputs = n_outputs - len(pred_labels)
+        base_labels, base_ops, sources = [], [], []
+        for i in reported[:n_data_outputs]:
             base_labels.append(f"{names[i]} (Exp{exps[i]}, Sub{subs[i]})")
             base_ops.append(ops[i] if i < len(ops) else None)
-        if n_outputs > len(base_labels):
+            sources.append(('data_item', i))
+        if n_data_outputs > len(base_labels):
             base_labels.append("Cost")
             base_ops.append(None)
+            sources.append(('cost', None))
+        pred_indices = self._prediction_indices()
+        pred_ops = (self.prediction_info or {}).get('operations') or []
+        for k, label in enumerate(pred_labels):
+            base_labels.append(label)
+            base_ops.append(pred_ops[pred_indices[k]])
+            sources.append(('prediction_item', k))
 
         output_names = self._uniquify_output_names(base_labels, base_ops)
+        if pred_labels:
+            self._save_output_features(output_names, sources)
 
         # --- Save S1/ST indices ---
         df_Sobol = pd.DataFrame({'Parameter': param_names})
@@ -878,6 +1005,30 @@ class sobol_SA():
         file_name_S2 = f"all_outputs_n{self.num_samples}_Sobol_2nd_order_indices.csv"
         df_S2.to_csv(os.path.join(self.output_dir, file_name_S2))
 
+    def _save_output_features(self, output_names, sources):
+        """``sobol_output_features.json``: what each output column is, so a reader can tell
+        the prediction features from the data_item features without parsing labels. Written
+        only with include_prediction_items (without it every column is a data_item)."""
+        item_names = obs_item_names(self.obs_info)
+        pred_names = self._prediction_names()
+        segments = prediction_features.feature_segments(
+            self.prediction_info, self._prediction_indices(), self.protocol_info)
+        records = []
+        for out_name, (kind, idx) in zip(output_names, sources):
+            record = {'output': out_name, 'kind': kind, 'data_item_name': None,
+                      'experiment_idx': None, 'subexperiment_idx': None}
+            if kind == 'data_item':
+                record.update(data_item_name=str(item_names[idx]),
+                              experiment_idx=int(self.obs_info['experiment_idxs'][idx]),
+                              subexperiment_idx=int(self.obs_info['subexperiment_idxs'][idx]))
+            elif kind == 'prediction_item':
+                record.update(data_item_name=pred_names[idx],
+                              experiment_idx=segments[idx][0],
+                              subexperiment_idx=segments[idx][1])
+            records.append(record)
+        with open(os.path.join(self.output_dir, SOBOL_OUTPUT_FEATURES_FILE), 'w') as f:
+            json.dump({'outputs': records}, f, indent=1)
+
     def load_sobol_indices(self):
         """
         Loads S1 and ST indices from the saved CSV file and returns them as a dictionary.
@@ -885,26 +1036,7 @@ class sobol_SA():
             dict: { 'S1': {out_name: {param: val}}, 'ST': {out_name: {param: val}} }
         """
         file_name = f"all_outputs_n{self.num_samples}_Sobol_indices.csv"
-        file_path = os.path.join(self.output_dir, file_name)
-        
-        # Load the CSV
-        df = pd.read_csv(file_path)
-        
-        # Use the 'Parameter' column as the index for easy dict conversion
-        df.set_index('Parameter', inplace=True)
-        
-        results = {'S1': {}, 'ST': {}}
-        
-        # Iterate through columns to separate S1 and ST by output name
-        for col in df.columns:
-            if col.startswith('S1_'):
-                out_name = col.replace('S1_', '', 1)
-                results['S1'][out_name] = df[col].to_dict()
-            elif col.startswith('ST_'):
-                out_name = col.replace('ST_', '', 1)
-                results['ST'][out_name] = df[col].to_dict()
-                
-        return results
+        return read_sobol_indices(os.path.join(self.output_dir, file_name))
  
     def run(self):
         samples = self.generate_samples()

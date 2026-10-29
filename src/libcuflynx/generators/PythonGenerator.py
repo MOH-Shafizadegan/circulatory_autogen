@@ -7,6 +7,8 @@ and emits a ready-to-run Python module.
 import ast
 import os
 import re
+
+from libcuflynx.generators.naming import make_identifier, build_symbols
 from typing import Optional
 
 from libcuflynx.solver_wrappers.python_solver_helper import SimulationHelper as PythonSimulationHelper
@@ -185,32 +187,86 @@ class PythonGenerator:
 
     @staticmethod
     def _make_identifier(text: str) -> str:
-        identifier = re.sub(r"[^0-9A-Za-z]+", "_", text).strip("_")
-        identifier = re.sub(r"_+", "_", identifier)
-        if not identifier:
-            identifier = "unnamed"
-        if identifier[0].isdigit():
-            identifier = f"N_{identifier}"
-        return identifier
+        return make_identifier(text)
 
     def _build_qualified_symbols(self, info_list):
-        qualified_names = []
-        attr_names = {}
-        counts = {}
+        # names shared with the C++ generator (libcuflynx/generators/naming.py)
+        qualified_names = [f"{info['component']}.{info['name']}" for info in info_list]
+        symbols = build_symbols((info['component'], info['name']) for info in info_list)
+        return qualified_names, dict(enumerate(symbols))
 
-        for idx, info in enumerate(info_list):
-            qualified_name = f"{info['component']}.{info['name']}"
-            qualified_names.append(qualified_name)
+    # libCellML 0.7's Python code: three arrays, each function taking all of them
+    _ARRAYS = ("constants", "computed_constants", "algebraic_variables")
+    _SIGNATURES = {
+        "initialise_arrays": "def initialise_variables(states, rates, variables):",
+        "compute_computed_constants": "def compute_computed_constants(variables):",
+        "compute_rates": "def compute_rates(voi, states, rates, variables):",
+        "compute_variables": "def compute_variables(voi, states, rates, variables):",
+    }
 
-            base_name = self._make_identifier(
-                f"{info['component']}_{info['name']}"
-            ).lower()
-            count = counts.get(base_name, 0)
-            attr_name = base_name if count == 0 else f"{base_name}_{count + 1}"
-            counts[base_name] = count + 1
-            attr_names[idx] = attr_name
+    @classmethod
+    def _as_one_variables_array(cls, code: str) -> str:
+        """libCellML's Python code with its constants, computed constants and algebraic variables in one ``variables``
+        array, in that order, and each variable's type in ``VARIABLE_INFO``: the layout the solvers, the CasADi and AADC
+        paths and calibration read."""
+        namespace = {}
+        exec(code, namespace)
+        if namespace.get("EXTERNAL_VARIABLE_COUNT"):
+            raise ValueError("Python generation does not support external variables")
+        counts = [namespace["CONSTANT_COUNT"], namespace["COMPUTED_CONSTANT_COUNT"], namespace["ALGEBRAIC_VARIABLE_COUNT"]]
+        offsets = dict(zip(cls._ARRAYS, [0, counts[0], counts[0] + counts[1]]))
 
-        return qualified_names, attr_names
+        def info(entry, variable_type):
+            return (f'{{"name": "{entry["name"]}", "units": "{entry["units"]}", '
+                    f'"component": "{entry["component"]}", "type": VariableType.{variable_type}}}')
+
+        def info_list(name, entries):
+            return "\n".join([f"{name} = ["] + [f"    {e}," for e in entries] + ["]"])
+
+        variables = ([info(e, "CONSTANT") for e in namespace["CONSTANT_INFO"]]
+                     + [info(e, "COMPUTED_CONSTANT") for e in namespace["COMPUTED_CONSTANT_INFO"]]
+                     + [info(e, "ALGEBRAIC") for e in namespace["ALGEBRAIC_VARIABLE_INFO"]])
+        header = code[:code.index("STATE_COUNT =")]
+        helpers = code[code.index("\ndef ") + 1:code.index("def create_states_array")]
+        functions = []
+        for name, signature in cls._SIGNATURES.items():
+            body = cls._extract_function_block(code, name).split("\n", 1)[1]
+            body = re.sub(rf"\b({'|'.join(cls._ARRAYS)})\[(\d+)\]",
+                          lambda m: f"variables[{offsets[m.group(1)] + int(m.group(2))}]", body)
+            functions.append(signature + "\n" + body.rstrip() + "\n")
+        return "\n".join([
+            header + f"STATE_COUNT = {namespace['STATE_COUNT']}",
+            f"VARIABLE_COUNT = {sum(counts)}",
+            "",
+            "",
+            "class VariableType(Enum):",
+            "    VARIABLE_OF_INTEGRATION = 0",
+            "    STATE = 1",
+            "    CONSTANT = 2",
+            "    COMPUTED_CONSTANT = 3",
+            "    ALGEBRAIC = 4",
+            "",
+            "",
+            "VOI_INFO = " + info(namespace["VOI_INFO"], "VARIABLE_OF_INTEGRATION"),
+            "",
+            info_list("STATE_INFO", [info(e, "STATE") for e in namespace["STATE_INFO"]]),
+            "",
+            info_list("VARIABLE_INFO", variables),
+            "",
+            "",
+            helpers.rstrip(),
+            "",
+            "",
+            "def create_states_array():",
+            "    return [nan]*STATE_COUNT",
+            "",
+            "",
+            "def create_variables_array():",
+            "    return [nan]*VARIABLE_COUNT",
+            "",
+            "",
+            "\n\n".join(functions),
+        ])
 
     @staticmethod
     def _extract_generated_metadata(code: str):
@@ -279,14 +335,83 @@ class PythonGenerator:
         ast.fix_missing_locations(transformed)
         return ast.unparse(transformed) + "\n"
 
+    # Every helper function libCellML's Python generator profile can emit
+    # (GeneratorProfile(Profile.PYTHON).<name>FunctionString()).  The generated
+    # compute functions call them by these names, and _build_main_code imports
+    # them from the utilities module, so a name missing here is a NameError at
+    # run time for any model that uses the matching MathML element.
+    HELPER_FUNCTION_NAMES = (
+        "eq_func", "neq_func", "lt_func", "leq_func", "gt_func", "geq_func",
+        "and_func", "or_func", "xor_func", "not_func",
+        "min", "max",
+        "sec", "csc", "cot", "sech", "csch", "coth",
+        "asec", "acsc", "acot", "asech", "acsch", "acoth",
+    )
+
     @staticmethod
-    def _comparison_helper_lines(casadi_compat: bool, aadc_compat: bool = False) -> list:
+    def _reciprocal_trig_helper_lines(m: str) -> list:
+        """Reciprocal trig helpers, as in libCellML's Python profile.
+
+        ``m`` is the prefix for the math functions they call: ``""`` for the
+        plain variant (``from math import *``), ``"ca."`` for CasADi and
+        ``"aadc.math."`` for AADC, so they work on symbolic / active values too.
+        """
+        return [
+            "def sec(x):",
+            f"    return 1.0/{m}cos(x)",
+            "",
+            "def csc(x):",
+            f"    return 1.0/{m}sin(x)",
+            "",
+            "def cot(x):",
+            f"    return 1.0/{m}tan(x)",
+            "",
+            "def sech(x):",
+            f"    return 1.0/{m}cosh(x)",
+            "",
+            "def csch(x):",
+            f"    return 1.0/{m}sinh(x)",
+            "",
+            "def coth(x):",
+            f"    return 1.0/{m}tanh(x)",
+            "",
+            "def asec(x):",
+            f"    return {m}acos(1.0/x)",
+            "",
+            "def acsc(x):",
+            f"    return {m}asin(1.0/x)",
+            "",
+            "def acot(x):",
+            f"    return {m}atan(1.0/x)",
+            "",
+            "def asech(x):",
+            "    one_over_x = 1.0/x",
+            f"    return {m}log(one_over_x+{m}sqrt(one_over_x*one_over_x-1.0))",
+            "",
+            "def acsch(x):",
+            "    one_over_x = 1.0/x",
+            f"    return {m}log(one_over_x+{m}sqrt(one_over_x*one_over_x+1.0))",
+            "",
+            "def acoth(x):",
+            "    one_over_x = 1.0/x",
+            f"    return 0.5*{m}log((1.0+one_over_x)/(1.0-one_over_x))",
+            "",
+        ]
+
+    @classmethod
+    def _comparison_helper_lines(cls, casadi_compat: bool, aadc_compat: bool = False) -> list:
         if aadc_compat:
             return [
                 "import aadc",
                 "",
                 "def _aadc_passive(x):",
                 "    return x.val() if hasattr(x, 'val') else float(x)",
+                "",
+                "def eq_func(x, y):",
+                "    return x == y",
+                "",
+                "def neq_func(x, y):",
+                "    return x != y",
                 "",
                 "def lt_func(x, y):",
                 "    return x < y",
@@ -303,12 +428,30 @@ class PythonGenerator:
                 "def and_func(x, y):",
                 "    return aadc.iand(x, y)",
                 "",
+                "def or_func(x, y):",
+                "    return aadc.ior(x, y)",
+                "",
+                "def xor_func(x, y):",
+                "    return aadc.ixor(x, y)",
+                "",
+                "def not_func(x):",
+                "    return aadc.inot(x)",
+                "",
+                "def min(x, y):",
+                "    return aadc.iif(x <= y, x, y)",
+                "",
                 "def max(x, y):",
                 "    return aadc.iif(x >= y, x, y)",
                 "",
-            ]
+            ] + cls._reciprocal_trig_helper_lines("aadc.math.")
         if casadi_compat:
             return [
+                "def eq_func(x, y):",
+                "    return ca.if_else(x == y, 1.0, 0.0)",
+                "",
+                "def neq_func(x, y):",
+                "    return ca.if_else(x != y, 1.0, 0.0)",
+                "",
                 "def lt_func(x, y):",
                 "    return ca.if_else(x < y, 1.0, 0.0)",
                 "",
@@ -324,11 +467,29 @@ class PythonGenerator:
                 "def and_func(x, y):",
                 "    return ca.if_else(x > 0, ca.if_else(y > 0, 1.0, 0.0), 0.0)",
                 "",
+                "def or_func(x, y):",
+                "    return ca.if_else(ca.logic_or(x != 0, y != 0), 1.0, 0.0)",
+                "",
+                "def xor_func(x, y):",
+                "    return ca.if_else((x != 0) != (y != 0), 1.0, 0.0)",
+                "",
+                "def not_func(x):",
+                "    return ca.if_else(x != 0, 0.0, 1.0)",
+                "",
+                "def min(x, y):",
+                "    return ca.if_else(x < y, x, y)",
+                "",
                 "def max(x, y):",
                 "    return ca.if_else(x > y, x, y)",
                 "",
-            ]
+            ] + cls._reciprocal_trig_helper_lines("ca.")
         return [
+            "def eq_func(x, y):",
+            "    return 1.0 if x == y else 0.0",
+            "",
+            "def neq_func(x, y):",
+            "    return 1.0 if x != y else 0.0",
+            "",
             "def lt_func(x, y):",
             "    return 1.0 if x < y else 0.0",
             "",
@@ -344,10 +505,22 @@ class PythonGenerator:
             "def and_func(x, y):",
             "    return 1.0 if bool(x) & bool(y) else 0.0",
             "",
+            "def or_func(x, y):",
+            "    return 1.0 if bool(x) | bool(y) else 0.0",
+            "",
+            "def xor_func(x, y):",
+            "    return 1.0 if bool(x) ^ bool(y) else 0.0",
+            "",
+            "def not_func(x):",
+            "    return 1.0 if not bool(x) else 0.0",
+            "",
+            "def min(x, y):",
+            "    return x if x < y else y",
+            "",
             "def max(x, y):",
             "    return x if x > y else y",
             "",
-        ]
+        ] + cls._reciprocal_trig_helper_lines("")
 
     @staticmethod
     def _format_info_dict(name: str, info: dict) -> str:
@@ -576,12 +749,7 @@ class PythonGenerator:
             "create_variables_array",
             "describe_states",
             "describe_variables",
-            "lt_func",
-            "leq_func",
-            "gt_func",
-            "geq_func",
-            "and_func",
-            "max",
+            *self.HELPER_FUNCTION_NAMES,
         ]
         if self.aadc_compat:
             export_names.append("_aadc_passive")
@@ -706,6 +874,8 @@ class PythonGenerator:
         generator = lc.Generator()
 
         code = cellml_utils.generate_implementation_code(generator, analysed_model, profile)
+        if code:
+            code = self._as_one_variables_array(code)
         utilities_filename = None
         utilities_code = None
         if self.human_readable and code:

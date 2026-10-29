@@ -204,7 +204,7 @@ def test_tex_escape_covers_the_specials_that_appear_in_method_names():
 def test_three_compartment_ground_truth_is_inside_the_identification_bounds():
     """The synthetic ground truth must be recoverable, i.e. inside the search box.
 
-    The model's own q_lv_init default (2e-3) is OUTSIDE 3compartment_params_for_id.csv's bounds
+    The model's own q_lv_init default (2e-3) is OUTSIDE 3compartment_params_for_id.json's bounds
     of [2e-4, 1.5e-3], so the CSV defaults cannot be used wholesale as a ground truth -- an
     optimiser could never reach it and the reported error would never go to zero.
     """
@@ -212,7 +212,7 @@ def test_three_compartment_ground_truth_is_inside_the_identification_bounds():
         THREE_COMPARTMENT_TRUE_PARAMS, THREE_COMPARTMENT_PARAM_LABELS,
         THREE_COMPARTMENT_PARAM_NAMES)
 
-    bounds = {  # from resources/3compartment_params_for_id.csv
+    bounds = {  # from resources/3compartment_params_for_id.json
         'global/q_lv_init': (200e-6, 1500e-6),
         'aortic_root/C': (1e-9, 5e-8),
         'global/E_lv_A': (1e8, 5e8),
@@ -234,7 +234,7 @@ def test_obs_reducers_cover_the_shipped_operations():
 
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     with open(os.path.join(root, 'resources', '3compartment_obs_data.json')) as f:
-        items = _json.load(f)
+        items = _json.load(f)['data_items']
     missing = sorted({it['operation'] for it in items} - set(_OBS_REDUCERS))
     assert not missing, f'no reducer for obs operation(s): {missing}'
 
@@ -271,3 +271,23 @@ def test_every_benchmark_reports_relative_parameter_error():
         "a benchmark is still computing param_err by hand; use max_relative_param_err")
     assert src.count("param_err=max_relative_param_err(") == 4, (
         "all four benchmarks should report error through the shared helper")
+
+
+@pytest.mark.solver
+@pytest.mark.skipif(__import__('shutil').which('cmake') is None, reason='needs CMake and a C compiler')
+def test_the_fermenter_colony_is_one_kernel_and_its_cells_run_alike(tmp_path):
+    """The batched-solver scaling benchmark's colony: N fermenter cells from the benchmark's module library, one
+    block per cell sharing one kernel; under the glucose protocol every cell follows the same trajectory."""
+    from benchmarks import batched_solver_scaling as bench
+    from libcuflynx.generators import kernel_ir
+    model = bench.generate_colony(2, str(tmp_path))
+    flat, am = kernel_ir.analyse_cellml(model)
+    km = kernel_ir.build_kernel_model(am)
+    assert len(km.blocks) == 2 and len({b.kernel for b in km.blocks}) == 1
+    setup, names = bench.build(model, 'BE_batched_c', str(tmp_path / 'build'))
+    assert len(names) == len(km.blocks[0].states)
+    observed = names + [n.replace('cell_0_module/', 'cell_1_module/') for n in names]
+    series = bench.run(model, 'BE_batched_c', {'method': 'trbdf2'}, 2, 1, str(tmp_path / 'build'), observed)['series']
+    assert series.shape == (sum(bench.SIM_TIMES) + 1, 2 * len(names))
+    assert np.array_equal(series[:, :len(names)], series[:, len(names):])
+    assert np.ptp(series, axis=0).max() > 0     # the glucose steps move the cells

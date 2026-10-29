@@ -19,11 +19,11 @@ This comprehensive approach allows modelers to understand not only which paramet
 ## Prerequisites
 
 - A generated model and `obs_data.json` file (see [Parameter Identification](parameter-identification.md)).
-- A `params_for_id.csv` file defining parameter ranges.
+- A `params_for_id.json` file defining parameter ranges.
 - `pip install "libcuflynx[mpi]"` (and a system MPI toolchain) if running in parallel.
 
 ## SA in Circulatory_Autogen
-Since Sensitivity Analysis (SA) is intertwined with parameter identification, you will need the same input files as required for parameter identification. This includes both the **`params_for_id.csv`** and the **`obs_data.json`** files. However, the exact values of the data terms in the observation file are not critical for SA itself, as you are simply exploring parameter space and variance, not matching the simulation output to observed data.
+Since Sensitivity Analysis (SA) is intertwined with parameter identification, you will need the same input files as required for parameter identification. This includes both the **`params_for_id.json`** and the **`obs_data.json`** files. However, the exact values of the data terms in the observation file are not critical for SA itself, as you are simply exploring parameter space and variance, not matching the simulation output to observed data.
 
 Crucially, each data item defined in your `obs_data.json` file is treated as a feature for SA, meaning you will receive a separate set of plots (one for first and total order indices, and one for second order indices) for **each** data item.
 
@@ -52,6 +52,52 @@ If `sa_options` is omitted, defaults are applied:
 - `sample_type: saltelli`
 - `output_dir: sensitivity_outputs/<file_prefix>_SA_results`
 
+### Prediction items as extra outputs
+
+Set `include_prediction_items: true` in `sa_options` to also report the sensitivity of the
+`prediction_items` in `obs_data.json` that have an `operation` (see
+[Prediction items as scalar features](parameter-identification.md#prediction-items-as-scalar-features)).
+They are not in the cost, so they are useful for asking which parameters drive a quantity you
+predict rather than fit.
+
+```
+sa_options:
+    method: sobol
+    num_samples: 1024
+    include_prediction_items: true
+```
+
+- **Only scalar prediction items with an operation are included**: `data_type: constant`, or
+  no data and a reducing operation such as `max`. Items without an operation, and series, are
+  skipped with a warning that names them. An operation that returns more than one number is an
+  error.
+- They come **after** the data_item outputs. They are labelled by their `data_item_name`, as
+  `<data_item_name> (Exp<e>, Sub<s>)`, in the Sobol CSVs
+  (`all_outputs_n<N>_Sobol_indices.csv` columns `S1_...`/`ST_...`, and
+  `all_outputs_n<N>_Sobol_2nd_order_indices.csv`), the per-output plots and the heatmaps. The
+  sub-experiment is the item's `subexperiment_idx` (by default its experiment's last), which is
+  the one the operation is applied to. A feature measured in an experiment that has no
+  data_items (a validation-only experiment) makes the SA simulate that experiment too. Without
+  the option, such an experiment is not simulated.
+- The run also writes `sobol_output_features.json`, which lists every output column with its
+  `kind` (`data_item`, `prediction_item` or `cost`), `data_item_name`, `experiment_idx` and
+  `subexperiment_idx`.
+- With `method: local` they are extra rows of `local_sensitivity_absolute.csv` and
+  `local_sensitivity_relative.csv`, named by `data_item_name`. `get_local_sensitivities()`
+  lists them under `prediction_feature_names`. They are computed the same way as the
+  data_item rows: by the analytic arm (CasADi, or Myokit CVODES sensitivities), or by central
+  finite differences with `fd_rel_step` (2M more simulations) when `gradient_method: FD` or over
+  an emulator. Myokit's arm needs every prediction feature in one and the same
+  sub-experiment; otherwise (features in two experiments, or in an experiment with several
+  sub-experiments) they fall back to finite differences, with a warning.
+- `choose_most_impactful_params_sobol` ranks over every column in the CSV, prediction features
+  included.
+- With `use_emulator: true` the emulator must have been trained with
+  `emulator_settings.include_prediction_items: true`. If it was not, the run stops and says to
+  retrain.
+
+Without the option, nothing changes: the outputs and files are exactly the data_item ones.
+
 ## How to run SA script
 
 First, ensure you have the required sensitivity analysis packages specified in [Getting Started](getting-started.md).
@@ -77,5 +123,5 @@ You should have Sobol index plots saved to `sa_options.output_dir`.
 
 ## Troubleshooting
 
-- If you see errors about `params_for_id_path`, confirm your `params_for_id.csv` filename and `resources_dir`.
+- If you see errors about `params_for_id_path`, confirm your `params_for_id.json` filename and `resources_dir`.
 - If MPI errors occur, ensure `mpiexec` is available and `mpi4py` is installed in the environment you are running from — it is the `[mpi]` extra, not part of a plain `pip install libcuflynx`.

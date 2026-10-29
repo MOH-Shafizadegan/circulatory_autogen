@@ -62,7 +62,10 @@ import fcntl
 import io
 import contextlib
 import time
-from mpi4py import MPI
+try:
+    from mpi4py import MPI
+except ModuleNotFoundError:
+    MPI = None  # set below, once src/ is on sys.path
 
 # Put this worktree's src/ first on sys.path so the suite exercises the libcuflynx in
 # this tree rather than a copy pip happens to have installed elsewhere. This is the
@@ -79,6 +82,32 @@ _ROOT_DIR = os.path.abspath(_TEST_ROOT)
 if _ROOT_DIR not in sys.path:
     sys.path.insert(0, _ROOT_DIR)
 
+
+def _launcher_reports_one_rank(env):
+    """Whether the MPI launcher that started this process says the job has one rank."""
+    sizes = [env[var] for var in ('PMI_SIZE', 'OMPI_COMM_WORLD_SIZE') if var in env]
+    return bool(sizes) and all(size == '1' for size in sizes)
+
+
+def _mpi_without_mpi4py(env=None):
+    """``libcuflynx.utilities.mpi_utils``'s serial ``MPI`` for a run without mpi4py.
+
+    mpi4py is the optional ``[mpi]`` extra, and a single-rank run (plain ``pytest`` or
+    ``mpiexec -n 1``) needs none of it. A multi-rank launch, or one whose size is unknown,
+    raises ``mpi_utils.MPI4PY_MISSING_MESSAGE``: every rank would otherwise run the whole
+    suite as rank 0 of 1 and clear the others' shared result files.
+    """
+    from libcuflynx.utilities import mpi_utils
+
+    env = os.environ if env is None else env
+    if _launcher_reports_one_rank(env):
+        env = {}
+    return mpi_utils.get_MPI(env)
+
+
+if MPI is None:
+    MPI = _mpi_without_mpi4py()
+
 from libcuflynx.scripts.script_generate_with_new_architecture import generate_with_new_architecture
 
 # Store pytest config for hooks that need plugin access (xdist reports lack config)
@@ -93,9 +122,9 @@ _SESSION_START = None
 _PARAM_ID_RESULTS_FILE = os.path.join(os.path.dirname(__file__), "..", ".pytest_param_id_results")
 _TEST_OUTPUT_ROOT = os.path.join(os.path.dirname(__file__), "test_outputs")
 # _AUTOGEN_CONFIGS = [
-#     {"file_prefix": "3compartment", "input_param_file": "3compartment_parameters.csv", "model_type": "cellml", "solver": "CVODE"},
-#     {"file_prefix": "simple_physiological", "input_param_file": "simple_physiological_parameters.csv", "model_type": "cellml", "solver": "CVODE"},
-#     {"file_prefix": "test_fft", "input_param_file": "test_fft_parameters.csv", "model_type": "cellml", "solver": "CVODE"},
+#     {"file_prefix": "3compartment", "input_param_file": "3compartment_parameters.json", "model_type": "cellml", "solver": "CVODE_myokit"},
+#     {"file_prefix": "simple_physiological", "input_param_file": "simple_physiological_parameters.json", "model_type": "cellml", "solver": "CVODE_myokit"},
+#     {"file_prefix": "test_fft", "input_param_file": "test_fft_parameters.json", "model_type": "cellml", "solver": "CVODE_myokit"},
 # ]
 _LOCK_FILE = os.path.realpath(os.path.join(_TEST_ROOT, ".pytest_param_id_lock"))
 _PARAM_ID_TRIGGERS = ("test_param_id", "compare_optimisers", "test_sensitivity_analysis",
@@ -214,6 +243,10 @@ def pytest_addoption(parser):
         help='also run the tests marked "manual" -- ones too slow for CI or for a normal local '
              'run, kept because they check something a faster test only approximates (e.g. the '
              'full-model UQ posterior recovery, ~80 min, whose emulated equivalents run in ~5).')
+    parser.addoption(
+        '--ci-shard', default=None, metavar='SUITE:GROUP[,GROUP...]',
+        help='keep only the tests of these groups of tests/ci_shards.json; SUITE:rest is every '
+             'collected test no group of SUITE names. Used by CI to split long jobs.')
 
 
 def pytest_configure(config):
@@ -577,6 +610,24 @@ def aadc_licensed():
         )
 
 
+@pytest.fixture
+def skip_generated_model_checks(monkeypatch):
+    """Generate CellML without the checks that run after the files are written.
+
+    ``CVSCellMLGenerator.generate_files`` writes the model, then flattens and analyses it
+    with libCellML (writing ``<prefix>_flat.cellml``) and compiles and runs it with Myokit.
+    None of that changes the written files, and it is about three quarters of a
+    generation: generic_junction_test_closed_loop takes 22 s locally and 88 s on CI, of
+    which the analysis is 10 s and the Myokit build and run 6 s. For a test that
+    compares the files two generations write, use this; generation then succeeds
+    whenever the files are written.
+    """
+    import libcuflynx.generators.CVSCellMLGenerator as generator
+    monkeypatch.setattr(generator, 'LIBCELLML_available', False)
+    monkeypatch.setattr(generator.CVS0DCellMLGenerator, '_validate_with_myokit',
+                        lambda self, cellml_path: (True, None))
+
+
 @pytest.fixture(scope="function")
 def base_user_inputs(user_inputs_dir):
     """
@@ -614,9 +665,9 @@ def temp_generated_models_dir(request, temp_output_dir):
 # Default parameters CSV per model prefix, used by generated_cellml_model_factory
 # when the caller doesn't pass input_param_file explicitly.
 _MODEL_INPUT_FILES = {
-    "3compartment": "3compartment_parameters.csv",
-    "SN_simple": "SN_simple_parameters.csv",
-    "test_init_states": "test_init_states_parameters.csv",
+    "3compartment": "3compartment_parameters.json",
+    "SN_simple": "SN_simple_parameters.json",
+    "test_init_states": "test_init_states_parameters.json",
 }
 
 
@@ -629,7 +680,7 @@ def generated_cellml_model_factory(base_user_inputs, resources_dir, temp_generat
     autogeneration.
     """
 
-    def _generate(file_prefix, input_param_file=None, solver="CVODE"):
+    def _generate(file_prefix, input_param_file=None, solver="CVODE_myokit"):
         source_dir = os.path.join(_TEST_ROOT, "generated_models", file_prefix)
         target_dir = os.path.join(temp_generated_models_dir, file_prefix)
         source_cellml = os.path.join(source_dir, f"{file_prefix}.cellml")
@@ -654,7 +705,7 @@ def generated_cellml_model_factory(base_user_inputs, resources_dir, temp_generat
             "do_uq": False,
             "resources_dir": resources_dir,
             "generated_models_dir": temp_generated_models_dir,
-            "solver_info": {"MaximumStep": 0.001, "MaximumNumberOfSteps": 5000},
+            "solver_info": {"MaximumStep": 0.001},
         })
         ok = generate_with_new_architecture(False, config)
         assert ok, f"Autogeneration failed for {file_prefix}"
@@ -685,21 +736,21 @@ def test_model_configs():
     """
     return [
         # CellML models
-        ('ports_test', 'ports_test_parameters.csv', 'cellml', 'CVODE'),
-        ('3compartment', '3compartment_parameters.csv', 'cellml', 'CVODE'),
-        ('simple_physiological', 'simple_physiological_parameters.csv', 'cellml', 'CVODE'),
-        ('parasympathetic_model', 'parasympathetic_model_parameters.csv', 'cellml', 'CVODE'),
-        ('test_fft', 'test_fft_parameters.csv', 'cellml', 'CVODE'),
-        ('neonatal', 'neonatal_parameters.csv', 'cellml', 'CVODE'),
-        ('generic_junction_test_closed_loop', 'generic_junction_test_closed_loop_parameters.csv', 'cellml', 'CVODE'),
-        ('generic_junction_test2_closed_loop', 'generic_junction_test_closed_loop_parameters.csv', 'cellml', 'CVODE'),
-        ('generic_junction_test_open_loop', 'generic_junction_test_open_loop_parameters.csv', 'cellml', 'CVODE'),
-        ('generic_junction_test2_open_loop', 'generic_junction_test_open_loop_parameters.csv', 'cellml', 'CVODE'),
-        ('SN_simple', 'SN_simple_parameters.csv', 'cellml', 'CVODE'),
-        ('physiological', 'physiological_parameters.csv', 'cellml', 'CVODE'),
-        ('control_phys', 'control_phys_parameters.csv', 'cellml', 'CVODE'),
+        ('ports_test', 'ports_test_parameters.json', 'cellml', 'CVODE_myokit'),
+        ('3compartment', '3compartment_parameters.json', 'cellml', 'CVODE_myokit'),
+        ('simple_physiological', 'simple_physiological_parameters.json', 'cellml', 'CVODE_myokit'),
+        ('parasympathetic_model', 'parasympathetic_model_parameters.json', 'cellml', 'CVODE_myokit'),
+        ('test_fft', 'test_fft_parameters.json', 'cellml', 'CVODE_myokit'),
+        ('neonatal', 'neonatal_parameters.json', 'cellml', 'CVODE_myokit'),
+        ('generic_junction_test_closed_loop', 'generic_junction_test_closed_loop_parameters.json', 'cellml', 'CVODE_myokit'),
+        ('generic_junction_test2_closed_loop', 'generic_junction_test_closed_loop_parameters.json', 'cellml', 'CVODE_myokit'),
+        ('generic_junction_test_open_loop', 'generic_junction_test_open_loop_parameters.json', 'cellml', 'CVODE_myokit'),
+        ('generic_junction_test2_open_loop', 'generic_junction_test_open_loop_parameters.json', 'cellml', 'CVODE_myokit'),
+        ('SN_simple', 'SN_simple_parameters.json', 'cellml', 'CVODE_myokit'),
+        ('physiological', 'physiological_parameters.json', 'cellml', 'CVODE_myokit'),
+        ('control_phys', 'control_phys_parameters.json', 'cellml', 'CVODE_myokit'),
         # CPP models
-        ('aortic_bif_1d', 'aortic_bif_1d_parameters.csv', 'cpp', 'RK4'),
+        ('aortic_bif_1d', 'aortic_bif_1d_parameters.json', 'cpp', 'RK4'),
     ]
 
 
@@ -723,6 +774,65 @@ def drop_manual_tests(config, items):
         config.hook.pytest_deselected(items=manual)
 
 
+CI_SHARDS_FILE = os.path.join(os.path.dirname(__file__), 'ci_shards.json')
+
+
+def load_ci_shards(path=CI_SHARDS_FILE):
+    """The suites of ``tests/ci_shards.json``: {suite: {group: [entry, ...]}}."""
+    import json
+    with open(path) as f:
+        return {suite: groups for suite, groups in json.load(f).items()
+                if not suite.startswith('_')}
+
+
+def ci_shard_entry_matches(entry, nodeid):
+    """``tests/x.py`` matches every test in the file; ``tests/x.py::name`` matches the test
+    function ``name`` and each of its parametrizations, and nothing that only starts with it."""
+    if '::' not in entry:
+        return nodeid.split('::', 1)[0] == entry
+    return nodeid == entry or nodeid.startswith(entry + '[')
+
+
+def select_ci_shard(config, items, shards=None):
+    """Deselect every test outside ``--ci-shard SUITE:GROUP[,GROUP...]``.
+
+    Runs before anything counts the collected one-rank tests, so the expected-result totals
+    the session waits for at the end are those of the shard. Deselected rather than skipped,
+    like ``drop_manual_tests``, and a module-level function for the same reason: it can be
+    tested directly, without a nested pytest session.
+    """
+    spec = config.getoption('--ci-shard')
+    if not spec:
+        return
+    suite, _, wanted = spec.partition(':')
+    if shards is None:
+        shards = load_ci_shards()
+    if suite not in shards or not wanted:
+        raise pytest.UsageError(
+            f"--ci-shard {spec!r}: expected SUITE:GROUP[,GROUP...] with SUITE one of "
+            f"{sorted(shards)}")
+    groups = shards[suite]
+    wanted = wanted.split(',')
+    unknown = [g for g in wanted if g != 'rest' and g not in groups]
+    if unknown:
+        raise pytest.UsageError(
+            f"--ci-shard {spec!r}: no group {unknown} in suite {suite!r}; "
+            f"groups are {sorted(groups)} and 'rest'")
+
+    def group_of(nodeid):
+        for name, entries in groups.items():
+            if any(ci_shard_entry_matches(e, nodeid) for e in entries):
+                return name
+        return 'rest'
+
+    kept, deselected = [], []
+    for item in items:
+        (kept if group_of(item.nodeid) in wanted else deselected).append(item)
+    if deselected:
+        items[:] = kept
+        config.hook.pytest_deselected(items=deselected)
+
+
 def pytest_collection_modifyitems(config, items):
     """
     Ensure autogeneration tests run before param_id tests, which in turn run before others.
@@ -732,6 +842,7 @@ def pytest_collection_modifyitems(config, items):
     import os
 
     drop_manual_tests(config, items)
+    select_ci_shard(config, items)
 
     autogen_items = [item for item in items if _is_autogen_like_nodeid(item.nodeid)]
     misc_items = [item for item in items if _is_misc_nodeid(item.nodeid)]
@@ -1409,7 +1520,7 @@ def minimal_param_id_config(base_user_inputs, resources_dir, temp_output_dir):
     config = base_user_inputs.copy()
     config.update({
         'model_type': 'cellml',
-        'solver': 'CVODE',
+        'solver': 'CVODE_myokit',
         'param_id_method': 'genetic_algorithm',
         'pre_time': 1,
         'sim_time': 1,
@@ -1419,7 +1530,6 @@ def minimal_param_id_config(base_user_inputs, resources_dir, temp_output_dir):
         'plot_predictions': False,
         'solver_info': {
             'MaximumStep': 0.001,
-            'MaximumNumberOfSteps': 5000,
         },
         'param_id_output_dir': temp_output_dir,
     })

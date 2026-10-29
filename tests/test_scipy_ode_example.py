@@ -13,7 +13,7 @@ import shutil
 
 import numpy as np
 import pytest
-from mpi4py import MPI
+MPI = pytest.importorskip("mpi4py.MPI", reason='needs mpi4py: pip install "libcuflynx[mpi]"')
 
 from libcuflynx.parsers.PrimitiveParsers import ObsAndParamDataParser, YamlFileParser
 from libcuflynx.solver_wrappers import get_simulation_helper, get_simulation_helper_from_inp_data_dict
@@ -46,7 +46,7 @@ def _make_resources(temp_output_dir):
     resources_dir = os.path.join(temp_output_dir, 'resources')
     if comm.Get_rank() == 0:
         os.makedirs(resources_dir, exist_ok=True)
-        for name in ('oscillator_params_for_id.csv', 'oscillator_parameters.csv',
+        for name in ('oscillator_params_for_id.json', 'oscillator_parameters.json',
                      'oscillator_obs_data.json'):
             shutil.copy(os.path.join(_EXAMPLE_DIR, name), os.path.join(resources_dir, name))
     if comm.Get_size() > 1:
@@ -59,7 +59,7 @@ def _oscillator_config(base_user_inputs, temp_output_dir, temp_generated_models_
     config = base_user_inputs.copy()
     config.update({
         'file_prefix': 'oscillator',
-        'input_param_file': 'oscillator_parameters.csv',
+        'input_param_file': 'oscillator_parameters.json',
         'model_type': 'external_python',
         'solver': 'external',
         # Override the base solver_info, which carries CVODE-only keys the external solver

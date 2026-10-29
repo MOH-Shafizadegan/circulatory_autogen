@@ -19,6 +19,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.ticker as tick
 from libcuflynx.utilities import paperPlotSetup
+from libcuflynx.utilities import cuflynx_study
 paperPlotSetup.Setup_Plot(3)
 from libcuflynx.parsers.PrimitiveParsers import scriptFunctionParser
 # Not `from mpi4py import MPI`: that import initialises MPI and registers an
@@ -54,6 +55,7 @@ def sa_method_choices():
 import warnings
 warnings.filterwarnings( "ignore", module = "matplotlib/..*" )
 from libcuflynx.sensitivity_analysis.sobolSA import sobol_SA
+from libcuflynx.sensitivity_analysis.sobol_ranking import rank_sobol_parameters
 
 GREEN = '\033[92m'
 CYAN = '\033[36m'
@@ -91,7 +93,7 @@ class SensitivityAnalysis():
         dt: Output sampling step (s).
         optimiser_options: Options dict (used if a nominal calibration is run).
         param_id_obs_path: Optional path to an ``obs_data.json``.
-        params_for_id_path: Optional path to a ``{prefix}_params_for_id.csv``.
+        params_for_id_path: Optional path to a ``{prefix}_params_for_id.json``.
     """
     def __init__(self, model_path, model_type, file_name_prefix, sa_options, DEBUG=False,
                  param_id_output_dir=None, resources_dir=None, model_out_names=[],
@@ -136,7 +138,18 @@ class SensitivityAnalysis():
         self._obs_data_dict = None
         self._params_for_id = None
         self._local_engine = None
+        self._prediction_engine = None
         self.local_sensitivities = None
+        # What the study manifest records about this run's config. init_from_dict replaces it
+        # with the whole parsed config, which also carries pre/sim times and the study name.
+        self._study_inp = cuflynx_study.study_inputs(
+            param_id_output_dir=param_id_output_dir, file_prefix=file_name_prefix,
+            model_path=model_path, param_id_obs_path=param_id_obs_path,
+            params_for_id_path=params_for_id_path,
+            operation_funcs_external_path=operation_funcs_external_path,
+            cost_funcs_external_path=cost_funcs_external_path,
+            modifier_funcs_external_path=modifier_funcs_external_path,
+            solver_info=solver_info, dt=dt, use_emulator=use_emulator, emulator_dir=emulator_dir)
 
     @classmethod
     def init_from_dict(cls, inp_data_dict):
@@ -175,7 +188,13 @@ class SensitivityAnalysis():
         sa = cls(**kwargs)
         # Keep the parsed config so the local method can build a param-id engine from it.
         sa._inp_data_dict = inp_data_dict
+        sa._study_inp = {**inp_data_dict, 'emulator_dir': kwargs.get('emulator_dir')}
         return sa
+
+    def _record_in_study(self, method):
+        """Declare this analysis's output directory in the study manifest (rank 0)."""
+        cuflynx_study.update_study(self._study_inp, 'sensitivity',
+                                   {'dir': self.SA_manager.output_dir, 'method': method})
 
     @classmethod
     def init_from_all_dicts(cls, inp_data_dict, obs_data_dict, params_for_id_dict, sa_options):
@@ -290,6 +309,7 @@ class SensitivityAnalysis():
             self.SA_manager.plot_sobol_first_order_idx(S1_all, ST_all)
             self.SA_manager.plot_sobol_S2_idx(S2_all)
             self.SA_manager.plot_sobol_heatmap(S1_all, ST_all)
+            self._record_in_study('sobol')
 
     def _build_local_engine(self):
         """Build (once) a param-id engine for the local method.
@@ -302,17 +322,20 @@ class SensitivityAnalysis():
         """
         if self._local_engine is not None:
             return self._local_engine
-        from libcuflynx.param_id.paramID import CVS0DParamID
         if self._inp_data_dict is None or self._obs_data_dict is None or self._params_for_id is None:
             raise RuntimeError(
                 "Local SA needs the config, ground-truth data and params for id: build via "
                 "init_from_dict and call set_ground_truth_data / set_params_for_id first.")
+        self._local_engine = self._new_local_engine(self._obs_data_dict)
+        return self._local_engine
+
+    def _new_local_engine(self, obs_data_dict):
+        from libcuflynx.param_id.paramID import CVS0DParamID
         inp = dict(self._inp_data_dict)
         inp['do_ad'] = True  # local SA is derivative-based
         engine = CVS0DParamID.init_from_dict(inp)
-        engine.set_ground_truth_data(self._obs_data_dict)
+        engine.set_ground_truth_data(obs_data_dict)
         engine.set_params_for_id(self._params_for_id)
-        self._local_engine = engine
         return engine
 
     def run_local_sensitivity(self, sa_options=None):
@@ -352,7 +375,7 @@ class SensitivityAnalysis():
         # identity (scale -> 1.0), where every target sits at its resolved baseline.
         apply_modifier_identity_nominals(engine.param_id_info, nominal)
 
-        # 'analytic' (the default) keeps the backend's own sensitivity; 'FD' opts into
+        # 'auto' (the default) keeps the backend's own sensitivity; 'FD' opts into
         # central finite differences, the only local SA available on a backend with no
         # analytic arm (issue #338).
         sens = engine.get_observable_sensitivities(  # {obs_label: {param: d(feat)/dp}}
@@ -360,12 +383,23 @@ class SensitivityAnalysis():
             gradient_method=(self.sa_options or {}).get('gradient_method'),
             fd_rel_step=(self.sa_options or {}).get('fd_rel_step'))
 
+        # Nominal feature magnitudes for the dimensionless (relative) normalisation.
+        feat_mag = self._nominal_feature_magnitudes(engine, nominal, list(sens.keys()))
+
+        # sa_options.include_prediction_items: the prediction items with an operation become
+        # extra rows, labelled by data_item_name, after the data_item features.
+        prediction_rows = []
+        if self.SA_manager.include_prediction_items:
+            psens, pnominal, prediction_rows = self._prediction_feature_sensitivities(
+                engine, nominal, sens)
+            sens = dict(sens)
+            sens.update(psens)
+            feat_mag.update({name: abs(float(v)) for name, v in pnominal.items()})
+
         output_names = list(sens.keys())
         n_out, n_par = len(output_names), len(param_names)
         absolute = np.zeros((n_out, n_par))
         relative = np.zeros((n_out, n_par))
-        # Nominal feature magnitudes for the dimensionless (relative) normalisation.
-        feat_mag = self._nominal_feature_magnitudes(engine, nominal, output_names)
         for i, oname in enumerate(output_names):
             fmag = feat_mag.get(oname, 0.0)
             for jj, pname in enumerate(param_names):
@@ -389,6 +423,9 @@ class SensitivityAnalysis():
             'relative': relative,     # dimensionless |p| * d(feature)/d(param) / |feature|
             'raw': sens,
         }
+        if self.SA_manager.include_prediction_items:
+            # which rows are prediction features, by output name
+            self.local_sensitivities['prediction_feature_names'] = prediction_rows
         if rank == 0:
             out_dir = self.SA_manager.output_dir
             print(f"{GREEN}Local sensitivity analysis completed successfully :){RESET}")
@@ -398,7 +435,90 @@ class SensitivityAnalysis():
                                   index=output_names, columns=param_names)
                 df.index.name = 'output'
                 df.to_csv(os.path.join(out_dir, f'local_sensitivity_{key}.csv'))
+            self._record_in_study('local')
         return self.local_sensitivities
+
+    def _prediction_feature_sensitivities(self, engine, nominal, data_sens):
+        """d(prediction feature)/d(param) for the prediction items with an operation.
+
+        By the same arm as the data_item rows (see ``_analytic_prediction_sensitivities``),
+        and by central finite differences (``fd_rel_step``, default 1e-3; 2M extra simulations)
+        with ``gradient_method: FD``, over an emulator (which then must have been trained with
+        include_prediction_items), or when that arm cannot handle the prediction features.
+        Returns ``(sensitivities, nominal values, row names)``.
+        """
+        from libcuflynx.param_id import prediction_features
+
+        info = engine.prediction_info
+        indices = prediction_features.prediction_feature_indices(
+            info, engine.operation_funcs_dict, context='the local sensitivity analysis')
+        if not indices:
+            return {}, {}, []
+        names = prediction_features.prediction_feature_names(info, indices)
+        if getattr(engine, 'emulates_features', False):
+            from libcuflynx.emulators.emulator_bundle import fingerprint
+            prediction_features.check_emulator_has_features(
+                engine.sim_helper.bundle, names,
+                fingerprint(engine.param_id_info, engine.obs_info, engine.protocol_info,
+                            engine.model_path, prediction_info=info,
+                            prediction_indices=indices),
+                min_r2=engine._use_time_setting('min_r2', 0.9))
+        method = (self.sa_options or {}).get('gradient_method')
+        psens = None
+        if not getattr(engine, 'emulates_features', False) and str(method or '').upper() != 'FD':
+            psens = self._analytic_prediction_sensitivities(engine, info, indices, nominal, method)
+        if psens is None:
+            # the same step the FD arm of the data_item rows reads
+            fd_rel_step = (self.sa_options or {}).get('fd_rel_step') or 1e-3
+            psens, pnominal = prediction_features.feature_sensitivities(
+                engine, nominal, info, indices, h=float(fd_rel_step))
+        else:
+            _, values = prediction_features.simulate_features(engine, nominal, info, indices)
+            if values is None:
+                raise RuntimeError('Local sensitivity nominal simulation failed to converge.')
+            pnominal = dict(zip(names, values))
+        # A prediction's name is unique among data_item_names, but a data_item's *label* is
+        # free text; never let a prediction row overwrite a data_item row.
+        rows, out, values = [], {}, {}
+        for name in names:
+            row = name if name not in data_sens else f'{name} [prediction]'
+            rows.append(row)
+            out[row] = psens[name]
+            values[row] = pnominal[name]
+        return out, values, rows
+
+    def _analytic_prediction_sensitivities(self, engine, info, indices, nominal, method):
+        """The prediction features' sensitivities by the engine's own analytic arm.
+
+        The arms (CasADi jacobian, Myokit CVODES sensitivities) differentiate the data_items'
+        features -- not through the cost, but only for the variables the data_items name. So
+        the prediction features are written as the data_items of a second engine (each over
+        its own experiment and sub-experiment, value and std placeholders the arms do not
+        read) and differentiated by the same code. An operation_kwargs reference to an earlier
+        prediction feature becomes one to an earlier data_item, which resolves the same way.
+        Returns None, after a warning, when the arm cannot take them (Myokit's needs every
+        feature in one and the same sub-experiment); the caller then uses finite differences.
+        """
+        from libcuflynx.param_id import prediction_features
+        if self._prediction_engine is None:
+            segments = prediction_features.feature_segments(info, indices, engine.protocol_info)
+            raw = self._obs_data_dict['prediction_items']
+            items = [dict({k: v for k, v in raw[i].items() if k != 'obs_dt'},
+                          experiment_idx=exp, subexperiment_idx=sub, data_type='constant',
+                          value=0.0, std=1.0, weight=1.0)
+                     for i, (exp, sub) in zip(indices, segments)]
+            self._prediction_engine = self._new_local_engine(
+                dict(self._obs_data_dict, data_items=items, prediction_items=[]))
+        view = self._prediction_engine.param_id
+        try:
+            sens = view.get_observable_sensitivities(nominal, gradient_method=method)
+        except NotImplementedError as error:
+            warnings.warn(f'{error} The prediction features\' local sensitivities are computed '
+                          f'by central finite differences instead.', stacklevel=3)
+            return None
+        names = view.obs_info['data_item_names']
+        return {str(names[i]): sens[view._observable_label(i)]
+                for i in view.obs_info['const_idx_to_obs_idx']}
 
     def _nominal_feature_magnitudes(self, engine, nominal, output_names):
         """|feature| at the nominal params, keyed by observable label, for relative scaling."""
@@ -442,44 +562,16 @@ class SensitivityAnalysis():
             print(f"{RED}ERROR: Index type '{index_type}' not found.{RESET}")
             return []
 
-        data = indices_dict[index_type.upper()]
-        
-        # Flatten structure: {param_name: [val_out1, val_out2, ...]}
-        param_scores_list = {}
-        for out_name, params in data.items():
-            for p_name, val in params.items():
-                if p_name not in param_scores_list:
-                    param_scores_list[p_name] = []
-                param_scores_list[p_name].append(val)
-
-        # Mapping criterion to calculation
-        if criterion == 'max':
-            calc_func = max
-        elif criterion == 'mean':
-            calc_func = lambda x: sum(x) / len(x)
-        elif callable(criterion):
-            calc_func = criterion
-        else:
-            print(f"{RED}ERROR: Invalid criterion '{criterion}'{RESET}")
+        try:
+            top_items = rank_sobol_parameters(indices_dict, top_n, index_type, criterion,
+                                              threshold if use_threshold else None)
+        except ValueError as exc:
+            print(f"{RED}ERROR: {exc}{RESET}")
             return []
-
-        # 1. Calculate scores
-        processed_scores = {p: calc_func(vals) for p, vals in param_scores_list.items()}
-
-        # 2. Filter only if requested
-        if use_threshold:
-            filtered_data = {p: s for p, s in processed_scores.items() if s >= threshold}
-            status_msg = f"filtered by threshold >= {threshold}"
-        else:
-            filtered_data = processed_scores
-            status_msg = "unfiltered"
-
-        # 3. Sort and select
-        sorted_items = sorted(filtered_data.items(), key=lambda x: x[1], reverse=True)
-        top_items = sorted_items[:top_n]
         top_params = [item[0] for item in top_items]
+        status_msg = (f"filtered by threshold >= {threshold}" if use_threshold
+                      else "unfiltered")
 
-        # 4. Final output
         if not top_params:
             print(f"{RED}No parameters found for criterion '{criterion}' ({status_msg}).{RESET}")
             return []

@@ -8,6 +8,12 @@ uses for CellML models.
 
 This is `model_type: external_python` with `solver: external`.
 
+!!! note "Running alongside a generated model instead?"
+    This page is for a model CA runs on its own, for calibration, sweeps and emulators. To run
+    your model **together with** a generated C++ 0D model, exchanging values every step (a
+    FEniCS tissue fed by 0D capillaries, say), see
+    [Coupling to External Models](external-coupling/index.md).
+
 ## Which backend do I want?
 
 There is **one** way to bring your own Python, and this is it. The choice is only between
@@ -15,7 +21,7 @@ letting CA build the model for you and writing it yourself:
 
 | | You provide | CA does the time-stepping | Use when |
 |---|---|---|---|
-| `cellml` | CellML modules and a vessel array | yes (OpenCOR / Myokit CVODE) | the model is a network of reusable CellML components |
+| `cellml` | CellML modules and a module array | yes (OpenCOR / Myokit CVODE) | the model is a network of reusable CellML components |
 | `python` | the same, emitted as Python | yes (`scipy.solve_ivp`) | you want CA's generated model in Python |
 | **`external_python`** | **a solver class with its own `run()`** | **no — you do** | **the model is code you already have, or an ODE you would rather write directly** |
 
@@ -78,8 +84,8 @@ parameters = {f"heat/{name}": 1.0 for ...}      # ❌ invisible to the parser
 parameters = dict(DEFAULTS)                     # ❌ likewise
 ```
 
-Names use CA's canonical `component/variable` form, so they line up with the `vessel_name` /
-`param_name` columns of `params_for_id.csv` and with the `operands` in `obs_data.json` without
+Names use CA's canonical `component/variable` form, so they line up with the `targets` of
+`params_for_id.json` and with the `operands` in `obs_data.json` without
 any translation.
 
 ### `init_solver(config)`
@@ -132,7 +138,7 @@ Receives a **subset** of `parameters` — whatever the calibration is currently 
 not require a re-init. A calibration calls this thousands of times on one instance; if each call
 had to rebuild the model, the run would be dominated by setup.
 
-Reject unknown names loudly. A typo in `params_for_id.csv` that is silently ignored produces a
+Reject unknown names loudly. A typo in `params_for_id.json` that is silently ignored produces a
 calibration that reports success and has fitted nothing.
 
 ### `run()`
@@ -297,13 +303,17 @@ solver_info:
     nx: 16
 ```
 
-`resources_dir` is where CA looks for `heat_fenics_params_for_id.csv`, which defines the
+`resources_dir` is where CA looks for `heat_fenics_params_for_id.json`, which defines the
 calibration box:
 
-```csv
-vessel_name,  param_name,  param_type,  min,   max,   name_for_plotting
-heat,         k,           const,       0.001, 0.2,   k
-heat,         u_D,         const,       -0.5,  0.5,   u_{D}
+```json
+{
+ "version": 1,
+ "params": [
+  {"targets": ["heat/k"], "min": 0.001, "max": 0.2, "param_type": "const", "name_for_plotting": "k"},
+  {"targets": ["heat/u_D"], "min": -0.5, "max": 0.5, "param_type": "const", "name_for_plotting": "u_{D}"}
+ ]
+}
 ```
 
 and `heat_fenics_obs_data.json` holds the run window and six scalar targets — the `mean` and the

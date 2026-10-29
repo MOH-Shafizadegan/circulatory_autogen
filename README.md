@@ -103,13 +103,17 @@ Each pipeline stage also has a console command, all configured from
 |---|---|
 | `cuflynx-generate` | generate a model from the CSV arrays |
 | `cuflynx-param-id` | generate + calibrate (`mpiexec -n N` for parallel) |
-| `cuflynx-sequential-param-id` | staged calibration — declared, not yet implemented |
 | `cuflynx-sensitivity` | Sobol sensitivity analysis |
 | `cuflynx-identifiability` | Laplace / profile-likelihood identifiability |
 | `cuflynx-train-emulator` | train a surrogate of the obs features |
 | `cuflynx-plot` | plot calibration results |
 | `cuflynx-generate-pipeline` | write a self-contained, movable bundle that reruns the study |
-| `cuflynx-migrate-obs-data` | rewrite obs_data files into the current vocabulary (upgrade helper, takes paths) |
+| `cuflynx-couple` | run a generated C++ model coupled to its external Python models (e.g. FEniCS); `--check` lists what is exchanged |
+| `cuflynx-run-predictions` | run an obs_data's prediction items on a model with no calibration: traces, features and validation (`run_prediction_items`) |
+| `cuflynx-calibration-workflow` | run a `calibration_workflow.json`: ordered calibrations of module-library parameterisations merged into a supermodule (takes the workflow path) |
+| `cuflynx-variable-mapping` | write a model's `<prefix>_variable_mapping.csv`: the LaTeX symbol of every variable (takes the model or a workflow) |
+| `cuflynx-methods-latex` | write a methods section in LaTeX: equations per module, a flow chart of the calibration, and the methods of each step |
+| `cuflynx-upgrade` | convert, once, files in an older form that the readers refuse: `module-config`, `module-array`, `obs-data`, `parameter-names`, `parameters` (a parameters CSV to nested JSON); and `supermodule-instances`, which writes a new supermodule instance's values into a model's parameters file (not a pipeline stage) |
 
 ### `CUFLYNX_USER_DIR` — where an installed libcuflynx reads and writes
 

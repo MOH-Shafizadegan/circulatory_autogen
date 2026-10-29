@@ -103,50 +103,32 @@ def _required_inertance_from_stiff_modes(
     top_modes: list[dict[str, Any]],
     real_parts: np.ndarray,
 ) -> dict[str, Any]:
+    """For each stiff mode whose dominant state ``<module>/<state>`` belongs to a module with
+    an inertance parameter ``I_<module>``, the inertance that would bring the mode's rate
+    down to what the adjoint can step: a flow through an inertance relaxes at rate R/I, so
+    I scales with the mode's rate over the target rate."""
     dt_val = float(sim_helper.dt)
     max_steps = sim_helper.solver_info.get("max_num_steps", 50000)
     bdf_stability = 5.0
     lambda_target = max_steps * bdf_stability / dt_val
 
-    r_par = _get_model_variable(sim_helper, "R_par", 1.0664e7)
-    r_t = _get_model_variable(sim_helper, "R_T_systemic_T", 1.1e8)
-
-    lam_par = None
-    lam_sys_t = None
+    modes = []
     for mode in top_modes:
         dom = mode["dominant_state"]
         lam = abs(mode["eigenvalue_real"])
-        if "par/v" in dom and lam_par is None:
-            lam_par = lam
-        if "systemic_T/v" in dom and lam_sys_t is None:
-            lam_sys_t = lam
-
-    if lam_par is None:
-        lam_par = float(np.max(np.abs(real_parts)))
-    if lam_sys_t is None:
-        lam_sys_t = float(np.max(np.abs(real_parts)))
-
-    i_par_current = r_par / lam_par if lam_par else None
-    i_t_current = r_t / (2.0 * lam_sys_t) if lam_sys_t else None
-    i_par_needed = r_par / lambda_target if lambda_target else None
-    i_t_needed = r_t / (2.0 * lambda_target) if lambda_target else None
-
-    result = {
-        "lambda_target_s_inv": lambda_target,
-        "R_par": r_par,
-        "R_T_systemic_T": r_t,
-        "lam_par_from_jacobian": lam_par,
-        "lam_sysT_from_jacobian": lam_sys_t,
-        "I_par_current_Js2_per_m6": i_par_current,
-        "I_T_current_Js2_per_m6": i_t_current,
-        "I_par_needed_Js2_per_m6": i_par_needed,
-        "I_T_needed_Js2_per_m6": i_t_needed,
-    }
-    if i_par_current and i_par_needed:
-        result["I_par_scale_up_factor"] = i_par_needed / i_par_current
-    if i_t_current and i_t_needed:
-        result["I_T_scale_up_factor"] = i_t_needed / i_t_current
-    return result
+        entry = {"dominant_state": dom, "lambda_s_inv": lam, "inertance": None}
+        module = dom.rsplit("/", 1)[0] if "/" in dom else None
+        i_name = f"I_{module}" if module else None
+        i_current = _get_model_variable(sim_helper, i_name) if i_name else None
+        if i_current is not None and lam and lambda_target:
+            entry.update({
+                "inertance": i_name,
+                "I_current_Js2_per_m6": i_current,
+                "I_needed_Js2_per_m6": i_current * lam / lambda_target,
+                "I_scale_up_factor": lam / lambda_target,
+            })
+        modes.append(entry)
+    return {"lambda_target_s_inv": lambda_target, "modes": modes}
 
 
 def diagnose_casadi_solver_after_forward(

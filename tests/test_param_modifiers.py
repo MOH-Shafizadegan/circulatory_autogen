@@ -178,7 +178,7 @@ def test_two_modifiers_may_not_act_on_the_same_parameter():
 @pytest.mark.unit
 def test_an_entry_may_not_set_both_targets_and_modifies():
     parser = _parser()
-    with pytest.raises(ValueError, match='both "targets" and "modifies"'):
+    with pytest.raises(ValueError, match=r'(?s)not allowed.*not both'):
         parser.resolve_params_for_id_doc({'version': 1, 'params': [
             {'name': 'both', 'targets': ['a/C'], 'modifies': ['b/C'], 'min': 1, 'max': 2}]})
 
@@ -186,7 +186,7 @@ def test_an_entry_may_not_set_both_targets_and_modifies():
 @pytest.mark.unit
 def test_operation_without_modifies_is_refused():
     parser = _parser()
-    with pytest.raises(ValueError, match='no "modifies"'):
+    with pytest.raises(ValueError, match=r'(?s)not allowed.*modifier entries only'):
         parser.resolve_params_for_id_doc({'version': 1, 'params': [
             {'name': 'x', 'targets': ['a/C'], 'modifier': 'scale', 'min': 1, 'max': 2}]})
 
