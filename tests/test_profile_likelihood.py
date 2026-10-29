@@ -197,21 +197,58 @@ def test_the_optimiser_gets_the_other_entries_and_the_merged_options(tmp_path, m
     assert pid.optimiser_options == {"num_calls_to_function": 1000,
                                      "cost_type": "gaussian_MLE"}
     np.testing.assert_allclose(made["param_init"], [5.0, 5.0])
-    assert made["output_dir"] == os.path.join(str(tmp_path), "profile_likelihood", "optimiser")
+    assert made["output_dir"] is None
     np.testing.assert_allclose(optimum, [1.5, 2.5])
     assert cost == pytest.approx(1.5**2 + 2.0**2 + 2.5**2)
 
 
 @pytest.mark.unit
-def test_only_rank_0_gives_the_optimiser_an_output_dir(tmp_path, monkeypatch):
+@pytest.mark.parametrize("rank", [0, 1])
+def test_no_rank_gives_the_optimiser_an_output_dir(tmp_path, monkeypatch, rank):
     pid = _stub_param_id(tmp_path)
     fake = _FakeOptimiser()
     monkeypatch.setattr(pid, "make_optimiser", fake, raising=False)
     profile = _profile_for(pid)
-    profile.rank = 1
+    profile.rank = rank
     profile._optimize_with_fixed_parameter(0, 7.0)
     assert fake.made[0]["output_dir"] is None
     assert not os.path.exists(os.path.join(str(tmp_path), "profile_likelihood"))
+
+
+def _files_under(root):
+    return sorted(os.path.relpath(os.path.join(d, f), root)
+                  for d, _, files in os.walk(root) for f in files)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "method, options",
+    [
+        ("CMA-ES", {}),
+        ("genetic_algorithm", {}),
+        ("sp_minimize", {}),
+        ("multi_start_sp_minimize", {"num_starts": 3}),
+        ("bayesian", {"num_calls_to_function": 6}),
+    ],
+)
+def test_a_profile_points_optimiser_writes_no_files(tmp_path, monkeypatch, method, options):
+    """Every param_id_method's optimiser, given no output_dir, writes nothing anywhere: the
+    profile's own JSON and plots are its output."""
+    if method == "bayesian":
+        pytest.importorskip("skopt")
+    out_dir, cwd = tmp_path / "out", tmp_path / "cwd"
+    out_dir.mkdir()
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+    pid = _stub_param_id(out_dir, method)
+    pid.acq_func, pid.n_initial_points, pid.random_state = "EI", 3, 0
+    pid.acq_func_kwargs = {}
+    profile = _profile_for(pid)
+    profile.optimiser_options.update(options)
+    cost, optimum = profile._optimize_with_fixed_parameter(2, 3.0)
+
+    assert optimum.shape == (2,) and np.isfinite(cost)
+    assert _files_under(tmp_path) == []
 
 
 @pytest.mark.unit
@@ -659,6 +696,17 @@ def test_profile_points_warm_start_through_the_optimiser(
         np.testing.assert_allclose(group[1][1], group[0][2])
         assert any(np.allclose(group[2][1], g[2]) for g in group[:2])
     assert result["param_id"].param_id.num_params == 2
+
+    # The profile writes its own JSON and plots, and its points' optimisers write nothing, on
+    # any rank.
+    results_dir = os.path.join(temp_output_dir, "profile_likelihood")
+    mpi_comm.Barrier()
+    assert not os.path.exists(os.path.join(results_dir, "optimiser"))
+    if rank == 0:
+        written = sorted(os.listdir(results_dir))
+        assert "summary.json" in written and "profile_likelihood_plots.pdf" in written
+        assert len([f for f in written if f.startswith("param_") and f.endswith(".json")]) == 2
+        assert not [f for f in written if f.startswith("best_") or f.startswith("multi_start")]
 
 
 # ---- on real models ------------------------------------------------------------------------

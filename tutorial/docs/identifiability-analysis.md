@@ -62,7 +62,7 @@ ia_options:
     num_calls_to_function: 200
 ```
 
-Results go to `<param_id_output_dir>/profile_likelihood/`: one JSON and one PDF per parameter, `profile_likelihood_plots.pdf` with every profile, and `summary.json`. The re-fits' optimiser history goes to `profile_likelihood/optimiser/`.
+Results go to `<param_id_output_dir>/profile_likelihood/`: one JSON and one PDF per parameter, `profile_likelihood_plots.pdf` with every profile, and `summary.json`. The re-fits' optimisers write no files of their own (no `best_cost.npy` or history CSVs).
 
 ## Running identifiability analysis
 

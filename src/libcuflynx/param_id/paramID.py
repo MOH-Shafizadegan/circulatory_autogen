@@ -2472,6 +2472,7 @@ class ParamID():
             param_id_info: ``param_names``, ``param_mins`` and ``param_maxs`` of that vector.
             param_norm_obj: Its ``Normalise_class``.
             output_dir: Where the optimiser writes its history (None on ranks other than 0).
+                None on every rank writes no files (profile-likelihood points).
             optimiser_options: Defaults to this run's ``optimiser_options``.
         """
         args = (cost_obj, param_id_info, param_norm_obj, len(param_id_info["param_names"]),

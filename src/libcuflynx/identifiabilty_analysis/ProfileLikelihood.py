@@ -291,15 +291,13 @@ class ProfileLikelihood:
             "param_mins": mins,
             "param_maxs": maxs,
         }
-        output_dir = None
-        if self.rank == 0:
-            output_dir = os.path.join(self.output_dir, "profile_likelihood", "optimiser")
-            os.makedirs(output_dir, exist_ok=True)
+        # output_dir None: a profile point's optimiser writes no files. The profile's own JSON
+        # and plots are the output.
         optimiser = pid.make_optimiser(
             held,
             reduced_info,
             Normalise_class(mins, maxs),
-            output_dir,
+            None,
             optimiser_options={**(pid.optimiser_options or {}), **self.optimiser_options},
         )
         optimiser.run()
