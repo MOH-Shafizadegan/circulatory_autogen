@@ -31,7 +31,9 @@ The fixture modules below live in an ``external_modules_dir``:
   ``windkessel_blank`` has the entrance vessel_port [v_in, ""].
 * ``venous_uptake`` (BC ``vp``) -- a venous node with a plain entrance vessel_port [v_in, u]
   and a separate entrance blood_uptake_port [v_uptake], multi_port "sum";
-  ``v_out = v_in + v_uptake``. ``uptake_source`` feeds that port.
+  ``v_out = v_in + v_uptake``. ``uptake_source`` feeds that port; ``uptake_source_two_ports``
+  has two exit blood_uptake_ports [v_up], and ``uptake_source_shared`` one with multi_port
+  "True".
 
 Built-in ``arterial_simple`` vessels are mixed in as neighbours too.
 """
@@ -317,6 +319,20 @@ MODULES_CONFIG = [
     ]),
     _module("uptake_source", "nn", "uptake_source_type", [],
             [_port("blood_uptake_port", ["v_up"])], [
+                ["v_up", "m3_per_s", "access", "variable"],
+                ["v_mean", "m3_per_s", "access", "constant"],
+                ["amp", "dimensionless", "access", "constant"],
+                ["omega", "per_s", "access", "constant"],
+            ]),
+    _module("uptake_source_two_ports", "nn", "uptake_source_type", [],
+            [_port("blood_uptake_port", ["v_up"]), _port("blood_uptake_port", ["v_up"])], [
+                ["v_up", "m3_per_s", "access", "variable"],
+                ["v_mean", "m3_per_s", "access", "constant"],
+                ["amp", "dimensionless", "access", "constant"],
+                ["omega", "per_s", "access", "constant"],
+            ]),
+    _module("uptake_source_shared", "nn", "uptake_source_type", [],
+            [_port("blood_uptake_port", ["v_up"], "True")], [
                 ["v_up", "m3_per_s", "access", "variable"],
                 ["v_mean", "m3_per_s", "access", "constant"],
                 ["amp", "dimensionless", "access", "constant"],
@@ -757,21 +773,106 @@ def test_flow_merge_one_neighbour_matches_one_to_one(tmp_path, external_modules_
 
 
 @pytest.mark.integration
-def test_flow_merge_without_neighbours_sums_to_zero(tmp_path, external_modules_dir, capsys):
+def test_flow_merge_without_neighbours_takes_v_in_from_the_parameters(tmp_path,
+                                                                      external_modules_dir):
+    """An unconnected "sum" is a boundary condition: a constant valued from the parameters."""
     rows = [("merge", "vp", "flow_merge", [], ["wk"]),
             ("wk", "nn", "windkessel", ["merge"], [])]
-    # no v_in_merge parameter: the unconnected "sum" is not turned into a constant
     cellml_path = _generate(tmp_path, external_modules_dir, "mp_none", rows,
-                            _windkessel_params("wk"))
-    out = capsys.readouterr().out
-    assert re.search(r'WARNING: "merge" variable "v_in" is a multi_port "sum".*set to 0', out)
+                            _windkessel_params("wk") + [("merge/v_in", "m3_per_s", 3.0e-6)])
+    assert "multiport_sum_merge_v_in" not in _read(cellml_path)
 
     parameters = model_parameter_rows(
         os.path.join(os.path.dirname(cellml_path), "mp_none_parameters.json"))
-    assert parameters and "v_in_merge" not in {r["variable_name"] for r in parameters}
-    res = _simulate(cellml_path, ["merge/v_out", "wk/q"], sim_time=0.5)
-    assert np.all(res["merge/v_out"] == 0.0)
-    assert np.all(res["wk/q"] == 0.0)
+    assert "v_in_merge" in {r["variable_name"] for r in parameters}
+    res = _simulate(cellml_path, ["merge/v_out"], sim_time=0.5)
+    np.testing.assert_array_equal(res["merge/v_out"], 3.0e-6)
+
+
+@pytest.mark.integration
+def test_flow_merge_without_neighbours_or_a_v_in_value_is_a_missing_parameter(
+        tmp_path, external_modules_dir, capsys):
+    """With no value for the unconnected "sum", generation fails with the report every unset
+    boundary condition gets."""
+    rows = [("merge", "vp", "flow_merge", [], ["wk"]),
+            ("wk", "nn", "windkessel", ["merge"], [])]
+    capsys.readouterr()
+    with pytest.raises(AssertionError, match="generation of mp_none failed"):
+        _generate(tmp_path, external_modules_dir, "mp_none", rows, _windkessel_params("wk"))
+    out = capsys.readouterr().out
+    assert 'merge/v_in: a boundary condition of "merge" that no connected module' in out
+
+
+@pytest.mark.integration
+def test_an_unconnected_sum_that_is_not_a_boundary_condition_is_rejected(tmp_path,
+                                                                         external_modules_dir):
+    """A "sum" variable that is not a boundary_condition has nothing to give it a value when
+    nothing is connected through its port."""
+    config = [dict(module, module_type="flow_merge_var", variables_and_units=[
+        ["v_in", "m3_per_s", "access", "variable"]] + MERGE_VARIABLES[1:])
+        for module in MODULES_CONFIG if module["module_type"] == "flow_merge"]
+    modules_dir = tmp_path / "modules"
+    modules_dir.mkdir()
+    (modules_dir / "multiport_test_modules.cellml").write_text(MODULES_CELLML)
+    (modules_dir / "multiport_test_modules_config.json").write_text(
+        json.dumps(MODULES_CONFIG + config, indent=2))
+    rows = [("merge", "vp", "flow_merge_var", [], ["wk"]),
+            ("wk", "nn", "windkessel", ["merge"], [])]
+    with pytest.raises(ValueError, match='"merge" variable "v_in" is a multi_port "sum".*'
+                                         'make "v_in" a boundary_condition'):
+        _generate(tmp_path, str(modules_dir), "mp_none_var", rows, _windkessel_params("wk"))
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("module_type, outputs", [
+    # two ports of the matching type, both connected by one listing
+    ("uptake_source_two_ports", ["ven"]),
+    # a multi_port "True" port, listed twice
+    ("uptake_source_shared", ["ven", "ven"]),
+])
+def test_a_sum_term_connected_twice_is_rejected(tmp_path, external_modules_dir, module_type,
+                                                outputs):
+    rows = [("src", "nn", "flow_source", [], ["ven"]),
+            ("up", "nn", module_type, [], outputs),
+            ("ven", "vp", "venous_uptake", ["src"] + ["up"] * len(outputs), ["wk"]),
+            ("wk", "nn", "windkessel", ["ven"], [])]
+    params = (_source_params("src", *MERGE_SOURCES["src_a"]) +
+              [("up/v_mean", "m3_per_s", 1.0e-6), ("up/amp", "dimensionless", 0.5),
+               ("up/omega", "per_s", 6.0)] + _windkessel_params("wk"))
+    with pytest.raises(ValueError, match='"up" variable "v_up" reaches the multi_port "sum" '
+                                         'variable "v_uptake" of "ven".*counted twice'):
+        _generate(tmp_path, external_modules_dir, "mp_twice", rows, params)
+
+
+@pytest.mark.integration
+def test_a_multiply_term_connected_twice_is_rejected(tmp_path):
+    """A neighbour reaching a "Multiply" target twice (here through two Multiply ports of the
+    matching type, both connected by one listing) is refused like a "sum" term."""
+    uptake_variables = next(module["variables_and_units"] for module in MODULES_CONFIG
+                            if module["module_type"] == "uptake_source")
+    venous_uptake = next(module for module in MODULES_CONFIG
+                         if module["module_type"] == "venous_uptake")
+    config = MODULES_CONFIG + [
+        _module("uptake_source_multiply", "nn", "uptake_source_type", [],
+                [_port("blood_uptake_port", ["v_up"], "Multiply")] * 2,
+                uptake_variables),
+        dict(venous_uptake, module_type="venous_uptake_plain", entrance_ports=[
+            _port("vessel_port", ["v_in", "u"]), _port("blood_uptake_port", ["v_uptake"])]),
+    ]
+    modules_dir = tmp_path / "modules"
+    modules_dir.mkdir()
+    (modules_dir / "multiport_test_modules.cellml").write_text(MODULES_CELLML)
+    (modules_dir / "multiport_test_modules_config.json").write_text(json.dumps(config, indent=2))
+    rows = [("src", "nn", "flow_source", [], ["ven"]),
+            ("up", "nn", "uptake_source_multiply", [], ["ven"]),
+            ("ven", "vp", "venous_uptake_plain", ["src", "up"], ["wk"]),
+            ("wk", "nn", "windkessel", ["ven"], [])]
+    params = (_source_params("src", *MERGE_SOURCES["src_a"]) +
+              [("up/v_mean", "m3_per_s", 1.0e-6), ("up/amp", "dimensionless", 0.5),
+               ("up/omega", "per_s", 6.0)] + _windkessel_params("wk"))
+    with pytest.raises(ValueError, match='"up" variable "v_up" reaches the multi_port "Multiply" '
+                                         'variable "v_uptake" of "ven".*counted twice'):
+        _generate(tmp_path, str(modules_dir), "mp_mul_twice", rows, params)
 
 
 @pytest.mark.integration
