@@ -17,7 +17,6 @@ warning naming the observable, and the calibration's own costs are put back afte
 observable whose cost has no MLE form is an error.
 """
 
-import copy
 import json
 import os
 import warnings
@@ -27,8 +26,9 @@ import numpy as np
 from scipy.stats import chi2
 
 from libcuflynx.param_id.paramID import ensure_mle_cost_type_for_bayesian_inner
-from libcuflynx.parsers.PrimitiveParsers import analysis_options, expand_modifier_param_vals
+from libcuflynx.parsers.PrimitiveParsers import analysis_options
 from libcuflynx.utilities.mpi_utils import get_MPI as _get_MPI
+from libcuflynx.utilities.utility_funcs import Normalise_class
 
 MPI = _get_MPI()
 
@@ -40,18 +40,6 @@ NLL_THRESHOLD_95 = 0.5 * float(chi2.ppf(0.95, df=1))
 #: minimiser (MSE is 2 * gaussian_MLE), which ``ensure_mle_cost_type_for_bayesian_inner`` puts in
 #: its place. Any other cost without ``@is_MLE`` (such as AE) has no likelihood to profile.
 MLE_FORMS = {"MSE": "gaussian_MLE"}
-
-#: Attributes of the inner param_id that a profile point changes, restored after each point.
-_PARAM_ID_STATE = (
-    "param_id_info",
-    "num_params",
-    "param_norm_obj",
-    "param_init",
-    "best_param_vals",
-    "best_cost",
-    "optimiser_options",
-    "output_dir",
-)
 
 
 def profile_likelihood_options(ia_options):
@@ -97,6 +85,49 @@ def param_label(param_name):
 
 def _file_stem(param_idx, param_name):
     return f"param_{param_idx}_" + param_label(param_name).replace("/", "_").replace("+", "__")
+
+
+class _HeldEntry:
+    """The param_id's cost with entry ``idx`` held at ``value``, over the other entries.
+
+    This is the ``cost_obj`` a profile point's optimiser calibrates (see
+    ``ParamID.make_optimiser``). Each call puts ``value`` back into the vector at ``idx`` and
+    hands the full vector to the param_id, so the param_id and its backends always see the
+    parameter set they were built for, and a grouped or modifier entry is held as a whole by
+    ``expand_modifier_param_vals``. ``param_init`` is the warm start.
+    """
+
+    def __init__(self, param_id, idx, value, param_init):
+        self.param_id = param_id
+        self.idx = int(idx)
+        self.value = float(value)
+        self.param_init = np.asarray(param_init, dtype=float)
+        self.best_param_vals = None
+
+    def full(self, param_vals):
+        return np.insert(np.asarray(param_vals, dtype=float), self.idx, self.value)
+
+    def _reduced(self, gradient):
+        return np.delete(np.asarray(gradient, dtype=float).ravel(), self.idx)
+
+    def get_cost_from_params(self, param_vals):
+        return self.param_id.get_cost_from_params(self.full(param_vals))
+
+    def get_cost(self, param_vals):
+        return self.param_id.get_cost(self.full(param_vals))
+
+    def get_lnlikelihood_lnprior_from_params(self, param_vals):
+        return self.param_id.get_lnlikelihood_lnprior_from_params(self.full(param_vals))
+
+    def get_gradient(self, param_vals):
+        return self._reduced(self.param_id.get_gradient(self.full(param_vals)))
+
+    def get_cost_and_gradient(self, param_vals):
+        cost, gradient = self.param_id.get_cost_and_gradient(self.full(param_vals))
+        return cost, self._reduced(gradient)
+
+    def set_best_param_vals(self, param_vals):
+        self.best_param_vals = np.asarray(param_vals, dtype=float)
 
 
 class ProfileLikelihood:
@@ -229,14 +260,10 @@ class ProfileLikelihood:
 
     # ---- one profile point --------------------------------------------------------------------
 
-    def _entry_model_values(self, param_id_info, theta, idx):
-        """The names and values that hold entry ``idx`` of ``theta`` in the model."""
-        names = param_id_info["param_names"][idx]
-        values = expand_modifier_param_vals(param_id_info, theta)[idx]
-        return [names], [values]
-
     def _optimize_with_fixed_parameter(self, fixed_param_idx, fixed_value, param_init=None):
         """Re-calibrate the other entries with entry ``fixed_param_idx`` held at ``fixed_value``.
+
+        Collective: every rank runs the optimiser.
 
         Args:
             fixed_param_idx: Index of the held entry.
@@ -248,39 +275,36 @@ class ProfileLikelihood:
             other entries' values, in order).
         """
         pid = self.param_id
-        full_info = pid.param_id_info
-        theta = np.array(self.best_param_vals, dtype=float)
-        theta[fixed_param_idx] = fixed_value
-
-        if pid.num_params == 1:
-            # Nothing else to re-calibrate: the profile is the cost itself.
-            return float(pid.get_cost_from_params(theta)), np.empty(0)
-
         if param_init is None:
             param_init = np.delete(self.best_param_vals, fixed_param_idx)
-        held_names, held_values = self._entry_model_values(full_info, theta, fixed_param_idx)
-        _, best_values = self._entry_model_values(full_info, self.best_param_vals, fixed_param_idx)
-        saved = {attr: getattr(pid, attr, None) for attr in _PARAM_ID_STATE}
-        try:
-            # A copy, so the caller's param_id_info (shared with the outer CVS0DParamID) is
-            # never reduced; the original object is put back in the finally.
-            pid.param_id_info = copy.deepcopy(full_info)
-            pid.remove_params_by_idx([fixed_param_idx])
-            pid.sim_helper.set_param_vals(held_names, held_values)
-            pid.optimiser_options = {**(saved["optimiser_options"] or {}), **self.optimiser_options}
-            if saved["output_dir"] is not None:
-                # Only rank 0 has an output directory; the other ranks hold None.
-                pid.output_dir = os.path.join(saved["output_dir"], "temp_profile_opt")
-                os.makedirs(pid.output_dir, exist_ok=True)
+        held = _HeldEntry(pid, fixed_param_idx, fixed_value, param_init)
+        if pid.num_params == 1:
+            # Nothing else to re-calibrate: the profile is the cost itself.
+            return float(held.get_cost(np.empty(0))), np.empty(0)
 
-            pid.run(param_init=param_init)
-            optimum = np.array(pid.best_param_vals, dtype=float)
-            cost = float(pid.get_cost_from_params(optimum))
-            return cost, optimum
-        finally:
-            for attr, value in saved.items():
-                setattr(pid, attr, value)
-            pid.sim_helper.set_param_vals(held_names, best_values)
+        info = pid.param_id_info
+        keep = [i for i in range(pid.num_params) if i != fixed_param_idx]
+        mins = np.asarray(info["param_mins"], dtype=float)[keep]
+        maxs = np.asarray(info["param_maxs"], dtype=float)[keep]
+        reduced_info = {
+            "param_names": [info["param_names"][i] for i in keep],
+            "param_mins": mins,
+            "param_maxs": maxs,
+        }
+        output_dir = None
+        if self.rank == 0:
+            output_dir = os.path.join(self.output_dir, "profile_likelihood", "optimiser")
+            os.makedirs(output_dir, exist_ok=True)
+        optimiser = pid.make_optimiser(
+            held,
+            reduced_info,
+            Normalise_class(mins, maxs),
+            output_dir,
+            optimiser_options={**(pid.optimiser_options or {}), **self.optimiser_options},
+        )
+        optimiser.run()
+        optimum = np.array(optimiser.best_param_vals, dtype=float)
+        return float(held.get_cost(optimum)), optimum
 
     def _profile_single_parameter(self, param_idx):
         """Sweep entry ``param_idx`` outwards from its best fit, warm-starting each point."""
@@ -435,16 +459,13 @@ class ProfileLikelihood:
         """
         if self.best_param_vals is None:
             raise ValueError("Best parameter values must be set first - Run param_id script first")
-        if getattr(self.param_id, "emulates_features", False):
-            raise NotImplementedError(
-                "Profile likelihood is not available with use_emulator: an emulator takes the "
-                "whole parameter vector, and a profile point holds one entry outside it."
-            )
 
         num_params = len(self.best_param_vals)
         saved_costs = self._use_mle_costs()
         try:
-            self.best_cost = float(self.param_id.get_cost_from_params(self.best_param_vals))
+            # get_cost throughout: the cost the re-fits minimise (the CasADi or AADC one when
+            # the gradient is AD), and on casadi_python the only one left once AD has run.
+            self.best_cost = float(self.param_id.get_cost(self.best_param_vals))
             if self.rank == 0:
                 print(f"Starting profile likelihood analysis for {num_params} parameters")
 
@@ -455,6 +476,8 @@ class ProfileLikelihood:
                         f"{param_label(self.param_id.param_id_info['param_names'][param_idx])}"
                     )
                 self.profile_results[param_idx] = self._profile_single_parameter(param_idx)
+                # Leave the model at the best fit, not at the last point evaluated.
+                self.param_id.get_cost(self.best_param_vals)
         finally:
             if saved_costs is not None:
                 self.param_id.obs_info["cost_type"], self.param_id.cost_type = saved_costs

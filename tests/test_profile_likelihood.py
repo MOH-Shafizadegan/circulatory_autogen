@@ -15,9 +15,11 @@ from _params_for_id import write_params_for_id
 from libcuflynx.identifiabilty_analysis.ProfileLikelihood import (
     NLL_THRESHOLD_95,
     ProfileLikelihood,
+    _HeldEntry,
     profile_likelihood_options,
 )
-from libcuflynx.param_id.paramID import ParamID
+from libcuflynx.param_id.optimisers import SciPyMinimizeOptimiser
+from libcuflynx.param_id.paramID import CVS0DParamID, ParamID
 from libcuflynx.parsers.PrimitiveParsers import analysis_options
 from libcuflynx.scripts.param_id_run_script import run_param_id
 from libcuflynx.scripts.script_generate_with_new_architecture import generate_with_new_architecture
@@ -48,27 +50,11 @@ def _ensure_cellml_model_generated(config, mpi_comm):
 # ---- a ParamID with no model behind it -----------------------------------------------------
 
 
-class _RecordingSimHelper:
-    """Records every set_param_vals call as {name: value}."""
-
-    def __init__(self):
-        self.values = {}
-        self.calls = []
-
-    def set_param_vals(self, param_names, param_vals, change_states=True):
-        self.calls.append((param_names, param_vals))
-        for names, vals in zip(param_names, param_vals):
-            names = names if isinstance(names, list) else [names]
-            vals = (
-                list(vals) if isinstance(vals, (list, tuple, np.ndarray)) else [vals] * len(names)
-            )
-            self.values.update(zip(names, vals))
-
-
-def _stub_param_id(tmp_dir):
-    """A real ParamID (its remove_params_by_idx and state) with a recording sim helper.
+def _stub_param_id(tmp_dir, method="CMA-ES"):
+    """A real ParamID (its make_optimiser, remove_params_by_idx) over a quadratic cost.
 
     Entries: 0 a group [A, B], 1 a scale modifier on [C, D] (baselines 2, 3), 2 a plain E.
+    ``pid.calls`` records every vector the cost and gradient methods are given.
     """
     pid = object.__new__(ParamID)
     mins, maxs = np.array([0.0, 0.5, 0.0]), np.array([10.0, 4.0, 10.0])
@@ -101,9 +87,28 @@ def _stub_param_id(tmp_dir):
     pid.best_cost = 0.25
     pid.optimiser_options = {"num_calls_to_function": 1000, "cost_type": "gaussian_MLE"}
     pid.output_dir = str(tmp_dir)
-    pid.sim_helper = _RecordingSimHelper()
+    pid.param_id_method = method
+    pid.DEBUG = True
+    pid.do_ad = True
+    pid.model_type = "cellml"
     pid.emulates_features = False
-    pid.get_cost_from_params = lambda vals: float(np.sum(np.asarray(vals) ** 2))
+    pid.calls = []
+
+    def cost(vals):
+        vals = np.array(vals, dtype=float)
+        pid.calls.append(vals)
+        return float(np.sum(vals**2))
+
+    def gradient(vals):
+        vals = np.array(vals, dtype=float)
+        pid.calls.append(vals)
+        return 2.0 * vals
+
+    pid.get_cost_from_params = cost
+    pid.get_cost = cost
+    pid.get_gradient = gradient
+    pid.get_cost_and_gradient = lambda vals: (cost(vals), 2.0 * np.asarray(vals, dtype=float))
+    pid.get_lnlikelihood_lnprior_from_params = lambda vals: -cost(vals)
     return pid
 
 
@@ -118,6 +123,169 @@ def _profile_for(pid):
     )
     profile.set_best_param_vals(pid.best_param_vals)
     return profile
+
+
+class _FakeOptimiser:
+    """Stands in for ParamID.make_optimiser: records what it was given, returns ``optimum``."""
+
+    def __init__(self, optimum=None, error=None):
+        self.optimum, self.error, self.made = optimum, error, []
+
+    def __call__(self, cost_obj, param_id_info, param_norm_obj, output_dir,
+                 optimiser_options=None):
+        self.made.append({"cost_obj": cost_obj, "info": param_id_info, "norm": param_norm_obj,
+                          "output_dir": output_dir, "options": optimiser_options,
+                          "param_init": np.array(cost_obj.param_init, dtype=float)})
+        fake = self
+
+        class _Run:
+            def run(self):
+                if fake.error is not None:
+                    raise fake.error
+                optimum = fake.optimum(cost_obj) if callable(fake.optimum) else fake.optimum
+                self.best_param_vals = np.array(
+                    cost_obj.param_init if optimum is None else optimum, dtype=float)
+
+        return _Run()
+
+
+# ---- one profile point ---------------------------------------------------------------------
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "method, options",
+    [
+        ("CMA-ES", {}),
+        ("genetic_algorithm", {}),
+        ("genetic_algorithm", {"objective_function": "likelihood"}),
+        ("sp_minimize", {}),
+    ],
+)
+@pytest.mark.parametrize("idx, value", [(0, 7.0), (1, 2.0), (2, 3.0)])
+def test_the_held_value_reaches_every_cost_call(tmp_path, method, options, idx, value):
+    """Every vector the param_id is given is the full one, with the held entry at its value."""
+    pid = _stub_param_id(tmp_path, method)
+    profile = _profile_for(pid)
+    profile.optimiser_options.update(options)
+    cost, optimum = profile._optimize_with_fixed_parameter(idx, value)
+
+    assert len(pid.calls) > 2
+    for vals in pid.calls:
+        assert vals.shape == (3,) and vals[idx] == value
+    assert optimum.shape == (2,)
+    assert cost == pytest.approx(np.sum(np.insert(optimum, idx, value) ** 2))
+    # Nothing on the param_id was reduced or replaced.
+    assert pid.num_params == 3 and len(pid.param_id_info["param_names"]) == 3
+    assert [m["index"] for m in pid.param_id_info["modifiers"]] == [1]
+
+
+@pytest.mark.unit
+def test_the_optimiser_gets_the_other_entries_and_the_merged_options(tmp_path, monkeypatch):
+    pid = _stub_param_id(tmp_path)
+    fake = _FakeOptimiser(optimum=[1.5, 2.5])
+    monkeypatch.setattr(pid, "make_optimiser", fake, raising=False)
+    cost, optimum = _profile_for(pid)._optimize_with_fixed_parameter(1, 2.0)
+
+    made = fake.made[0]
+    assert made["info"]["param_names"] == [["g/A", "g/B"], ["p/E"]]
+    np.testing.assert_allclose(made["info"]["param_mins"], [0.0, 0.0])
+    np.testing.assert_allclose(made["info"]["param_maxs"], [10.0, 10.0])
+    np.testing.assert_allclose(made["norm"].unnormalise(np.array([1.0, 1.0])), [10.0, 10.0])
+    # ia_options.optimiser_options are merged over the calibration's, which are unchanged.
+    assert made["options"] == {"num_calls_to_function": 40, "cost_type": "gaussian_MLE"}
+    assert pid.optimiser_options == {"num_calls_to_function": 1000,
+                                     "cost_type": "gaussian_MLE"}
+    np.testing.assert_allclose(made["param_init"], [5.0, 5.0])
+    assert made["output_dir"] == os.path.join(str(tmp_path), "profile_likelihood", "optimiser")
+    np.testing.assert_allclose(optimum, [1.5, 2.5])
+    assert cost == pytest.approx(1.5**2 + 2.0**2 + 2.5**2)
+
+
+@pytest.mark.unit
+def test_only_rank_0_gives_the_optimiser_an_output_dir(tmp_path, monkeypatch):
+    pid = _stub_param_id(tmp_path)
+    fake = _FakeOptimiser()
+    monkeypatch.setattr(pid, "make_optimiser", fake, raising=False)
+    profile = _profile_for(pid)
+    profile.rank = 1
+    profile._optimize_with_fixed_parameter(0, 7.0)
+    assert fake.made[0]["output_dir"] is None
+    assert not os.path.exists(os.path.join(str(tmp_path), "profile_likelihood"))
+
+
+@pytest.mark.unit
+def test_the_gradient_drops_the_held_component(tmp_path):
+    pid = _stub_param_id(tmp_path, "sp_minimize")
+    held = _HeldEntry(pid, 1, 2.0, [5.0, 5.0])
+    np.testing.assert_allclose(held.get_gradient([3.0, 4.0]), [6.0, 8.0])
+    cost, gradient = held.get_cost_and_gradient([3.0, 4.0])
+    assert cost == pytest.approx(9.0 + 4.0 + 16.0)
+    np.testing.assert_allclose(gradient, [6.0, 8.0])
+    for vals in pid.calls:
+        np.testing.assert_allclose(vals, [3.0, 2.0, 4.0])
+
+    # L-BFGS-B descends that gradient to the other entries' lower bounds.
+    _, optimum = _profile_for(pid)._optimize_with_fixed_parameter(0, 7.0)
+    np.testing.assert_allclose(optimum, [0.5, 0.0], atol=1e-6)
+
+
+@pytest.mark.unit
+def test_a_single_entry_profile_is_the_cost_itself(tmp_path, monkeypatch):
+    pid = _stub_param_id(tmp_path)
+    pid.num_params = 1
+    monkeypatch.setattr(pid, "make_optimiser", _FakeOptimiser(error=AssertionError("no fit")),
+                        raising=False)
+    cost, optimum = _profile_for(pid)._optimize_with_fixed_parameter(0, 3.0)
+    assert cost == pytest.approx(9.0) and optimum.size == 0
+
+
+@pytest.mark.unit
+def test_each_profile_point_warm_starts_from_its_neighbours_optimum(tmp_path, monkeypatch):
+    """The sweep runs outwards from the best fit, each fit starting at the last one's optimum."""
+    pid = _stub_param_id(tmp_path)
+    # A recognisable optimum per point: [held, held + 100].
+    fake = _FakeOptimiser(optimum=lambda held: [held.value, held.value + 100.0])
+    monkeypatch.setattr(pid, "make_optimiser", fake, raising=False)
+    profile = _profile_for(pid)
+    profile.num_points = 5
+    result = profile._profile_single_parameter(2)
+
+    values = result["param_values"]
+    centre = int(np.argmin(np.abs(values - 5.0)))
+    assert centre == 2
+    order = [2, 3, 4, 1, 0]
+    expected = {2: [5.0, 1.0], 3: [values[2], values[2] + 100], 4: [values[3], values[3] + 100]}
+    expected[1] = [values[2], values[2] + 100]
+    expected[0] = [values[1], values[1] + 100]
+    starts = [made["param_init"] for made in fake.made]
+    assert [made["cost_obj"].value for made in fake.made] == pytest.approx(values[order])
+    assert len(starts) == 5
+    for point, start in zip(order, starts):
+        np.testing.assert_allclose(start, expected[point])
+
+
+@pytest.mark.unit
+def test_the_model_is_left_at_the_best_fit_after_each_parameter(tmp_path, monkeypatch):
+    pid = _stub_param_id(tmp_path)
+    monkeypatch.setattr(pid, "make_optimiser", _FakeOptimiser(), raising=False)
+    profile = _profile_for(pid)
+    real = profile._profile_single_parameter
+
+    def profile_and_note_the_last_call(param_idx):
+        result = real(param_idx)
+        pid.calls.append(("done", param_idx))
+        return result
+
+    profile._profile_single_parameter = profile_and_note_the_last_call
+    profile.run()
+    done = [i for i, call in enumerate(pid.calls) if isinstance(call, tuple)]
+    assert [pid.calls[i] for i in done] == [("done", 0), ("done", 1), ("done", 2)]
+    for i in done:
+        np.testing.assert_allclose(pid.calls[i + 1], [5.0, 1.0, 5.0])
+
+
+# ---- remove_params_by_idx (plot_param_id_script, MCMC) -------------------------------------
 
 
 @pytest.mark.unit
@@ -137,124 +305,16 @@ def test_remove_params_by_idx_reindexes_modifiers_and_per_entry_lists(tmp_path):
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize(
-    "idx, value, expected",
-    [
-        (0, 7.0, {"g/A": 7.0, "g/B": 7.0}),  # a group is held as a whole
-        (1, 2.0, {"m/C": 4.0, "m/D": 6.0}),  # a modifier is held through its function
-    ],
-)
-def test_a_profile_point_holds_the_whole_entry_and_recalibrates_the_rest(
-    tmp_path, idx, value, expected
-):
+def test_cvs0d_remove_params_by_name_removes_them_from_the_param_id(tmp_path):
+    """What plot_param_id_script does with param_names_to_remove.csv."""
     pid = _stub_param_id(tmp_path)
-    original_info = pid.param_id_info
-    original_options = pid.optimiser_options
-    seen = {}
-
-    def fake_run(param_init=None):
-        info = pid.param_id_info
-        seen["names"] = list(info["param_names"])
-        seen["modifier_indices"] = [m["index"] for m in info["modifiers"]]
-        seen["model"] = dict(pid.sim_helper.values)
-        seen["options"] = dict(pid.optimiser_options)
-        seen["param_init"] = param_init
-        pid.best_param_vals = np.array([1.5, 2.5])
-        pid.best_cost = 9.0
-
-    pid.run = fake_run
-    cost, optimum = _profile_for(pid)._optimize_with_fixed_parameter(idx, value)
-
-    remaining = [n for i, n in enumerate(original_info["param_names"]) if i != idx]
-    assert seen["names"] == remaining
-    for name, held in expected.items():
-        assert seen["model"][name] == pytest.approx(held)
-    # The modifier (entry 1) keeps pointing at itself once entry 0 is removed.
-    assert seen["modifier_indices"] == ([0] if idx == 0 else [])
-    # ia_options.optimiser_options are merged over the calibration's.
-    assert seen["options"] == {"num_calls_to_function": 40, "cost_type": "gaussian_MLE"}
-    np.testing.assert_allclose(seen["param_init"], np.delete([5.0, 1.0, 5.0], idx))
-
-    np.testing.assert_allclose(optimum, [1.5, 2.5])
-    assert cost == pytest.approx(1.5**2 + 2.5**2)
-    # Restored, and the caller's dict was never reduced.
-    assert pid.param_id_info is original_info
-    assert original_info["param_names"] == [["g/A", "g/B"], ["m/C", "m/D"], ["p/E"]]
-    assert [m["index"] for m in original_info["modifiers"]] == [1]
-    assert pid.optimiser_options is original_options
-    assert original_options == {"num_calls_to_function": 1000, "cost_type": "gaussian_MLE"}
-    assert pid.num_params == 3 and pid.best_cost == 0.25
-    np.testing.assert_allclose(pid.best_param_vals, [5.0, 1.0, 5.0])
-    assert pid.output_dir == str(tmp_path)
-
-
-@pytest.mark.unit
-def test_a_profile_point_runs_on_a_rank_without_an_output_dir(tmp_path):
-    """Ranks other than 0 hold output_dir None; every rank must reach the collective run()."""
-    pid = _stub_param_id(tmp_path)
-    pid.output_dir = None
-    ran = []
-
-    def fake_run(param_init=None):
-        ran.append(pid.output_dir)
-        pid.best_param_vals = np.array([1.0, 1.0])
-
-    pid.run = fake_run
-    _profile_for(pid)._optimize_with_fixed_parameter(0, 7.0)
-    assert ran == [None] and pid.output_dir is None
-
-
-@pytest.mark.unit
-def test_state_is_restored_when_a_profile_point_fails(tmp_path):
-    pid = _stub_param_id(tmp_path)
-    original_info = pid.param_id_info
-    original_norm = pid.param_norm_obj
-
-    def failing_run(param_init=None):
-        pid.best_param_vals = np.array([0.0, 0.0])
-        raise RuntimeError("solver blew up")
-
-    pid.run = failing_run
-    with pytest.raises(RuntimeError, match="solver blew up"):
-        _profile_for(pid)._optimize_with_fixed_parameter(0, 7.0)
-
-    assert pid.param_id_info is original_info
-    assert len(original_info["param_names"]) == 3
-    assert pid.num_params == 3
-    assert pid.param_norm_obj is original_norm
-    assert pid.optimiser_options == {"num_calls_to_function": 1000, "cost_type": "gaussian_MLE"}
-    assert pid.output_dir == str(tmp_path)
-    np.testing.assert_allclose(pid.best_param_vals, [5.0, 1.0, 5.0])
-    # The held entry goes back to its best-fit value.
-    assert pid.sim_helper.values["g/A"] == pid.sim_helper.values["g/B"] == 5.0
-
-
-@pytest.mark.unit
-def test_each_profile_point_warm_starts_from_its_neighbours_optimum(tmp_path):
-    """The sweep runs outwards from the best fit, each fit starting at the last one's optimum."""
-    pid = _stub_param_id(tmp_path)
-    starts = []
-
-    def fake_run(param_init=None):
-        starts.append(None if param_init is None else np.array(param_init))
-        held = pid.sim_helper.values["p/E"]
-        pid.best_param_vals = np.array([held, held + 100.0])  # a recognisable optimum per point
-
-    pid.run = fake_run
-    profile = _profile_for(pid)
-    profile.num_points = 5
-    result = profile._profile_single_parameter(2)
-
-    values = result["param_values"]
-    centre = int(np.argmin(np.abs(values - 5.0)))
-    assert centre == 2
-    order = [2, 3, 4, 1, 0]
-    expected = {2: [5.0, 1.0], 3: [values[2], values[2] + 100], 4: [values[3], values[3] + 100]}
-    expected[1] = [values[2], values[2] + 100]
-    expected[0] = [values[1], values[1] + 100]
-    assert len(starts) == 5
-    for point, start in zip(order, starts):
-        np.testing.assert_allclose(start, expected[point])
+    outer = object.__new__(CVS0DParamID)
+    outer.mcmc_instead = False
+    outer.param_id = pid
+    outer.param_id_info = pid.param_id_info
+    outer.remove_params_by_name([["p/E"]])
+    assert pid.num_params == 2
+    assert outer.param_id_info["param_names"] == [["g/A", "g/B"], ["m/C", "m/D"]]
 
 
 # ---- the 95% threshold -----------------------------------------------------------------------
@@ -299,11 +359,8 @@ def _with_costs(pid, cost_types):
         used.append(list(pid.cost_type))
         return float(np.sum(np.asarray(vals) ** 2))
 
-    def fake_run(param_init=None):
-        pid.best_param_vals = np.asarray(param_init, dtype=float)
-
-    pid.get_cost_from_params = cost
-    pid.run = fake_run
+    pid.get_cost_from_params = pid.get_cost = cost
+    pid.make_optimiser = _FakeOptimiser()
     return used
 
 
@@ -320,8 +377,8 @@ def test_profile_converts_a_cost_to_its_mle_form_with_a_warning(tmp_path):
     assert converted == [
         "profile likelihood: converting cost 'MSE' to its MLE form 'gaussian_MLE' for p_ao"
     ]
-    # The best fit and every re-fit are scored on the MLE form.
-    assert len(used) == 1 + 3 * 3
+    # The best fit, every re-fit and each reset to the best fit are scored on the MLE form.
+    assert len(used) == 1 + 3 * 3 + 3
     assert all(costs == ["gaussian_MLE", "gaussian_MLE"] for costs in used)
     # ... so every profile gets an interval, on the -ln L scale.
     for result in profile.profile_results.values():
@@ -342,11 +399,7 @@ def test_profile_restores_the_costs_when_a_profile_point_fails(tmp_path):
     _with_costs(pid, ["MSE"])
     original = pid.obs_info["cost_type"]
 
-    def failing_run(param_init=None):
-        assert pid.cost_type == ["gaussian_MLE"]
-        raise RuntimeError("solver blew up")
-
-    pid.run = failing_run
+    pid.make_optimiser = _FakeOptimiser(error=RuntimeError("solver blew up"))
     with pytest.warns(UserWarning, match="converting cost 'MSE'"):
         with pytest.raises(RuntimeError, match="solver blew up"):
             _profile_for(pid).run()
@@ -521,11 +574,11 @@ _OSCILLATOR_DIR = os.path.realpath(
 
 @pytest.mark.integration
 @pytest.mark.mpi
-def test_profile_points_warm_start_through_param_id_run(
+def test_profile_points_warm_start_through_the_optimiser(
     base_user_inputs, temp_output_dir, temp_generated_models_dir, mpi_comm, monkeypatch
 ):
-    """ParamID.run starts each profile point's CMA-ES fit at the neighbouring point's optimum,
-    not at the model's parameter values (the scipy oscillator; seconds)."""
+    """Each profile point's CMA-ES fit starts at the neighbouring point's optimum, not at the
+    model's parameter values (the scipy oscillator; seconds)."""
     rank = mpi_comm.Get_rank()
     resources_dir = os.path.join(temp_output_dir, "resources")
     if rank == 0:
@@ -576,20 +629,22 @@ def test_profile_points_warm_start_through_param_id_run(
     )
 
     starts, budgets = [], []
-    real_run = ParamID.run
+    real_make = ParamID.make_optimiser
 
-    def spy(self, *args, **kwargs):
-        real_run(self, *args, **kwargs)
-        starts.append(
-            (
-                self.num_params,
-                np.array(self.param_init, dtype=float),
-                np.array(self.best_param_vals, dtype=float),
-            )
-        )
-        budgets.append(self.optimiser_options.get("num_calls_to_function"))
+    def spy(self, cost_obj, *args, **kwargs):
+        optimiser = real_make(self, cost_obj, *args, **kwargs)
+        real_run = optimiser.run
 
-    monkeypatch.setattr(ParamID, "run", spy)
+        def run():
+            start = np.array(cost_obj.param_init, dtype=float)
+            real_run()
+            starts.append((start.size, start, np.array(optimiser.best_param_vals, dtype=float)))
+            budgets.append(optimiser.optimiser_options.get("num_calls_to_function"))
+
+        optimiser.run = run
+        return optimiser
+
+    monkeypatch.setattr(ParamID, "make_optimiser", spy)
     result = run_param_id(config)
 
     best = np.asarray(result["best_param_vals"], dtype=float)
@@ -604,6 +659,196 @@ def test_profile_points_warm_start_through_param_id_run(
         np.testing.assert_allclose(group[1][1], group[0][2])
         assert any(np.allclose(group[2][1], g[2]) for g in group[:2])
     assert result["param_id"].param_id.num_params == 2
+
+
+# ---- on real models ------------------------------------------------------------------------
+
+_TEST_INPUTS = os.path.join(os.path.dirname(__file__), "test_inputs")
+_SCALING_OBS = os.path.join(_TEST_INPUTS, "scaling_obs_data.json")
+# k1..k5 in tests/test_inputs/scaling_modifier.cellml.
+_SCALING_K = [0.7314, 0.1129, 0.4207, 0.2561, 0.8893]
+
+
+@pytest.fixture(scope="module")
+def scaling_casadi_model(tmp_path_factory):
+    pytest.importorskip("casadi")
+    from libcuflynx.generators.PythonGenerator import PythonGenerator
+
+    out = str(tmp_path_factory.mktemp("pl_scaling_casadi"))
+    return PythonGenerator(
+        os.path.join(_TEST_INPUTS, "scaling_modifier.cellml"), output_dir=out, casadi_compat=True
+    ).generate()
+
+
+def _two_sub_obs_data(tmp_path):
+    """The scaling obs data over two sub-experiments of 2 s, x1..x3 measured in the second.
+
+    The second sub-experiment starts from the first one's end state, which on the CasADi AD
+    path is an expression with every non-calibrated constant baked in.
+    """
+    with open(_SCALING_OBS) as f:
+        obs = json.load(f)
+    obs["protocol_info"]["sim_times"] = [[2.0, 2.0]]
+    for item in obs["data_items"]:
+        item["subexperiment_idx"] = 1 if item["operands"][0] in (
+            "scaling/x1", "scaling/x2", "scaling/x3") else 0
+    path = os.path.join(str(tmp_path), "scaling_two_sub_obs_data.json")
+    with open(path, "w") as f:
+        json.dump(obs, f)
+    return path
+
+
+def _scaling_engine(tmp_path, params, backend="myokit", casadi_model=None,
+                    obs_path=_SCALING_OBS, **kwargs):
+    """The inner ParamID of the five-decay scaling model, calibrating ``params``."""
+    params_path = os.path.join(str(tmp_path), f"{backend}_params_for_id.json")
+    write_params_for_id(params_path, {"version": 1, "params": params})
+    out_dir = os.path.join(str(tmp_path), f"out_{backend}")
+    os.makedirs(out_dir, exist_ok=True)
+    if backend == "myokit":
+        model_path = os.path.join(_TEST_INPUTS, "scaling_modifier.cellml")
+        model_type, solver_info = "cellml", {"solver": "CVODE_myokit"}
+    else:
+        model_path, model_type = casadi_model, "casadi_python"
+        solver_info = {"solver": "casadi_integrator", "method": "bdf", "max_step": 0.01,
+                       "max_num_steps": 100000}
+    outer = CVS0DParamID(
+        model_path=model_path, model_type=model_type, file_name_prefix="scaling",
+        params_for_id_path=params_path, param_id_obs_path=obs_path, sim_time=4.0,
+        pre_time=0.0, dt=0.01, solver_info=solver_info, DEBUG=True,
+        param_id_output_dir=out_dir, **kwargs)
+    engine = outer.param_id
+    engine.output_dir = out_dir
+    return engine
+
+
+@pytest.mark.integration
+def test_a_group_and_a_modifier_are_held_whole_in_every_simulation(tmp_path, monkeypatch):
+    engine = _scaling_engine(
+        tmp_path,
+        [
+            {"targets": ["scaling/k1", "scaling/k2"], "min": 0.05, "max": 2.0},
+            {"name": "mod", "modifies": ["scaling/k3", "scaling/k4"], "modifier": "scale",
+             "min": 0.2, "max": 5.0},
+            {"targets": ["scaling/k5"], "min": 0.05, "max": 2.0},
+        ],
+        param_id_method="CMA-ES",
+        optimiser_options={"num_calls_to_function": 6},
+    )
+    helper = engine.sim_helper
+    model, simulated = {}, []
+    real_set, real_run = helper.set_param_vals, helper.run
+
+    def set_param_vals(names, vals, *args, **kwargs):
+        for entry, value in zip(names, vals):
+            entry = entry if isinstance(entry, (list, tuple)) else [entry]
+            value = value if isinstance(value, (list, tuple, np.ndarray)) else [value] * len(entry)
+            model.update(zip(entry, value))
+        return real_set(names, vals, *args, **kwargs)
+
+    def run(*args, **kwargs):
+        simulated.append(dict(model))
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(helper, "set_param_vals", set_param_vals)
+    monkeypatch.setattr(helper, "run", run)
+
+    profile = ProfileLikelihood(engine, engine.param_id_info, str(tmp_path))
+    profile.set_best_param_vals([0.5, 1.0, 0.8])
+    for idx, value, expected in (
+        (0, 0.3, {"scaling/k1": 0.3, "scaling/k2": 0.3}),
+        (1, 2.0, {"scaling/k3": 2.0 * _SCALING_K[2], "scaling/k4": 2.0 * _SCALING_K[3]}),
+    ):
+        simulated.clear()
+        profile._optimize_with_fixed_parameter(idx, value)
+        assert len(simulated) > 3
+        for values in simulated:
+            for name, held in expected.items():
+                assert values[name] == pytest.approx(held, rel=1e-12)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("backend", ["myokit", "casadi"])
+def test_the_gradient_backends_see_each_held_value(backend, tmp_path, monkeypatch, request):
+    """Cost and gradient at every profile point match a re-simulation at the held value.
+
+    The calibration has already set up each backend over all entries (the CasADi graph, the
+    FSA entry -> member map); a profile point must not be answered from that setup with a
+    stale held value or with another entry's members. The reference is a second engine that
+    never ran AD (on casadi_python the numeric cost is not available once it has).
+    """
+    casadi_model = request.getfixturevalue("scaling_casadi_model") if backend == "casadi" \
+        else None
+    params = [{"targets": [f"scaling/k{i}"], "min": 0.05, "max": 2.0} for i in (1, 2, 3)]
+    obs_path = _two_sub_obs_data(tmp_path)
+    engine = _scaling_engine(tmp_path, params, backend=backend, casadi_model=casadi_model,
+                             obs_path=obs_path, param_id_method="sp_minimize", do_ad=True)
+    os.makedirs(tmp_path / "reference", exist_ok=True)
+    reference = _scaling_engine(tmp_path / "reference", params, backend=backend,
+                                casadi_model=casadi_model, obs_path=obs_path,
+                                param_id_method="sp_minimize")
+    best = np.array(_SCALING_K[:3])
+    engine.get_gradient(best)  # as the calibration's gradient-based fit did
+
+    held = {}
+    checks = []
+
+    def reference_cost(x):
+        return reference.get_cost_from_params(np.insert(x, 0, held["value"]))
+
+    def check_instead_of_fitting(self):
+        x = np.asarray(self.param_id_obj.param_init, dtype=float)
+        h = 1e-6 * x
+        fd = [(reference_cost(x + h[i] * e) - reference_cost(x - h[i] * e)) / (2 * h[i])
+              for i, e in enumerate(np.eye(len(x)))]
+        checks.append((self.param_id_obj.get_cost(x), reference_cost(x),
+                       self.param_id_obj.get_gradient(x), fd))
+        self.best_param_vals, self.best_cost = x, checks[-1][1]
+        self.init_gradient = self.best_gradient = None
+
+    monkeypatch.setattr(SciPyMinimizeOptimiser, "run", check_instead_of_fitting)
+    profile = ProfileLikelihood(engine, engine.param_id_info, str(tmp_path))
+    profile.set_best_param_vals(best)
+    for value in (0.3, 1.5):
+        held["value"] = value
+        profile._optimize_with_fixed_parameter(0, value)
+
+    assert len(checks) == 2
+    for cost, expected, gradient, fd in checks:
+        assert float(cost) == pytest.approx(expected, rel=1e-4)
+        np.testing.assert_allclose(np.ravel(gradient), fd, rtol=1e-3, atol=1e-8)
+
+
+@pytest.mark.integration
+def test_profile_likelihood_runs_on_an_emulator(base_user_inputs, resources_dir, tmp_path):
+    """The emulator is given the whole calibrated vector at every point, as in calibration."""
+    from test_emulator_solver_helper import _config, _write_bundle
+
+    config = _config(base_user_inputs, resources_dir, tmp_path, param_id_method="CMA-ES")
+    _write_bundle(config)
+    engine = CVS0DParamID.init_from_dict(config).param_id
+    assert engine.emulates_features
+    thetas = []
+    real_set_theta = engine.sim_helper.set_theta
+
+    def set_theta(theta):
+        thetas.append(np.array(theta, dtype=float))
+        return real_set_theta(theta)
+
+    engine.sim_helper.set_theta = set_theta
+    mins = np.asarray(engine.param_id_info["param_mins"], dtype=float)
+    maxs = np.asarray(engine.param_id_info["param_maxs"], dtype=float)
+    profile = ProfileLikelihood(
+        engine, engine.param_id_info, str(tmp_path / "pl"), num_points=3, range_factor=0.1,
+        optimiser_options={"num_calls_to_function": 8},
+    )
+    profile.set_best_param_vals(0.5 * (mins + maxs))
+    profile.run()
+
+    assert len(profile.profile_results) == 2
+    for result in profile.profile_results.values():
+        assert np.all(np.isfinite(result["costs"]))
+    assert len(thetas) > 2 * 3 and all(theta.shape == (2,) for theta in thetas)
 
 
 @pytest.mark.integration

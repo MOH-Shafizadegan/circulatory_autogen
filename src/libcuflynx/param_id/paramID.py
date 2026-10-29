@@ -1765,7 +1765,6 @@ class CVS0DParamID():
 
     def remove_params_by_idx(self, param_idxs_to_remove):
         """Drop parameters from the identification set by index."""
-        self.__set_and_save_param_names(idxs_to_ignore=param_idxs_to_remove)
         if self.mcmc_instead:
             mcmc_object.remove_params_by_idx(param_idxs_to_remove)
         else:
@@ -2460,15 +2459,48 @@ class ParamID():
                     f"(suffix={suffix!r}): {e}"
                 )
 
-    def run(self, param_init=None):
-        """Calibrate the parameters in ``param_id_info`` with ``param_id_method``.
+    def make_optimiser(self, cost_obj, param_id_info, param_norm_obj, output_dir,
+                       optimiser_options=None):
+        """The ``param_id_method`` optimiser over ``cost_obj``, configured as this run's.
 
         Args:
-            param_init: Optional starting point, one value per calibrated entry (theta for a
-                modifier entry). By default the optimisers that take a starting point start from
-                the model's parameter values; pass this to warm-start from elsewhere, e.g. a
-                neighbouring fit. The genetic algorithm and bayesian methods ignore it.
+            cost_obj: What the optimiser calibrates: this ParamID, or an object with the same
+                ``get_cost``, ``get_cost_from_params``, ``get_gradient``,
+                ``get_lnlikelihood_lnprior_from_params``, ``param_init`` and
+                ``set_best_param_vals`` over its own parameter vector (as profile likelihood's
+                held-entry cost does).
+            param_id_info: ``param_names``, ``param_mins`` and ``param_maxs`` of that vector.
+            param_norm_obj: Its ``Normalise_class``.
+            output_dir: Where the optimiser writes its history (None on ranks other than 0).
+            optimiser_options: Defaults to this run's ``optimiser_options``.
         """
+        args = (cost_obj, param_id_info, param_norm_obj, len(param_id_info["param_names"]),
+                output_dir)
+        kwargs = {'optimiser_options': (self.optimiser_options if optimiser_options is None
+                                        else optimiser_options),
+                  'DEBUG': self.DEBUG}
+        method = self.param_id_method
+        if method == 'bayesian':
+            return BayesianOptimiser(*args, **kwargs, acq_func=self.acq_func,
+                                     n_initial_points=self.n_initial_points,
+                                     random_state=self.random_state,
+                                     acq_func_kwargs=self.acq_func_kwargs)
+        if method == 'genetic_algorithm':
+            return GeneticAlgorithmOptimiser(*args, **kwargs)
+        if method in ['CMA-ES', 'CMAES', 'cmaes']:
+            return CMAESOptimiser(*args, **kwargs)
+        if method == 'sp_minimize':
+            return SciPyMinimizeOptimiser(*args, **kwargs, do_ad=self.do_ad)
+        if method == 'multi_start_sp_minimize':
+            # Multi-start L-BFGS-B: gradient descent from many scattered starts, so a
+            # multi-modal cost surface doesn't trap us in the basin of the initial params.
+            return MultiStartSciPyMinimizeOptimiser(*args, **kwargs, do_ad=self.do_ad,
+                                                    model_type=self.model_type)
+        print(f"param_id_method '{method}' is not implemented. Valid options: "
+              f"{list(PARAM_ID_METHODS.keys())}")
+        exit()
+
+    def run(self):
         comm = MPI.COMM_WORLD
         rank = comm.Get_rank()
         num_procs = comm.Get_size()
@@ -2508,18 +2540,10 @@ class ParamID():
         # value, so it starts at the operation's identity (scale -> 1.0), where every target
         # sits at its baseline; a member's raw default there (~1e-8 for a compliance) would be
         # taken as a scale factor.
-        if param_init is not None:
-            param_init = np.array(param_init, dtype=float).ravel()
-            if param_init.size != self.num_params:
-                raise ValueError(
-                    f'param_init has {param_init.size} value(s) but {self.num_params} '
-                    f'parameter(s) are being calibrated.')
-            self.param_init = param_init
-        else:
-            self.param_init = apply_modifier_identity_nominals(
-                self.param_id_info,
-                np.array([v[0] if isinstance(v, (list, tuple)) else v for v in raw_init],
-                         dtype=float))
+        self.param_init = apply_modifier_identity_nominals(
+            self.param_id_info,
+            np.array([v[0] if isinstance(v, (list, tuple)) else v for v in raw_init],
+                     dtype=float))
 
         # The param_modifiers.json written at parse time has baselines: None -- no simulation
         # helper existed yet. Re-save now they are resolved; without baselines the recorded
@@ -2528,80 +2552,14 @@ class ParamID():
 
         # C_T min and max was 1e-9 and 1e-5 before
 
-        # Use optimiser classes for all methods
-        if self.param_id_method == 'bayesian':
-            # Use BayesianOptimiser class
-            optimiser = BayesianOptimiser(
-                self, self.param_id_info, self.param_norm_obj,
-                self.num_params, self.output_dir,
-                optimiser_options=self.optimiser_options,
-                DEBUG=self.DEBUG,
-                acq_func=self.acq_func,
-                n_initial_points=self.n_initial_points,
-                random_state=self.random_state,
-                acq_func_kwargs=self.acq_func_kwargs
-            )
-            optimiser.run()
-            self.best_param_vals = optimiser.best_param_vals
-            self.best_cost = optimiser.best_cost
-
-        elif self.param_id_method == 'genetic_algorithm':
-            # Use GeneticAlgorithmOptimiser class
-            optimiser = GeneticAlgorithmOptimiser(
-                self, self.param_id_info, self.param_norm_obj,
-                self.num_params, self.output_dir,
-                optimiser_options=self.optimiser_options,
-                DEBUG=self.DEBUG
-            )
-            optimiser.run()
-            self.best_param_vals = optimiser.best_param_vals
-            self.best_cost = optimiser.best_cost
-
-        elif self.param_id_method in ['CMA-ES', 'CMAES', 'cmaes']:
-            # Use CMAESOptimiser for CMA-ES optimization
-            optimiser = CMAESOptimiser(
-                self, self.param_id_info, self.param_norm_obj,
-                self.num_params, self.output_dir,
-                optimiser_options=self.optimiser_options,
-                DEBUG=self.DEBUG
-            )
-            optimiser.run()
-            self.best_param_vals = optimiser.best_param_vals
-            self.best_cost = optimiser.best_cost
-
-        elif self.param_id_method == 'sp_minimize':
-            # Use SciPyMinimizeOptimiser for gradient-based optimization
-            optimiser = SciPyMinimizeOptimiser(
-                self, self.param_id_info, self.param_norm_obj,
-                self.num_params, self.output_dir,
-                optimiser_options=self.optimiser_options,
-                do_ad=self.do_ad, DEBUG=self.DEBUG
-            )
-            optimiser.run()
-            self.best_param_vals = optimiser.best_param_vals
-            self.best_cost = optimiser.best_cost
+        optimiser = self.make_optimiser(self, self.param_id_info, self.param_norm_obj,
+                                        self.output_dir)
+        optimiser.run()
+        self.best_param_vals = optimiser.best_param_vals
+        self.best_cost = optimiser.best_cost
+        if self.param_id_method in ('sp_minimize', 'multi_start_sp_minimize'):
             self.init_gradient = optimiser.init_gradient
             self.best_gradient = optimiser.best_gradient
-
-        elif self.param_id_method == 'multi_start_sp_minimize':
-            # Multi-start L-BFGS-B: gradient descent from many scattered starts, so a
-            # multi-modal cost surface doesn't trap us in the basin of the initial params.
-            optimiser = MultiStartSciPyMinimizeOptimiser(
-                self, self.param_id_info, self.param_norm_obj,
-                self.num_params, self.output_dir,
-                optimiser_options=self.optimiser_options,
-                do_ad=self.do_ad, model_type=self.model_type, DEBUG=self.DEBUG
-            )
-            optimiser.run()
-            self.best_param_vals = optimiser.best_param_vals
-            self.best_cost = optimiser.best_cost
-            self.init_gradient = optimiser.init_gradient
-            self.best_gradient = optimiser.best_gradient
-
-        else:
-            print(f"param_id_method '{self.param_id_method}' is not implemented. Valid options: "
-                  f"{list(PARAM_ID_METHODS.keys())}")
-            exit()
 
         if rank == 0:
             print('')

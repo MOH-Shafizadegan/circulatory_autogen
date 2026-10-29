@@ -32,7 +32,7 @@ The resulting profiles reveal:
 
 **Costs.** As for Laplace, an observable whose cost is not `@is_MLE` but has an MLE form is switched to that form for the profile (the best fit it is measured from and every re-fit), with a warning naming the observable: `MSE` becomes `gaussian_MLE`, which has the same minimum. Your calibration's own costs are put back when the profile finishes. A cost with no MLE form (such as `AE`, or a custom cost without `@is_MLE`) is an error naming the observable.
 
-Each profile point is a full calibration, so the run costs about `num_points x num_parameters` calibrations; use `optimiser_options` to give the profile points a smaller budget. Profile likelihood is not available with `use_emulator`.
+Each profile point is a full calibration, so the run costs about `num_points x num_parameters` calibrations; use `optimiser_options` to give the profile points a smaller budget. With `use_emulator` the re-fits run on the emulator.
 
 ## IA in Circulatory_Autogen
 
@@ -62,7 +62,7 @@ ia_options:
     num_calls_to_function: 200
 ```
 
-Results go to `<param_id_output_dir>/profile_likelihood/`: one JSON and one PDF per parameter, `profile_likelihood_plots.pdf` with every profile, and `summary.json`.
+Results go to `<param_id_output_dir>/profile_likelihood/`: one JSON and one PDF per parameter, `profile_likelihood_plots.pdf` with every profile, and `summary.json`. The re-fits' optimiser history goes to `profile_likelihood/optimiser/`.
 
 ## Running identifiability analysis
 
