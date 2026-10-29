@@ -2386,6 +2386,28 @@ class ParamID():
             if self.param_id_info.get("param_unbounded") is not None:
                 self.param_id_info["param_unbounded"] = np.delete(
                     self.param_id_info["param_unbounded"], param_idxs_to_remove)
+            # The other per-entry lists, so every positional list still describes the same
+            # entries.
+            for key in ("param_names_for_plotting", "param_names_for_gen", "param_entry_names",
+                        "param_labels"):
+                values = self.param_id_info.get(key)
+                if values is None:
+                    continue
+                kept = [v for II, v in enumerate(values) if II not in param_idxs_to_remove]
+                self.param_id_info[key] = np.array(kept) if isinstance(values, np.ndarray) \
+                    else kept
+            # A modifier record's `index` is its slot in the vector: drop the removed ones and
+            # shift the rest down, or expand_modifier_param_vals would apply a modifier to
+            # whichever entry moved into its old slot.
+            if self.param_id_info.get("modifiers"):
+                removed = sorted(set(int(II) for II in param_idxs_to_remove))
+                kept_modifiers = []
+                for mod in self.param_id_info["modifiers"]:
+                    if mod["index"] in removed:
+                        continue
+                    kept_modifiers.append(
+                        {**mod, "index": mod["index"] - sum(II < mod["index"] for II in removed)})
+                self.param_id_info["modifiers"] = kept_modifiers
             self.param_norm_obj = Normalise_class(self.param_id_info["param_mins"], self.param_id_info["param_maxs"])
             self.param_init = None
 
@@ -2438,7 +2460,15 @@ class ParamID():
                     f"(suffix={suffix!r}): {e}"
                 )
 
-    def run(self):
+    def run(self, param_init=None):
+        """Calibrate the parameters in ``param_id_info`` with ``param_id_method``.
+
+        Args:
+            param_init: Optional starting point, one value per calibrated entry (theta for a
+                modifier entry). By default the optimisers that take a starting point start from
+                the model's parameter values; pass this to warm-start from elsewhere, e.g. a
+                neighbouring fit. The genetic algorithm and bayesian methods ignore it.
+        """
         comm = MPI.COMM_WORLD
         rank = comm.Get_rank()
         num_procs = comm.Get_size()
@@ -2478,10 +2508,18 @@ class ParamID():
         # value, so it starts at the operation's identity (scale -> 1.0), where every target
         # sits at its baseline; a member's raw default there (~1e-8 for a compliance) would be
         # taken as a scale factor.
-        self.param_init = apply_modifier_identity_nominals(
-            self.param_id_info,
-            np.array([v[0] if isinstance(v, (list, tuple)) else v for v in raw_init],
-                     dtype=float))
+        if param_init is not None:
+            param_init = np.array(param_init, dtype=float).ravel()
+            if param_init.size != self.num_params:
+                raise ValueError(
+                    f'param_init has {param_init.size} value(s) but {self.num_params} '
+                    f'parameter(s) are being calibrated.')
+            self.param_init = param_init
+        else:
+            self.param_init = apply_modifier_identity_nominals(
+                self.param_id_info,
+                np.array([v[0] if isinstance(v, (list, tuple)) else v for v in raw_init],
+                         dtype=float))
 
         # The param_modifiers.json written at parse time has baselines: None -- no simulation
         # helper existed yet. Re-save now they are resolved; without baselines the recorded

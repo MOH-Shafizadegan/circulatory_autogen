@@ -15,16 +15,22 @@ The Laplace approximation makes an approximation of your parameter posterior dis
 
 ### Profile Likelihood Analysis
 
-Profile likelihood analysis assesses parameter identifiability by systematically varying each parameter around its best-fit value while re-optimizing all other parameters. This method:
+Profile likelihood analysis assesses parameter identifiability by holding each parameter at a sweep of values around its best fit and re-calibrating all the other parameters at each one. For each parameter it:
 
-1. Fixes one parameter at values around its best fit
-2. Re-optimizes all other parameters for each fixed value
-3. Records the minimum cost at each fixed parameter value
-4. Generates cost vs parameter value plots for each parameter
+1. holds the parameter at `num_points` values, within `range_factor` of its `[min, max]` range either side of the best fit (clipped to `[min, max]`);
+2. re-calibrates the other parameters at each held value with your `param_id_method`, starting from the optimum at the neighbouring held value (the sweep runs outwards from the best fit; the genetic algorithm and bayesian methods draw their own starting points instead);
+3. records the cost at each re-calibrated optimum, and plots cost against the held value.
+
+A grouped params_for_id entry (several `targets` sharing one value) is held as a whole, and a modifier entry is held at its theta and applied through its modifier function, as in calibration.
 
 The resulting profiles reveal:
-- **Identifiable parameters**: Show clear minima with steep cost increases
-- **Non-identifiable parameters**: Flat profiles indicating multiple parameter combinations produce similar costs
+
+- **Identifiable parameters**: clear minima with steep cost increases.
+- **Non-identifiable parameters**: flat profiles, where other parameter combinations compensate.
+
+**The 95% interval.** When every observable uses an `@is_MLE` cost (such as `gaussian_MLE`), the cost is a scaled negative log-likelihood: `-ln L = cost * N`, where `N` is the number of weighted observable values (the same relation MCMC uses). The 95% profile-likelihood interval for one parameter is where `-ln L` stays within `chi2(0.95, 1 dof) / 2 = 1.92` of its minimum, so in cost units the threshold is `min cost + 1.92 / N`. It is drawn on the plots and written to each parameter's JSON as `ci_95` (`lower`/`upper` are `null` where the sweep never rises above the threshold, i.e. the interval is open on that side within the sweep). For costs that are not likelihoods no interval is given.
+
+Each profile point is a full calibration, so the run costs about `num_points x num_parameters` calibrations; use `optimiser_options` to give the profile points a smaller budget. Profile likelihood is not available with `use_emulator`.
 
 ## IA in Circulatory_Autogen
 
@@ -38,19 +44,23 @@ do_ia: True
 ```
 
 and add a specific `ia_options` block to your `user_inputs.yaml` configuration file:
-#### For laplace approximation
+#### For the Laplace approximation
 ```
 ia_options:
     method: 'Laplace'
 ```
 
-#### For profile likelihood:
+#### For profile likelihood
 ```
 ia_options:
   method: 'profile_likelihood'
-  num_points: 50              # Number of points in parameter sweep
-  range_factor: 0.2           # Range around best fit (fraction of parameter range)
+  num_points: 50              # held values per parameter (>= 2)
+  range_factor: 0.2           # sweep half-width, as a fraction of the parameter's [min, max] range
+  optimiser_options:          # optional: merged over optimiser_options for each re-calibration
+    num_calls_to_function: 200
 ```
+
+Results go to `<param_id_output_dir>/profile_likelihood/`: one JSON and one PDF per parameter, `profile_likelihood_plots.pdf` with every profile, and `summary.json`.
 
 ## Running identifiability analysis
 
@@ -68,7 +78,7 @@ Or run it separately after parameter identification completes:
 
 ## Expected outcome
 
-Laplace approximation results are saved in your `param_id_output` directory alongside parameter identification outputs.
+Laplace approximation results are saved in your `param_id_output` directory alongside parameter identification outputs; profile likelihood results in its `profile_likelihood/` subdirectory.
 
 ## Troubleshooting
 

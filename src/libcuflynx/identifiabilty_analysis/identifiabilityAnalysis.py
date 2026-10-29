@@ -48,14 +48,15 @@ import math
 # from scipy.optimize import curve_fit
 import warnings
 warnings.filterwarnings( "ignore", module = "matplotlib/..*" )
-from .ProfileLikelihood import ProfileLikelihood  
+from .ProfileLikelihood import ProfileLikelihood, profile_likelihood_options
 
 class IdentifiabilityAnalysis():
     """Identifiability analysis for a 0D model.
 
     Quantifies how well calibrated parameters can be identified around a best
     fit, by the Laplace approximation (a covariance matrix from the Hessian of
-    the cost) or by profile likelihood (see ``ProfileLikelihood``). Requires an existing inner ``param_id`` object (typically
+    the cost) or by profile likelihood (see ``ProfileLikelihood``). Requires an
+    existing inner ``param_id`` object (typically
     ``CVS0DParamID.param_id``); build conveniently with
     [`init_from_dict`][identifiabilty_analysis.identifiabilityAnalysis.IdentifiabilityAnalysis.init_from_dict].
 
@@ -140,39 +141,28 @@ class IdentifiabilityAnalysis():
                 self.run_laplace_approximation(ia_options)
         return
 
-    def run_profile_likelihood(self, ia_options):  
-            """  
-            Run profile likelihood analysis.  
-            
-            Args:  
-                ia_options: Dictionary containing profile likelihood options:  
-                    - num_points: Number of points in parameter sweep (default: 50)  
-                    - range_factor: Fraction of parameter range to sweep (default: 0.2)  
-                    - optimiser_options: Options for the optimizer  
-            """  
-            if self.rank == 0:  
-                print("Running Profile Likelihood Analysis")  
-                
-            # Extract options  
-            num_points = ia_options.get('num_points', 50)  
-            range_factor = ia_options.get('range_factor', 0.2)  
-            optimiser_options = ia_options.get('optimiser_options', {})  
-            
-            # Create and run profile likelihood analysis  
-            profile_likelihood = ProfileLikelihood(  
-                param_id=self.param_id,  
-                param_id_info=self.param_id.param_id_info,  
-                output_dir=self.param_id_output_dir,  
-                num_points=num_points,  
-                range_factor=range_factor,  
-                optimiser_options=optimiser_options  
-            )  
-            
-            profile_likelihood.set_best_param_vals(self.best_param_vals)  
-            profile_likelihood._run()  
-            
-            if self.rank == 0:  
-                print("Profile likelihood analysis complete")
+    def run_profile_likelihood(self, ia_options):
+        """Run profile likelihood analysis (see ``ProfileLikelihood``). Collective over ranks.
+
+        Args:
+            ia_options: Options dict, read by ``profile_likelihood_options``:
+                ``num_points`` (points per parameter sweep), ``range_factor`` (sweep half-width
+                as a fraction of the parameter's [min, max] range) and ``optimiser_options``
+                (merged over the calibration's optimiser options for the re-calibrations).
+        """
+        if self.rank == 0:
+            print("Running Profile Likelihood Analysis")
+        options = profile_likelihood_options(ia_options)
+        profile_likelihood = ProfileLikelihood(
+            param_id=self.param_id,
+            param_id_info=self.param_id.param_id_info,
+            output_dir=self.param_id_output_dir,
+            **options,
+        )
+        profile_likelihood.set_best_param_vals(self.best_param_vals)
+        profile_likelihood.run()
+        if self.rank == 0:
+            print("Profile likelihood analysis complete")
 
     # Above this condition number the precision (Hessian) matrix cannot be inverted to a
     # trustworthy covariance -- the result would be massively inflated, meaningless uncertainties
