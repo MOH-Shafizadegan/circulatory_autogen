@@ -9,9 +9,10 @@ import tempfile
   
 import pytest  
 import numpy as np  
-from mpi4py import MPI  
   
 from libcuflynx.identifiabilty_analysis.ProfileLikelihood import ProfileLikelihood  
+from libcuflynx.utilities.mpi_utils import get_MPI
+from _params_for_id import write_params_for_id
 from libcuflynx.scripts.param_id_run_script import run_param_id  
 from libcuflynx.scripts.script_generate_with_new_architecture import generate_with_new_architecture  
   
@@ -19,7 +20,8 @@ from libcuflynx.scripts.script_generate_with_new_architecture import generate_wi
 @pytest.fixture(scope="function")  
 def mpi_comm():  
     """Fixture that provides MPI communicator."""  
-    comm = MPI.COMM_WORLD  
+    # mpi4py is optional: get_MPI is a one-rank stand-in without it.
+    comm = get_MPI().COMM_WORLD
     return comm  
   
   
@@ -110,13 +112,12 @@ def test_profile_likelihood_3compartment_succeeds(
         temp_output_dir, "3compartment_profile_likelihood_params_for_id.json"
     )
     if rank == 0:
-        with open(params_for_id_path, "w") as f:
-            json.dump({"version": 1, "params": [
-                {"targets": ["aortic_root/C"], "min": 1e-9, "max": 5e-8,
-                 "param_type": "const", "name_for_plotting": "C_{ao}"},
-                {"targets": ["global/q_lv_init"], "min": 200e-6, "max": 1500e-6,
-                 "param_type": "const", "name_for_plotting": "q_{sbv}"},
-            ]}, f)
+        write_params_for_id(params_for_id_path, {"version": 1, "params": [
+            {"targets": ["aortic_root/C"], "min": 1e-9, "max": 5e-8,
+             "param_type": "const", "name_for_plotting": "C_{ao}"},
+            {"targets": ["global/q_lv_init"], "min": 200e-6, "max": 1500e-6,
+             "param_type": "const", "name_for_plotting": "q_{sbv}"},
+        ]})
     mpi_comm.Barrier()
 
     num_points = 3
