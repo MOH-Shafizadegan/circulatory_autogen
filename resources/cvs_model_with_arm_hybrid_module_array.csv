@@ -46,3 +46,4 @@ venous_ivc,vp_simple_novisco,Min_junction,venous_trunk_C_T venous_leg_L_T venous
 venous_svc,vp_simple_novisco,Min_junction,venous_head_L_T venous_head_R_T venous_arm_L_T venous_arm_R_T,heart
 par,vp,arterial_simple,heart,pvn
 pvn,vp,arterial_simple,par,heart
+FV1D_solver,nn,FV1D_solver,,

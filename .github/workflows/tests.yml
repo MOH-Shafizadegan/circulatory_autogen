@@ -200,9 +200,6 @@ jobs:
 
     - uses: ./.github/actions/install-system-deps
 
-    # remove when libcellml 0.7.2 is on PyPI
-    - uses: ./.github/actions/libcellml-from-source
-
     - name: Run param_id and sensitivity analysis tests with MPI
       run: |
         mpiexec -n 2 python -m pytest tests/test_param_id.py tests/test_sensitivity_analysis.py \
@@ -246,9 +243,6 @@ jobs:
           -e ".[dev,uq,emulation]"
 
     - uses: ./.github/actions/install-system-deps
-
-    # remove when libcellml 0.7.2 is on PyPI
-    - uses: ./.github/actions/libcellml-from-source
 
     - name: Run the emulator UQ tests on two ranks
       timeout-minutes: 30
@@ -332,9 +326,6 @@ jobs:
           -e ".[dev,uq,emulation]"
 
     - uses: ./.github/actions/install-system-deps
-
-    # remove when libcellml 0.7.2 is on PyPI
-    - uses: ./.github/actions/libcellml-from-source
 
     # Seconds, and the only place the pyMC-sampling half of these runs: without [uq] they skip,
     # which is exactly how the backend's live-chain checkpointing could regress unnoticed.
@@ -420,9 +411,6 @@ jobs:
 
     - uses: ./.github/actions/install-system-deps
 
-    # remove when libcellml 0.7.2 is on PyPI
-    - uses: ./.github/actions/libcellml-from-source
-
     - name: Run the full-scale model calibration with MPI
       run: |
         mpiexec -n 2 python -m pytest tests/test_param_id.py -m full_scale_model -v --with-mpi \
@@ -455,9 +443,6 @@ jobs:
 
     - uses: ./.github/actions/install-system-deps
 
-    # remove when libcellml 0.7.2 is on PyPI
-    - uses: ./.github/actions/libcellml-from-source
-
     - name: Run param_id and sensitivity analysis tests in serial mode
       run: |
         python -m pytest tests/test_param_id.py tests/test_sensitivity_analysis.py \
@@ -486,9 +471,6 @@ jobs:
 
     - uses: ./.github/actions/install-system-deps
 
-    # remove when libcellml 0.7.2 is on PyPI
-    - uses: ./.github/actions/libcellml-from-source
-
     - name: Run the full-scale model calibration in serial mode
       run: |
         python -m pytest tests/test_param_id.py -m full_scale_model -v --with-mpi --tb=short \
@@ -503,18 +485,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Four shards per version, so each job stays under 10 minutes on a slow runner (runners
+        # Five shards per version, so each job stays under 10 minutes on a slow runner (runners
         # differ by up to 1.5x on the same commit). tests/ci_shards.json defines the groups,
         # `rest` is every test no group names (so a new test file needs no entry there), and
-        # tests/test_ci_shards.py checks that this list covers every group of the suite.
-        shard: [rest, autogeneration, module-arrays, simulation]
+        # tests/test_ci_shards.py checks that this list covers every group of the suite. `cpp`
+        # holds the C++ generator, external-coupling and batched C solver tests (~5 min on CI).
+        shard: [rest, autogeneration, module-arrays, simulation, cpp]
         # 3.9 is gone: numpy, scipy, matplotlib, scikit-learn and numdifftools all declare
         # requires-python >=3.10, so a 3.9 job either resolved older pins than any real user
         # gets or failed to resolve at all -- testing a configuration the dependency tree no
         # longer supports (#459).
         #
         # 3.12 is the top because that is where the wheels stop being universal, not because of
-        # requires-python: libcellml 0.6.3 (what `<0.7.0` resolves to) has wheels to cp313, but
+        # requires-python: libcellml 0.7.2 has abi3 wheels for every CPython from 3.10, but
         # autoemulate declares `<3.13`, so the [emulation] extra cannot go past 3.12. If this
         # ever reaches 3.13, the emulator jobs have to stay behind -- see the note on test-uq,
         # and tests/test_python_matrix.py, which asserts it rather than leaving it to be
@@ -567,9 +550,6 @@ jobs:
         pip install -e ".[dev]"
     
     - uses: ./.github/actions/install-system-deps
-
-    # remove when libcellml 0.7.2 is on PyPI
-    - uses: ./.github/actions/libcellml-from-source
     
     - name: Run tests (Myokit-first, skip OpenCOR-only)
       id: pytest
@@ -676,9 +656,6 @@ jobs:
         pip install -e ".[dev]"
     
     - uses: ./.github/actions/install-system-deps
-
-    # remove when libcellml 0.7.2 is on PyPI
-    - uses: ./.github/actions/libcellml-from-source
     
     - name: Download and setup OpenCOR
       run: |

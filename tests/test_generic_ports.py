@@ -196,7 +196,7 @@ def test_a_1d_vessel_couples_to_the_heart_port_it_is_connected_to(tmp_path):
               'cpp_generated_models_dir': str(tmp_path / 'cpp'), 'cpp_1d_model_config_path': None,
               'DEBUG': False}
     assert generate_with_new_architecture(False, config)
-    model0d = (tmp_path / 'cpp' / 'model0d.cc').read_text()
+    model0d = (tmp_path / 'cpp' / 'model0d_core.c').read_text()
     assert re.search(r'\{"u_root_heart", "J_per_m3", "parameters", EXTERNAL\}', model0d)
 
 

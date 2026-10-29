@@ -225,13 +225,13 @@ _EXTRA_CONSUMERS = {
 
 # Solvers with no Python backend at all, so the factory has nothing to dispatch to. cpp models are
 # never run through a SimulationHelper: solver_info is baked into the emitted C++ by the cpp branch
-# of script_generate_with_new_architecture, which hands the values to CVSCppGenerator. Those two
+# of script_generate_with_new_architecture, which hands the values to the C++ generator (generators/cpp). Those two
 # files are therefore the real consumer, and the fields are checked against them exactly as a
 # helper module would be -- this is a different consumer, not an exemption.
 _GENERATED_CODE_CONSUMERS = {
     solver: ['libcuflynx/scripts/script_generate_with_new_architecture.py',
-             'libcuflynx/generators/CVSCppGenerator.py']
-    for solver in ('CVODE', 'RK4', 'PETSC')
+             'libcuflynx/generators/cpp/generator.py']
+    for solver in SOLVER_SCHEMA['solvers_by_model_type']['cpp']
 }
 
 
@@ -895,7 +895,7 @@ def test_cellml_solver_accepts_maximum_step_keys():
 
 def test_cpp_rk4_accepts_maximum_number_of_steps():
     """MaximumNumberOfSteps is the one integrator key the cpp path really forwards: the generate
-    script reads it and CVSCppGenerator emits it as CVODE's mxsteps."""
+    script reads it and the C++ generator emits it as CVODE's mxsteps."""
     validate_solver_info('RK4', {
         'solver': 'RK4',
         'method': 'RK4',
@@ -904,7 +904,7 @@ def test_cpp_rk4_accepts_maximum_number_of_steps():
     })
 
 
-@pytest.mark.parametrize('solver', ['CVODE', 'RK4', 'PETSC'])
+@pytest.mark.parametrize('solver', SOLVER_SCHEMA['solvers_by_model_type']['cpp'])
 def test_cpp_solvers_reject_the_setting_the_generated_code_never_reads(solver):
     """The generated C++ integrates at the fixed dt_solver, so there is no maximum-step-size knob
     for MaximumStep to control. Advertising it made CUFLynx draw a dead control (issue #330)."""
@@ -912,7 +912,7 @@ def test_cpp_solvers_reject_the_setting_the_generated_code_never_reads(solver):
         validate_solver_info(solver, {'solver': solver, 'MaximumStep': 0.001})
 
 
-@pytest.mark.parametrize('solver', ['CVODE', 'RK4', 'PETSC'])
+@pytest.mark.parametrize('solver', SOLVER_SCHEMA['solvers_by_model_type']['cpp'])
 def test_cpp_solvers_accept_tolerances_now_that_the_generator_emits_them(solver):
     """rtol/atol were removed in #330 because the emitted C++ hardcoded its tolerances; #398
     wired them through, so they are a real setting again."""
@@ -1470,7 +1470,7 @@ def test_the_parser_refuses_a_removed_form(base_user_inputs, tmp_path):
     ('CVODE_myokit', 'MaximumNumberOfSteps', 'MaximumStep'),
     ('CVODE', 'MaximumStep', 'dt_solver'),
     ('RK4', 'MaximumStep', 'dt_solver'),
-    ('PETSC', 'MaximumStep', 'dt_solver'),
+    ('Heun', 'MaximumStep', 'dt_solver'),
 ])
 def test_a_key_of_another_solver_is_refused_with_a_hint_and_the_solvers_fields(
         solver, key, hint):
@@ -1497,8 +1497,9 @@ def test_the_parser_refuses_a_key_of_another_solver(capsys):
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize('solver', ['CVODE', 'RK4', 'PETSC'])
+@pytest.mark.parametrize('solver', ['CVODE', 'RK4', 'explEul', 'Heun', 'midpoint'])
 def test_a_cpp_config_with_dt_solver_parses(solver, tmp_path):
+    """Every solver the C++ generator emits passes validation, with itself as the method."""
     parsed = YamlFileParser().parse_user_inputs_file({
         'file_prefix': '3compartment',
         'input_param_file': '3compartment_parameters.json',
@@ -1508,7 +1509,30 @@ def test_a_cpp_config_with_dt_solver_parses(solver, tmp_path):
         'generated_models_dir': str(tmp_path),
     }, obs_path_needed=False, do_generation_with_fit_parameters=False)
     assert parsed['solver_info']['dt_solver'] == 1e-4
+    assert parsed['solver_info']['solver'] == solver
+    assert parsed['solver_info']['method'] == solver
     assert 'MaximumStep' not in parsed['solver_info']
+
+
+@pytest.mark.unit
+def test_a_cpp_config_with_petsc_is_refused_at_validation(tmp_path, capsys):
+    """The C++ generator has no PETSC solver, so validation refuses it rather than generation."""
+    with pytest.raises(SystemExit):
+        YamlFileParser().parse_user_inputs_file({
+            'file_prefix': '3compartment',
+            'input_param_file': '3compartment_parameters.json',
+            'model_type': 'cpp',
+            'solver': 'PETSC',
+            'solver_info': {'dt_solver': 1e-4},
+            'generated_models_dir': str(tmp_path),
+        }, obs_path_needed=False, do_generation_with_fit_parameters=False)
+    assert 'Invalid solver: PETSC' in capsys.readouterr().out
+
+
+@pytest.mark.unit
+def test_the_cpp_solvers_validated_are_the_ones_the_generator_emits():
+    from libcuflynx.generators.cpp.generator import SUPPORTED_SOLVERS
+    assert tuple(SOLVER_SCHEMA['solvers_by_model_type']['cpp']) == SUPPORTED_SOLVERS
 
 
 @pytest.mark.unit

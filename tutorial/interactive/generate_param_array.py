@@ -27,7 +27,7 @@ def generate_param_array(inp_data_dict=None):
     from libcuflynx.parsers.ModelParsers import CSV0DModelParser
     from libcuflynx.utilities.config_schemas import load_module_config, read_module_array_csv
     from libcuflynx.generators.CVSCellMLGenerator import CVS0DCellMLGenerator
-    from libcuflynx.generators.CVSCppGenerator import CVS0DCppGenerator
+    from libcuflynx.generators.cpp.generator import CVS0DCppGenerator
     from libcuflynx.parsers.PrimitiveParsers import YamlFileParser
     from libcuflynx.parsers.PrimitiveParsers import CSVFileParser
     # --- LAZY LOADING END ---

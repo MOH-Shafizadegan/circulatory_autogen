@@ -5,6 +5,99 @@ next release; add to that section as you land a change.
 
 ## Unreleased
 
+### Added — `BE_batched_c`: generated C, one block of states at a time, on several threads
+
+A CellML solver for models made of many weakly connected parts, such as a module array of cells
+(#573). `get_simulation_helper(..., solver='BE_batched_c')` takes the same CellML file and protocols
+as `CVODE_myokit`.
+
+- **When to choose it.** `CVODE_myokit` stays the general-purpose default. `BE_batched_c` and
+  `CVODES_batched_c` are good when you have many perturbations through time, because CVODE would keep
+  stopping and restarting its adaptive time steps. They are opt-in: they run only when named in the config.
+  The solver section of `tutorial/docs/parameter-identification.md` says so.
+- **Blocks.** `generators/kernel_ir.py` reads libCellML's analysis into a language-neutral form and
+  splits the states into blocks that do not depend on one another. Blocks with the same equations
+  share one kernel, so 64 identical cells compile one kernel.
+- **Exact Jacobians.** Each kernel's Jacobian is made by forward-mode differentiation of the
+  equations. Only its structurally non-zero entries are written.
+- **C.** `generators/cpp/batched.py` writes the kernels as C next to libCellML's own C (as
+  `model_type: cpp` writes it, which gives initial values and outputs), renders the runtime from
+  `templates/batched_*.j2` and builds it with CMake. A built model is cached under a digest of its
+  CellML files, so later helpers load it in milliseconds.
+- **Integrators.** Each block gets its own adaptive, L-stable one-step method, chosen by
+  `solver_info` `method`:
+  - `backward_euler`, the default;
+  - `trbdf2`, second order, which is far more accurate at the same tolerance and usually faster.
+
+  Both use modified Newton, with the Jacobian and LU factors kept across steps. The step size changes only
+  when the error control allows more than 20% growth (or asks for any shrink), so the factors serve several
+  steps: 1.10-1.14x faster on AdaptOrDeity's colonies at the same error.
+- **Inputs that change at every call.** `bk_set_stop_at_outputs` (`BatchedSimulation.set_stop_at_outputs`, off
+  by default) ends steps on each run's last output time; a block whose inputs changed there restarts softly,
+  keeping its step size, Jacobian and LU factors (never from an interpolated state). With an input changed every
+  0.1 s, as a game's macro step does, that is 4.3-4.6x faster; with inputs that rarely change, 0.93-1.02x, hence
+  off. `CVODES_batched_c` accepts the call and ignores it.
+- **Threads and restarts.** OpenMP runs over the blocks, and results are the same for any number
+  of threads. A block whose inputs did not change between sub-experiments keeps its steps.
+- **Protocol traces.** A `params_to_change` entry naming a trace drives that constant along it, as on
+  `CVODE_myokit`: piecewise linear on the model's clock, held at its ends. Steps end on the trace's
+  breakpoints, and the kernels compute their computed constants, so everything that depends on the
+  traced constant follows it. SN_simple's protocol agrees with `CVODE_myokit` within 5e-4 of each
+  variable's range, 20x faster.
+- **Instances and outputs.** `bk_instance_*` steps copies of the model from the caller's own threads
+  (AdaptOrDeity's cells); `outputs` computes a few algebraic variables alone after each step.
+- **Limits.**
+  - It is meant for moderate tolerances (default `rtol` 1e-4).
+  - Its LU is dense, so a single block of hundreds of states is slow.
+  - It does not take models with algebraic loops or external variables.
+  - Excitable models want a `MaximumStep` or a tighter `rtol`: at `rtol` 1e-6 and no step cap, an action
+    potential in SN_simple lands 0.25 ms late (1.3 mV on its upstroke); with `MaximumStep` 1e-3, 0.09 mV.
+  - It has no sensitivities.
+- **user_inputs.** `solver: BE_batched_c` takes `method` `backward_euler` (the default) or `trbdf2`; each CellML
+  solver's methods are checked against its own list, not `CVODE_myokit`'s.
+- **First step after a restart.** Hairer, Norsett and Wanner's starting step, from weighted RMS norms over the
+  block's states and a second-derivative estimate, at least 64 ulps of t, so a state restarting at zero (weight
+  1/atol) no longer forces a step too small for t + h to differ from t (late restarts failed as "step too small").
+
+### Added — `CVODES_batched_c`: one CVODES per block, on the same generated C
+
+`get_simulation_helper(..., solver='CVODES_batched_c')` builds `BE_batched_c`'s kernels, blocks, traces and
+outputs with a different runtime (`templates/batched_cvodes_runtime.c.j2`, which extends `batched_runtime.c.j2`).
+Each block gets its own CVODES: BDF with Newton, a dense LU and the exact Jacobian (CVODES's difference
+quotients with `jacobian: finite_difference`).
+
+- **Threads.** Blocks share nothing, so OpenMP runs over them with results that are the same for any number
+  of threads.
+- **Restarts.** A block is reinitialised (`CVodeReInit`) only when its inputs, its states, a trace or its time
+  origin change. A trace's breakpoints are CVODES stop times.
+- **Swapping solvers.** The library exports every `bk_*` function of `BE_batched_c`, plus
+  `bk_block_cvodes_flag`, so a program that steps `bk_instance_*` copies can swap one library for the other.
+  The one difference is `bk_instance_copy`: a copy starts CVODES afresh from the copied states, so it
+  follows its original to the tolerance rather than bit for bit.
+- **Settings.** The defaults are `CVODE_myokit`'s tolerances (`rtol` 1e-6, `atol` 1e-8).
+  `MaximumNumberOfSteps` counts the steps of one block in one run, as on `BE_batched_c`.
+- **Needs SUNDIALS 6 or later.** It is found from `SUNDIALS_DIR` or CMake's search path. Without SUNDIALS the
+  build fails with a message that says so, and its tests skip.
+- Both batched libraries also get `bk_solver_name`, and `bk_instances_advance`, which advances many
+  instances on OpenMP threads.
+
+### Fixed — libCellML 0.7's C for models with a state set by a computed constant, or with no algebraic variables
+
+The one-`variables`-array rewrite of libCellML 0.7's C now keeps `voi`, `states` and `rates` in
+`computeComputedConstants`. libCellML sets the states initialised by a computed constant there, so
+`SN_simple` did not compile. The rewrite also no longer leaves a stray `{` in `VARIABLE_INFO` when
+a kind of variable is empty.
+
+### Changed — libCellML 0.7.2 or later
+
+libCellML 0.7 generates Python and C with constants, computed constants, algebraic and external variables in separate
+arrays. `PythonGenerator` and the C++ generator join them into the one `variables` array the solvers and the C++ model
+use, so generated models behave as before: on the test models, the values (Python and C) and the generated C++
+statements are the same as with 0.6.3. 0.6.3 flattened some models with wrong units (a conversion factor's units
+replaced by their inverse), which 0.7.1 fixes (#271). The requirement is `libcellml>=0.7.2`, the PyPI
+release: 0.7.1 drops an imported unit's exponent (SN_simple and the coupling `k_reduce` fail with a
+units mismatch), which 0.7.2 fixes (cellml/libcellml#1498).
+
 ### Changed — a `volume_port` "sum" is an ordinary multi_port sum
 
 No `port_type` has a meaning of its own. A whole-port `"sum"` (any case) on any port, a `volume_port`
@@ -626,6 +719,104 @@ workflow works in any repository. A model is a CA module array, or a module of a
   small module library with two workflows, for tests here and in CUFLynx.
 - **Docs.** The params_for_id prior columns are now documented; the docs had said only uniform
   priors existed.
+
+### Changed! — `model_type: cpp` is generated from libCellML's C output and Jinja2 templates
+
+The C++ generator is rewritten (`libcuflynx/generators/cpp/`). The model equations are
+libCellML's C code (`model0d_core.c/.h`), with its non-state variables in one `variables` array
+and named indices; the `Model0d` class, the solvers, `main0d` and a `CMakeLists.txt` are rendered
+from templates. Build with CMake (add `-DSUNDIALS_DIR=<prefix>` if SUNDIALS isn't found; versions
+5-7 work). Solvers are CVODE and the fixed-step RK4/Heun/midpoint/explEul; **PETSC is no longer
+supported** and is refused when `user_inputs.yaml` is validated. Generated models no longer get
+the `solver1d/Make_files` copied next to them (they built the old C++), and the coupler builds
+with CMake. FV_1d coupled output is identical to before.
+
+A model coupled to 1D can have a volume sum over its 1D vessels: the 1D solver sends their volume,
+which is a term of the volume sum, and it needs no value in the parameters file (the old generator
+stopped with `KeyError: 'bc_inlet0_or_outlet1'`). A value the 1D solver sends never needs one.
+
+### Added — `api` blocks: couplings to other models described in module configs
+
+A module config entry can carry an `api` block. `role: consumer` describes calls the generated
+C++ makes (the FV 1D named-pipe protocol is now described this way in
+`coupling_modules_config.json`); `role: provider` generates a C++ class another program calls,
+e.g. a drop-in `lifex::Circulation`. A provider is its own module-array row
+(`module_format: external_api`) coupled to CellML modules through ports; values it sets become
+libCellML external variables. `external_modules_dir` also accepts a list of directories.
+
+### Added — the FV 1D solver as a `process` module; `coupler_config.json` is generated
+
+A new `api` role, `process`, describes a program run alongside the generated model: what to
+launch (`program`), who launches it (`coordinator: coupler`) and the pipes it talks over
+(`channels`, `message_length`). `FV1D_solver` in `coupling_modules_config.json` is the FV 1D
+solver. The `FV1D_vessel` and `FV1D_volume_sum` entries name it (`"process": "FV1D_solver"`)
+instead of each repeating the pipe names. From it, C++ generation of a model coupled to 1D now
+writes `coupler_config.json`, which until now had to be written by hand:
+- `T0` is the global parameter `T`;
+- `nCC` is the number of whole periods covering `pre_time + sim_time`;
+- the pipe folder is the user input `coupler_pipe_dir` (default `cuflynx_pipes/<model>/` in the
+  system temp folder, which `TMPDIR` moves);
+- `python_path` is the generating Python, and the 1D solver is the installed one.
+
+`convert_0d_to_1d` adds an `FV1D_solver` row to the hybrid module array, and reads
+`<model>_module_array.csv` when there is no `<model>_0d_module_array.csv`. The coupler creates
+the pipe folder, and its default pipe folder and Python are no longer paths on one machine.
+`main0d`'s coupled defaults (`T0`, `nCC`) match the configuration. New example model
+`aortic_bif_0d` (all 0D); a test runs it against the same model with its vessels in 1D.
+
+### Added — coupling generated C++ to external Python models (e.g. FEniCS)
+
+A module config entry with `"module_format": "external_api"` and
+`"api": {"role": "provider", "transport": "python", "python": {"file": ..., "class": ...}}` is an
+external Python model: a row of the module array, connected to CellML modules through its ports.
+- **Generation.** Generating the model as C++ also writes a C interface (`model0d_capi.cpp`,
+  built as the shared library `model0d_capi`) and `external_models.json`.
+- **Running.** `cuflynx-couple <model folder>` (or `libcuflynx.coupling.run_coupled`) builds the
+  library, then steps the C++ model and the class together.
+- **Directions.** No function list is needed: each port variable connected to a boundary
+  condition of the 0D model is set by the class, and each connected to a computed variable is
+  read by it. A port connected to several modules exchanges arrays.
+- **Coupling scheme.** Explicit staggered coupling (first order), or `subiterations` for a
+  trapezoidal fixed point (second order).
+- **Also:** MPI (the 0D model runs on every rank), output on the model's `dt`, and timings.
+
+New tutorial section "Coupling to External Models": an overview, coupling your own Python
+model, FEniCS tissue O2 with capillaries, FEniCS NE around a sympathetic varicosity, 1D
+finite-volume coupling, and troubleshooting. The FEniCS modules and system models live in
+circulatory-autogen-modules.
+
+### Fixed — C++ generation
+
+- `Model0d::solveOneStep` returns a status (and `lastError()`) instead of calling `exit(1)`, and
+  `main0d` now exits non-zero when the solver fails (it returned 0).
+- CVODE restarts from the last good state after an error-test or convergence failure, so
+  models with time switches (a stimulus pulse train) run.
+- State initial values given by computed variables (e.g. a gate starting at its steady state)
+  are evaluated with Myokit; libCellML 0.6 accepts only constants there, so these models
+  could not be generated as C++ before.
+- CellML generation connects variables of equivalent units under different names (e.g.
+  `mol_per_m3` and `millimolar`) directly. It used to create an unconnected "converter".
+- `GE_capillary` listed `d_1` ... `s_2` twice in its config, and `capillary_GE` and
+  `pulmonary_GE_5_lobe_type` used `saturation_cap` without declaring it.
+
+### Added — readable generated C/C++
+
+Generated C code names every state and variable index: `rates[S_heart_module_q_lv] =
+(variables[V_parameters_r_pvn] ...)` instead of `rates[3] = (variables[12] ...)`.
+`model0d_core.h` declares the `StateIndex`/`VariableIndex` enums, with each name's component,
+variable, units and type, and the wrapper, pipe hooks and api classes use the same names. The
+names are the generated Python's attribute names (shared `generators/naming.py`). Results are
+unchanged.
+
+### Fixed — cpp generation and 1D coupling
+
+- `model_type: cpp` with CVODE always failed solver-settings validation.
+- Models with more than one delay variable did not compile; delays now use a time-stamped
+  history that works with variable CVODE steps.
+- 1D volume sum: the 1D solver opened its volume pipe in an order that deadlocked with the
+  coupler, and sent the volume in cm³ instead of m³.
+- 1D input generation wrote an unknown artery/vein type for vessels not named `A_*`/`V_*`;
+  an `art_ven_type_<vessel>` parameter now sets it.
 
 ### Changed — module instances are now called parameterisations
 
