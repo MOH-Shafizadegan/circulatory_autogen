@@ -8,18 +8,25 @@ The cost relates to the log-likelihood the same way as everywhere else in the pa
 (``ParamID.get_lnlikelihood_from_params``): for ``@is_MLE`` costs,
 ``-ln L = cost * _lnlikelihood_denorm_factor``. The 95% profile-likelihood interval is where
 ``-ln L`` stays within ``NLL_THRESHOLD_95`` of its minimum, i.e. where the cost stays within
-``NLL_THRESHOLD_95 / _lnlikelihood_denorm_factor`` of it. For costs that are not likelihoods the
-profile is still recorded, but no interval is given.
+``NLL_THRESHOLD_95 / _lnlikelihood_denorm_factor`` of it.
+
+So that the interval always has this meaning, the profile (the best fit it is measured from and
+every re-fit) runs on ``@is_MLE`` costs, as Laplace does: an observable whose cost has an MLE
+form (``MLE_FORMS``) is switched to it by ``ensure_mle_cost_type_for_bayesian_inner``, with a
+warning naming the observable, and the calibration's own costs are put back afterwards. An
+observable whose cost has no MLE form is an error.
 """
 
 import copy
 import json
 import os
+import warnings
 
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.stats import chi2
 
+from libcuflynx.param_id.paramID import ensure_mle_cost_type_for_bayesian_inner
 from libcuflynx.parsers.PrimitiveParsers import analysis_options, expand_modifier_param_vals
 from libcuflynx.utilities.mpi_utils import get_MPI as _get_MPI
 
@@ -28,6 +35,11 @@ MPI = _get_MPI()
 #: Rise in -ln L that bounds the 95% profile-likelihood interval for one parameter (Wilks):
 #: 2 * (-ln L) rises by the chi-square(1 dof) 0.95 quantile, 3.841, so -ln L rises by 1.921.
 NLL_THRESHOLD_95 = 0.5 * float(chi2.ppf(0.95, df=1))
+
+#: The MLE form of each cost that is not ``@is_MLE`` itself: the ``@is_MLE`` cost with the same
+#: minimiser (MSE is 2 * gaussian_MLE), which ``ensure_mle_cost_type_for_bayesian_inner`` puts in
+#: its place. Any other cost without ``@is_MLE`` (such as AE) has no likelihood to profile.
+MLE_FORMS = {"MSE": "gaussian_MLE"}
 
 #: Attributes of the inner param_id that a profile point changes, restored after each point.
 _PARAM_ID_STATE = (
@@ -139,16 +151,45 @@ class ProfileLikelihood:
         """Factor turning the cost into -ln L (see ``ParamID.get_lnlikelihood_from_params``)."""
         return float(getattr(self.param_id, "_lnlikelihood_denorm_factor", 1.0))
 
-    def _costs_are_likelihoods(self):
-        """Whether every observable's cost is an ``@is_MLE`` negative log-likelihood."""
-        obs_info = getattr(self.param_id, "obs_info", None) or {}
-        cost_types = obs_info.get("cost_type")
-        costs = getattr(self.param_id, "cost_funcs_dict", None) or {}
-        if not cost_types:
-            return False
-        if isinstance(cost_types, str):
-            cost_types = [cost_types]
-        return all(getattr(costs.get(ct), "is_MLE", False) for ct in cost_types)
+    def _use_mle_costs(self):
+        """Put every observable on an ``@is_MLE`` cost; return the settings to restore.
+
+        Raises ``ValueError`` naming each observable whose cost has no MLE form. Returns
+        ``None`` when the param_id has no observables, else ``(obs_info cost_type, cost_type)``
+        as they were.
+        """
+        pid = self.param_id
+        obs_info = getattr(pid, "obs_info", None)
+        if obs_info is None:
+            return None
+        costs = getattr(pid, "cost_funcs_dict", None) or {}
+        original = list(obs_info.get("cost_type") or [])
+        names = obs_info.get("data_item_names") or [f"observable {i}" for i in range(len(original))]
+        no_form = [
+            f"'{names[i]}' (cost '{ct}')"
+            for i, ct in enumerate(original)
+            if not getattr(costs.get(ct), "is_MLE", False) and ct not in MLE_FORMS
+        ]
+        if no_form:
+            forms = ", ".join(f"'{ct}' -> '{mle}'" for ct, mle in MLE_FORMS.items())
+            raise ValueError(
+                "Profile likelihood needs a likelihood cost for every observable, and these "
+                f"costs have no MLE form: {', '.join(no_form)}. Use an @is_MLE cost (such as "
+                f"gaussian_MLE) or a cost with an MLE form ({forms})."
+            )
+
+        saved = (obs_info.get("cost_type"), getattr(pid, "cost_type", None))
+        ensure_mle_cost_type_for_bayesian_inner(pid, {})
+        if self.rank == 0:
+            for name, old, new in zip(names, original, obs_info["cost_type"]):
+                if old != new:
+                    warnings.warn(
+                        f"profile likelihood: converting cost '{old}' to its MLE form "
+                        f"'{new}' for {name}",
+                        UserWarning,
+                        stacklevel=3,
+                    )
+        return saved
 
     def confidence_interval_95(self, param_values, costs, best_val=None, best_cost=None):
         """The 95% profile-likelihood interval, in cost units.
@@ -270,10 +311,7 @@ class ProfileLikelihood:
                     x0 = optima[i]
 
         param_name = self.param_id.param_id_info["param_names"][param_idx]
-        if self._costs_are_likelihoods():
-            ci_95 = self.confidence_interval_95(param_values, costs, best_val, self.best_cost)
-        else:
-            ci_95 = None
+        ci_95 = self.confidence_interval_95(param_values, costs, best_val, self.best_cost)
         return {
             "param_values": param_values,
             "costs": costs,
@@ -404,22 +442,22 @@ class ProfileLikelihood:
             )
 
         num_params = len(self.best_param_vals)
-        self.best_cost = float(self.param_id.get_cost_from_params(self.best_param_vals))
-        if self.rank == 0:
-            print(f"Starting profile likelihood analysis for {num_params} parameters")
-            if not self._costs_are_likelihoods():
-                print(
-                    "Profile likelihood: not every observable uses an @is_MLE cost, so no 95% "
-                    "interval is given; the cost profiles are still saved."
-                )
-
-        for param_idx in range(num_params):
+        saved_costs = self._use_mle_costs()
+        try:
+            self.best_cost = float(self.param_id.get_cost_from_params(self.best_param_vals))
             if self.rank == 0:
-                print(
-                    f"Profiling parameter {param_idx + 1}/{num_params}: "
-                    f"{param_label(self.param_id.param_id_info['param_names'][param_idx])}"
-                )
-            self.profile_results[param_idx] = self._profile_single_parameter(param_idx)
+                print(f"Starting profile likelihood analysis for {num_params} parameters")
+
+            for param_idx in range(num_params):
+                if self.rank == 0:
+                    print(
+                        f"Profiling parameter {param_idx + 1}/{num_params}: "
+                        f"{param_label(self.param_id.param_id_info['param_names'][param_idx])}"
+                    )
+                self.profile_results[param_idx] = self._profile_single_parameter(param_idx)
+        finally:
+            if saved_costs is not None:
+                self.param_id.obs_info["cost_type"], self.param_id.cost_type = saved_costs
 
         if self.rank == 0:
             self._save_results()

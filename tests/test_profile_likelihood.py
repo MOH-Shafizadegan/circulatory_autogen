@@ -280,6 +280,95 @@ def test_the_95_percent_interval_uses_the_negative_log_likelihood_scale():
     assert flat["lower"] is None and flat["upper"] is not None
 
 
+# ---- MLE costs -------------------------------------------------------------------------------
+
+
+def _with_costs(pid, cost_types):
+    """Give the stub observables named p_ao, q_lv, ... with these costs; record the costs used."""
+    from libcuflynx.funcs.cost_funcs_user import get_cost_funcs_dict_for_mode
+
+    names = ["p_ao", "q_lv", "v_lv"][: len(cost_types)]
+    pid.obs_info = {"num_obs": len(cost_types), "cost_type": list(cost_types),
+                    "data_item_names": names}
+    pid.cost_type = pid.obs_info["cost_type"]
+    pid.cost_funcs_dict = get_cost_funcs_dict_for_mode("numpy")
+    pid._lnlikelihood_denorm_factor = 4.0
+    used = []
+
+    def cost(vals):
+        used.append(list(pid.cost_type))
+        return float(np.sum(np.asarray(vals) ** 2))
+
+    def fake_run(param_init=None):
+        pid.best_param_vals = np.asarray(param_init, dtype=float)
+
+    pid.get_cost_from_params = cost
+    pid.run = fake_run
+    return used
+
+
+@pytest.mark.unit
+def test_profile_converts_a_cost_to_its_mle_form_with_a_warning(tmp_path):
+    pid = _stub_param_id(tmp_path)
+    used = _with_costs(pid, ["MSE", "gaussian_MLE"])
+    original = pid.obs_info["cost_type"]
+    profile = _profile_for(pid)
+    with pytest.warns(UserWarning) as record:
+        profile.run()
+
+    converted = [str(w.message) for w in record if "converting cost" in str(w.message)]
+    assert converted == [
+        "profile likelihood: converting cost 'MSE' to its MLE form 'gaussian_MLE' for p_ao"
+    ]
+    # The best fit and every re-fit are scored on the MLE form.
+    assert len(used) == 1 + 3 * 3
+    assert all(costs == ["gaussian_MLE", "gaussian_MLE"] for costs in used)
+    # ... so every profile gets an interval, on the -ln L scale.
+    for result in profile.profile_results.values():
+        ci = result["ci_95"]
+        assert ci is not None
+        assert ci["cost_threshold"] == pytest.approx(
+            min(np.min(result["costs"]), result["best_cost"]) + NLL_THRESHOLD_95 / 4.0
+        )
+    # The calibration's own costs are back.
+    assert pid.obs_info["cost_type"] is original
+    assert original == ["MSE", "gaussian_MLE"]
+    assert pid.cost_type is original
+
+
+@pytest.mark.unit
+def test_profile_restores_the_costs_when_a_profile_point_fails(tmp_path):
+    pid = _stub_param_id(tmp_path)
+    _with_costs(pid, ["MSE"])
+    original = pid.obs_info["cost_type"]
+
+    def failing_run(param_init=None):
+        assert pid.cost_type == ["gaussian_MLE"]
+        raise RuntimeError("solver blew up")
+
+    pid.run = failing_run
+    with pytest.warns(UserWarning, match="converting cost 'MSE'"):
+        with pytest.raises(RuntimeError, match="solver blew up"):
+            _profile_for(pid).run()
+    assert pid.obs_info["cost_type"] is original
+    assert original == ["MSE"]
+    assert pid.cost_type is original
+
+
+@pytest.mark.unit
+def test_profile_refuses_a_cost_without_an_mle_form(tmp_path):
+    pid = _stub_param_id(tmp_path)
+    used = _with_costs(pid, ["gaussian_MLE", "AE"])
+    with pytest.raises(ValueError) as excinfo:
+        _profile_for(pid).run()
+    message = str(excinfo.value)
+    assert "'q_lv' (cost 'AE')" in message
+    assert "p_ao" not in message
+    assert "'MSE' -> 'gaussian_MLE'" in message
+    assert used == []
+    assert pid.obs_info["cost_type"] == ["gaussian_MLE", "AE"]
+
+
 # ---- options -------------------------------------------------------------------------------
 
 
